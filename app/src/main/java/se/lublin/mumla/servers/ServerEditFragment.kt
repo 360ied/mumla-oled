@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.servers
 
+import se.lublin.mumla.container
 import android.app.Dialog
 import android.content.Context
 import android.os.Bundle
@@ -70,7 +71,7 @@ class ServerEditFragment : DialogFragment() {
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         // NPE-exact: the original passed getActivity() straight through.
         val hostActivity = activity ?: throw NullPointerException("activity")
-        val settings = Settings.getInstance(hostActivity)
+        val settings = hostActivity.container.settings
 
         val actionName = when (getAction()) {
             Action.ADD_ACTION -> getString(R.string.add)

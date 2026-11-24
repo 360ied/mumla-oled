@@ -16,13 +16,16 @@
 """
 scripts/check_architecture.py: Tripwires for the target architecture.
 
-Four checks (see docs/target-architecture/enforcement.md):
+Checks (see docs/target-architecture/enforcement.md):
   1. Concurrency tripwire: forbidden thread/lock patterns in Kotlin/Java.
   2. Android-free packages: state/client/net must not import android(x)/R.
   3. Native tripwire: forbidden I/O/thread/JNI headers in no-I/O native dirs.
   4. Voice lifecycle: the voice_io JNI destroy/clear paths keep the debug
      asserts that render and capture are stopped, and the AAudio callback
      bodies set renderActive/captureActive through their guards.
+  5. Local-facts writer: only the store and the db package may write local
+     mute/ignore or self mute/deafen (step 6).
+  6. Feature isolation: features never name other features (step 6).
 
 The check fails if a file not on the allowlist has a match, if a listed
 file has more matches than its count, or if it has fewer (the count must
@@ -59,6 +62,9 @@ BOUNDARY_FILES = (
     "libraries/humla/src/main/java/se/lublin/humla/voice/VoiceEngine.kt",
     # Uncaught-exception handler + its background thread.
     "app/src/main/java/se/lublin/mumla/util/CrashReporter.kt",
+    # Step 6: the one blocking settings startup read (theme/locale before
+    # the first activity draws) and its import.
+    "app/src/main/java/se/lublin/mumla/AppContainer.kt",
 )
 
 CONCURRENCY_PATTERNS = (
@@ -67,13 +73,35 @@ CONCURRENCY_PATTERNS = (
     r"\bsynchronized\s*\(",
     r"\bThread\s*[({]",
     r"\bHandlerThread\s*\(",
-    r"\bHandler\s*\(",
+    # Also matches the Handler.createAsync factory: a bare Handler( would
+    # miss the modern entry point and silently allow handlers in
+    # non-boundary files. The word boundary still keeps createAudioHandler(
+    # and ModelHandler.* from matching.
+    r"\bHandler\s*[\(.]",
     r"\brunBlocking\b",
     r"\bReentrantLock\b",
     r"\bReentrantReadWriteLock\b",
     r"\bExecutors\.",
     r"\bCountDownLatch\b",
     r"\bjava\.util\.concurrent\.locks\b",
+    # Constructor-form pools evade Executors.: all create real threads.
+    # \bThreadPoolExecutor\b does not reach ScheduledThreadPoolExecutor,
+    # because the preceding 'd' is a word character.
+    r"\bThreadPoolExecutor\b",
+    r"\bScheduledThreadPoolExecutor\b",
+    r"\bForkJoinPool\b",
+    r"\bScheduledExecutorService\b",
+    # Coroutine thread factories and unstructured scopes.
+    r"\bnewSingleThreadContext\b",
+    r"\bGlobalScope\b",
+    r"\basExecutor\b",
+    # java.util.Timer spawns its own thread; TimerTask alone does not.
+    r"\bTimer\s*\(",
+    # Compat factory evades the Handler pattern (HandlerCompat, not Handler).
+    r"\bHandlerCompat\b",
+    # System schedulers that run work off the calling thread.
+    r"\bAlarmManager\b",
+    r"\bWorkManager\b",
     # Lowercase thread creation (kotlin.concurrent.thread { }): the bare word
     # is too noisy in prose ("render thread (" appears in comments, and
     # comments count by design), so only the import-qualified form is
@@ -105,6 +133,15 @@ ANDROID_FREE_NET_EXCLUDE = {"HumlaSSLSocketFactory.kt"}
 RE_ANDROID_IMPORT = re.compile(r"^\s*import\s+android\.")
 RE_ANDROIDX_IMPORT = re.compile(r"^\s*import\s+androidx\.")
 RE_R_IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?[\w.]+\.R\b")
+# Fully-qualified use without an import evades the import check (the exact
+# pattern already used once outside the gate in util/HumlaCallbacks).
+# Match every android.* subpackage: the old nine-name allowlist let
+# android.graphics.*, android.bluetooth.* and friends through unimported.
+RE_ANDROID_FQN = re.compile(r"\bandroid\s*\.")
+RE_ANDROIDX_FQN = re.compile(r"\bandroidx\s*\.")
+# Reflection and resource-lookup indirection around the import check.
+RE_REFLECTION = re.compile(r"Class\.forName\s*\(|getIdentifier\s*\(\s*[\"']")
+RE_ANDROID_LITERAL = re.compile(r'"android\.')
 
 NATIVE_ROOT = "libraries/humla/src/main/jni"
 NATIVE_DIRS = ("audio_engine", "voice_codec", "crypto")
@@ -128,6 +165,21 @@ NATIVE_FORBIDDEN_SINGLE_THREADED = (
     "<condition_variable>",
     "<atomic>",
 )
+# Body-level indirection around the include check: dynamic loading, direct
+# syscalls, and thread creation without the banned headers. All absent
+# today; landing them as tripwires only ratchets.
+NATIVE_FORBIDDEN_BODY = (
+    "dlopen",
+    "dlsym",
+    "AAudio_",
+    "Oboe",
+    "oboe/",
+    "syscall",
+    "mmap",
+    "pthread_create",
+    "std::thread",
+    "__has_include",
+)
 RE_INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]')
 
 # 5a.3b native receive lifecycle, split in 5b: the JNI destroy/reset paths
@@ -142,8 +194,127 @@ VOICE_IO_CALLBACKS_FILE = (
 )
 RE_RENDER_GUARD_USE = re.compile(r"\bRenderGuard\s+\w+")
 RE_CAPTURE_GUARD_USE = re.compile(r"\bCaptureGuard\s+\w+")
+# Step 6: one writer for device-local facts. The patterns are call sites,
+# so declarations and tests never match; the DAO declarations live in db/.
+LOCAL_FACTS_ROOT = "app/src/main"
+LOCAL_FACTS_DAO_DIR = "app/src/main/java/se/lublin/mumla/db/"
+LOCAL_FACTS_STORE_FILE = "app/src/main/java/se/lublin/mumla/AppLocalFactsStore.kt"
+LOCAL_FACTS_CALL_PATTERNS = (
+    r"\.addLocalMutedUser\(",
+    r"\.removeLocalMutedUser\(",
+    r"\.addLocalIgnoredUser\(",
+    r"\.removeLocalIgnoredUser\(",
+    r"\blocalMuteDao\(\)",
+    r"\blocalIgnoreDao\(\)",
+    r"\.setMutedAndDeafened\(",
+    # DAO-level suspend wrappers: public today, same rows as above.
+    r"\binsertLocalMutedUser\(",
+    r"\bdeleteLocalMutedUser\(",
+    r"\binsertLocalIgnoredUser\(",
+    r"\bdeleteLocalIgnoredUser\(",
+    # The database/DAO is also a public suspend writer. Anchor on the
+    # receiver: the sanctioned service funnel (mService.setLocalMute in
+    # UserMenu.kt) shares the method name and must keep passing.
+    r"\b(?:database|db|dao)\.setLocalMute\(",
+    r"\b(?:database|db|dao)\.setLocalIgnore\(",
+    r"\blocalMutedUsers\(",
+    r"\blocalIgnoredUsers\(",
+)
+RE_LOCAL_FACTS_CALL = re.compile(
+    "|".join(f"(?:{p})" for p in LOCAL_FACTS_CALL_PATTERNS)
+)
+
+# Step 6: features never call each other. Shared helpers in the feature
+# package (no start(scope) method) are not features and may be referenced,
+# but they are still scanned as referrers: a helper cannot launder a
+# cross-feature call out of the check.
+FEATURE_DIR = "app/src/main/java/se/lublin/mumla/feature"
+RE_FEATURE_START = re.compile(r"\bfun start\(\s*scope\s*:\s*CoroutineScope\s*\)")
+# Any start-shaped declaration that does not match RE_FEATURE_START would
+# silently drop out of the feature set; fail closed instead.
+RE_ANY_START = re.compile(r"\b(?:suspend\s+)?fun\s+start\s*\(")
+
 RE_RENDER_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*renderActive")
 RE_CAPTURE_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*captureActive")
+
+
+def check_local_facts_writers(root: Path):
+    """Return errors for local-fact writes outside the store and db package."""
+    errors = []
+    base = root / LOCAL_FACTS_ROOT
+    if not base.is_dir():
+        return errors
+    for dirpath, _, filenames in os.walk(base):
+        for name in filenames:
+            if not name.endswith(CONCURRENCY_EXTS):
+                continue
+            full = Path(dirpath) / name
+            rel = full.relative_to(root).as_posix()
+            if rel == LOCAL_FACTS_STORE_FILE or rel.startswith(LOCAL_FACTS_DAO_DIR):
+                continue
+            try:
+                lines = full.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for i, line in enumerate(lines, 1):
+                if RE_LOCAL_FACTS_CALL.search(line):
+                    errors.append(
+                        f"local-facts: {rel}:{i}: writes belong in "
+                        f"{LOCAL_FACTS_STORE_FILE}: {line.strip()}"
+                    )
+    return errors
+
+
+def check_feature_set_closed(root: Path):
+    """Fail if a feature-dir file declares start with a non-matching signature."""
+    feature_dir = root / FEATURE_DIR
+    if not feature_dir.is_dir():
+        return []
+    errors = []
+    for full in sorted(feature_dir.rglob("*.kt")):
+        try:
+            text = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = full.relative_to(root).as_posix()
+        for i, line in enumerate(text.splitlines(), 1):
+            if RE_ANY_START.search(line) and (
+                not RE_FEATURE_START.search(line)
+                or re.search(r"\bsuspend\s+fun\s+start", line)
+            ):
+                errors.append(
+                    f"feature-isolation: {rel}:{i}: start signature must be "
+                    f"fun start(scope: CoroutineScope): {line.strip()}"
+                )
+    return errors
+
+
+def check_feature_isolation(root: Path):
+    """Fail if any file in the feature package names another feature class."""
+    feature_dir = root / FEATURE_DIR
+    if not feature_dir.is_dir():
+        return []
+    features = set()
+    files = {}
+    for full in sorted(feature_dir.rglob("*.kt")):
+        try:
+            text = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        files[full.stem] = (full.relative_to(root).as_posix(), text)
+        if RE_FEATURE_START.search(text):
+            features.add(full.stem)
+    errors = []
+    for name, (rel, text) in files.items():
+        for other in sorted(features):
+            if other == name:
+                continue
+            if re.search(r"\b" + re.escape(other) + r"\b", text):
+                errors.append(
+                    f"feature-isolation: {rel} names feature {other}; use a "
+                    f"container hand-off flow instead"
+                )
+    return errors
 
 
 def check_voice_lifecycle(root: Path):
@@ -339,9 +510,38 @@ def scan_android_free(root: Path):
                         RE_ANDROID_IMPORT.search(line)
                         or RE_ANDROIDX_IMPORT.search(line)
                         or RE_R_IMPORT.search(line)
+                        or RE_ANDROID_FQN.search(line)
+                        or RE_ANDROIDX_FQN.search(line)
+                        or RE_REFLECTION.search(line)
+                        or RE_ANDROID_LITERAL.search(line)
                     ):
                         violations.append((rel, i, line.strip()))
     return violations
+
+
+def scan_native_body(root: Path):
+    """Return list of (path, line-no, snippet) for body-level native evasions."""
+    hits = []
+    for dirname in NATIVE_DIRS:
+        d = root / NATIVE_ROOT / dirname
+        if not d.is_dir():
+            continue
+        for dirpath, _, filenames in os.walk(d):
+            for name in filenames:
+                if not name.endswith(NATIVE_EXTS):
+                    continue
+                full = Path(dirpath) / name
+                rel = full.relative_to(root).as_posix()
+                try:
+                    lines = full.read_text(encoding="utf-8", errors="replace").splitlines()
+                except OSError:
+                    continue
+                for i, line in enumerate(lines, 1):
+                    for token in NATIVE_FORBIDDEN_BODY:
+                        if token in line:
+                            hits.append((rel, i, line.strip()))
+                            break
+    return hits
 
 
 def native_forbidden_for(dirname):
@@ -437,7 +637,12 @@ def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
     for rel, lineno, line in scan_android_free(root):
         errors.append(f"android-free: {rel}:{lineno}: {line}")
     errors.extend(check_native(scan_native(root), native_allowed))
+    for rel, lineno, line in scan_native_body(root):
+        errors.append(f"native-body: {rel}:{lineno}: {line}")
     errors.extend(check_voice_lifecycle(root))
+    errors.extend(check_local_facts_writers(root))
+    errors.extend(check_feature_set_closed(root))
+    errors.extend(check_feature_isolation(root))
     return errors, actual
 
 

@@ -1,5 +1,6 @@
 package se.lublin.mumla.app
 
+import se.lublin.mumla.container
 import android.content.Context
 import android.util.Log
 import android.view.LayoutInflater
@@ -32,7 +33,7 @@ object DialogUtils {
     @JvmStatic
     fun maybeShowNewsDialog(context: Context): Boolean {
         val toShow = ArrayList<String>()
-        val shown = Settings.getInstance(context).newsShownVersions
+        val shown = context.container.settings.newsShownVersions
         for (version in RELEVANT_VERSIONS) {
             if (!shown.contains(version)) {
                 toShow.add(version)
@@ -80,7 +81,7 @@ object DialogUtils {
             .setCancelable(false)
             .setPositiveButton(android.R.string.ok) { dialog, _ ->
                 if (markShown) {
-                    Settings.getInstance(context).addNewsShownVersions(versions)
+                    context.container.settings.addNewsShownVersions(versions)
                 }
                 dialog.dismiss()
             }

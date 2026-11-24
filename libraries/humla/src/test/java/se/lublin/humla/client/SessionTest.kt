@@ -243,6 +243,19 @@ class SessionTest {
     }
 
     @Test
+    fun togglePttFlipsLocalPressState() = runTest {
+        val f = Fixture(this)
+        assertFalse(f.session.state.value.local.pttPressed)
+        f.session.togglePtt()
+        f.step()
+        assertTrue(f.session.state.value.local.pttPressed)
+        f.session.togglePtt()
+        f.step()
+        assertFalse(f.session.state.value.local.pttPressed)
+        f.close()
+    }
+
+    @Test
     fun closeAtEverySyncBoundaryLeavesNothingRunning() = runTest {
         val sequence = syncSequence()
         for (k in 0..sequence.size) {

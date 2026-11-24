@@ -117,8 +117,13 @@ class TestPatterns(unittest.TestCase):
         self.assertIsNone(ca.RE_CONCURRENCY.search("createAudioHandler()"))
         self.assertIsNone(ca.RE_CONCURRENCY.search("Thread.sleep(1)"))
         self.assertIsNone(ca.RE_CONCURRENCY.search("Thread.currentThread()"))
+        self.assertIsNone(ca.RE_CONCURRENCY.search("ModelHandler.messageUserState"))
+        self.assertIsNone(ca.RE_CONCURRENCY.search("mainHandler.post(r)"))
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("Thread { }"))
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("Handler(foo)"))
+        self.assertIsNotNone(
+            ca.RE_CONCURRENCY.search("Handler.createAsync(Looper.getMainLooper())")
+        )
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("@Volatile"))
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("runBlocking { }"))
 
@@ -126,6 +131,25 @@ class TestPatterns(unittest.TestCase):
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("synchronized (lock)"))
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("Handler (foo)"))
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("HandlerThread (x)"))
+
+    def test_new_thread_factories_match(self):
+        for snippet in (
+            "newSingleThreadContext(\"bg\")",
+            "Timer()",
+            "Timer(\"t\")",
+            "GlobalScope.launch { }",
+            "HandlerCompat.createAsync(looper)",
+            "ThreadPoolExecutor(1, 2, 0L, TimeUnit.SECONDS, q)",
+            "ScheduledThreadPoolExecutor(1)",
+            "ForkJoinPool.commonPool()",
+            "ScheduledExecutorService x",
+            "dispatcher.asExecutor()",
+            "AlarmManager x",
+            "WorkManager.getInstance()",
+        ):
+            self.assertIsNotNone(ca.RE_CONCURRENCY.search(snippet), snippet)
+        self.assertIsNone(ca.RE_CONCURRENCY.search("TimerTask()"))
+        self.assertIsNone(ca.RE_CONCURRENCY.search("TimeUnit.SECONDS"))
 
     def test_kotlin_thread_import_matches_prose_does_not(self):
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("import kotlin.concurrent.thread"))
@@ -166,6 +190,28 @@ class TestAndroidFree(unittest.TestCase):
     def test_missing_dirs_pass(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(ca.scan_android_free(Path(tmp)), [])
+
+    def test_detects_fqn_and_reflection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pkg = root / "libraries/humla/src/main/java/se/lublin/humla/state"
+            pkg.mkdir(parents=True)
+            (pkg / "Fqn.kt").write_text("val x = android.util.Log.w(t, m)\n", encoding="utf-8")
+            (pkg / "Graphics.kt").write_text(
+                "val c = android.graphics.Color.RED\n", encoding="utf-8"
+            )
+            (pkg / "Bluetooth.kt").write_text(
+                "val a = android.bluetooth.BluetoothAdapter.getDefaultAdapter()\n",
+                encoding="utf-8",
+            )
+            (pkg / "Refl.kt").write_text('Class.forName("android.os.Foo")\n', encoding="utf-8")
+            (pkg / "Lit.kt").write_text('val s = "android.os.Foo"\n', encoding="utf-8")
+            (pkg / "Ok.kt").write_text("// no Android imports\n", encoding="utf-8")
+            v = ca.scan_android_free(root)
+            self.assertEqual(len(v), 5)
+            flagged = sorted(path for path, _, _ in v)
+            self.assertTrue(any("Graphics.kt" in p for p in flagged))
+            self.assertTrue(any("Bluetooth.kt" in p for p in flagged))
 
     def test_net_excludes_tls_factory_only(self):
         # Step 3 removed the legacy grandfathering (HumlaConnection deleted;
@@ -223,6 +269,15 @@ class TestNative(unittest.TestCase):
     def test_absolute_native_path_rejected(self):
         _, _, errors = ca.parse_allowlist("[native]\n/crypto/A.cpp: <jni.h>\n")
         self.assertTrue(any("absolute path" in e for e in errors))
+
+    def test_body_evasion_detected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = self._jni_root(tmp) / "audio_engine"
+            d.mkdir(parents=True)
+            (d / "E.cpp").write_text('void* h = dlopen("libaaudio.so", 0);\n', encoding="utf-8")
+            hits = ca.scan_native_body(Path(tmp))
+            self.assertEqual(len(hits), 1)
+            self.assertIn("E.cpp", hits[0][0])
 
     def test_positive_boundary_newcomer_allowed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -481,6 +536,187 @@ class TestVoiceLifecycle(unittest.TestCase):
             errors = ca.check_voice_lifecycle(root)
             self.assertEqual(len(errors), 3)
             self.assertTrue(any("NativeVoiceEngineJni.cpp" in e for e in errors))
+
+
+class TestLocalFactsWriter(unittest.TestCase):
+    """Step 6: one writer for device-local facts."""
+
+    def write(self, root, rel, text):
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_clean_tree_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, ca.LOCAL_FACTS_STORE_FILE, "dao.setLocalMute(1, 2, true)\n")
+            self.write(
+                root,
+                ca.LOCAL_FACTS_DAO_DIR + "MumlaRoomDatabase.kt",
+                "localMuteDao().getUsers(1)\n",
+            )
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/service/MumlaService.kt",
+                "settings.isMuted\n",
+            )
+            self.assertEqual(ca.check_local_facts_writers(root), [])
+
+    def test_adapter_write_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.kt",
+                "mDatabase.addLocalMutedUser(1, 2)\n",
+            )
+            errors = ca.check_local_facts_writers(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("ChannelListAdapter.kt", errors[0])
+
+    def test_service_self_mute_write_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/service/MumlaService.kt",
+                "settings.setMutedAndDeafened(muted, deafened)\n",
+            )
+            errors = ca.check_local_facts_writers(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("MumlaService.kt", errors[0])
+
+    def test_declarations_do_not_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/Settings.kt",
+                "fun setMutedAndDeafened(muted: Boolean, deafened: Boolean) {}\n",
+            )
+            self.assertEqual(ca.check_local_facts_writers(root), [])
+
+    def test_dao_wrapper_call_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.kt",
+                "db.insertLocalMutedUser(1, 2)\n",
+            )
+            errors = ca.check_local_facts_writers(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("ChannelListAdapter.kt", errors[0])
+
+    def test_database_suspend_writer_call_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/service/Sneaky.kt",
+                "container.database.setLocalMute(1, 2, true)\n",
+            )
+            errors = ca.check_local_facts_writers(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Sneaky.kt", errors[0])
+
+    def test_dao_read_wrappers_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/service/Sneaky.kt",
+                "database.localMutedUsers(1)\n",
+            )
+            errors = ca.check_local_facts_writers(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Sneaky.kt", errors[0])
+
+    def test_sanctioned_service_funnel_still_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/channel/UserMenu.kt",
+                "mService.setLocalMute(mUser.session, !mUser.isLocalMuted)\n"
+                "mService.setLocalIgnore(mUser.session, !mUser.isLocalIgnored)\n",
+            )
+            self.assertEqual(ca.check_local_facts_writers(root), [])
+
+
+class TestFeatureIsolation(unittest.TestCase):
+    """Step 6: features share flows, never each other."""
+
+    def write(self, root, name, text):
+        path = root / ca.FEATURE_DIR / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_no_features_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(ca.check_feature_isolation(Path(tmp)), [])
+
+    def test_shared_helper_is_not_a_feature(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, "ConnectionLines.kt", "class ConnectionLines {}\n")
+            self.write(
+                root, "ChatLogFeature.kt",
+                "class ChatLogFeature { fun start(scope: CoroutineScope) {} }\n"
+                "// ConnectionLines is a shared helper\n",
+            )
+            self.assertEqual(ca.check_feature_isolation(root), [])
+
+    def test_cross_feature_reference_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "ChatLogFeature.kt",
+                "class ChatLogFeature { fun start(scope: CoroutineScope) {} }\n",
+            )
+            self.write(
+                root, "TtsFeature.kt",
+                "class TtsFeature { fun start(scope: CoroutineScope) { ChatLogFeature() } }\n",
+            )
+            errors = ca.check_feature_isolation(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("TtsFeature.kt", errors[0])
+
+    def test_start_less_helper_cannot_launder_a_cross_feature_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "ChatLogFeature.kt",
+                "class ChatLogFeature { fun start(scope: CoroutineScope) {} }\n",
+            )
+            self.write(
+                root, "Helper.kt",
+                "object Helper { fun forward() = ChatLogFeature() }\n",
+            )
+            errors = ca.check_feature_isolation(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Helper.kt", errors[0])
+
+    def test_mismatched_start_signature_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "SneakyFeature.kt",
+                "class SneakyFeature { fun start() {} }\n",
+            )
+            errors = ca.check_feature_set_closed(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("SneakyFeature.kt", errors[0])
+
+    def test_suspend_start_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "SneakyFeature.kt",
+                "class SneakyFeature { suspend fun start(scope: CoroutineScope) {} }\n",
+            )
+            errors = ca.check_feature_set_closed(root)
+            self.assertEqual(len(errors), 1)
 
 
 class TestRunAll(unittest.TestCase):

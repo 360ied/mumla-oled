@@ -43,6 +43,7 @@ import se.lublin.mumla.util.NotificationSanitizer
 class MumlaMessageNotification(context: Context) {
     private val mContext: Context = context
     private val mUnreadMessages = ArrayList<IMessage>()
+    private var sChannelCreated = false
 
     /**
      * Shows the notification with the provided message.
@@ -148,8 +149,6 @@ class MumlaMessageNotification(context: Context) {
     companion object {
         private const val NOTIFICATION_ID = 2
         private const val MESSAGE_CHANNEL_ID = "message_channel"
-        @Volatile
-        private var sChannelCreated: Boolean = false
         private val VIBRATION_PATTERN = longArrayOf(0, 100)
     }
 }

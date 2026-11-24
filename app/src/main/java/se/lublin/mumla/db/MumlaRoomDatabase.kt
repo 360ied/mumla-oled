@@ -25,7 +25,9 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import se.lublin.humla.model.Server
+import se.lublin.mumla.LocalFactsDao
 
 /**
  * Room database replacing the hand-SQL `MumlaSQLiteDatabase` behind the
@@ -36,12 +38,12 @@ import se.lublin.humla.model.Server
  * the fleet has real data. `Server` is the single `@Entity @Parcelize` model
  * (DB row, parcel, and UI model in one); no entity mapping remains.
  *
- * Threading (interim): the interface is synchronous and callers include the
- * main thread, so every method bridges via `runBlocking(Dispatchers.IO)` —
- * Room forbids main-thread queries. Slice 4 suspend-ifies the service core;
- * until then the local DB is small enough that the block is unnoticeable.
- * Exactly one instance per process ([getInstance]) — Room forbids concurrent
- * instances on one file.
+ * Threading: the legacy interface is synchronous and screens still call it
+ * from the main thread, so its methods bridge to the IO dispatcher. Screens
+ * move to the suspend methods in step 7; the service, features, and
+ * LocalFactsStore already use those. The container builds exactly one
+ * instance per process ([create]) — Room forbids concurrent instances on
+ * one file.
  */
 @Database(
     entities = [
@@ -56,7 +58,7 @@ import se.lublin.humla.model.Server
     version = 11,
     exportSchema = false,
 )
-abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
+abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase, LocalFactsDao {
     abstract fun serverDao(): ServerDao
     abstract fun pinnedDao(): PinnedDao
     abstract fun tokenDao(): TokenDao
@@ -70,9 +72,10 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
     }
 
     override fun close() {
-        // No-op for the shared singleton only: activities, services, and Hilt
-        // share the process-lifetime instance, so closing under one consumer
-        // breaks the rest. Directly-built instances (tests) close normally.
+        // No-op for the shared process singleton: activities, services, and
+        // features share the container's instance, so closing under one
+        // consumer breaks the rest. Directly-built instances (tests) close
+        // normally.
         if (this !== instance) {
             super.close()
         }
@@ -208,21 +211,68 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
         io { certificateDao().deleteById(id) }
     }
 
+    /** Suspend path for the service, features, and LocalFactsStore. */
+    override suspend fun mutedUsers(serverId: Long): List<Int> = localMutedUsers(serverId)
+
+    override suspend fun ignoredUsers(serverId: Long): List<Int> = localIgnoredUsers(serverId)
+
+    override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) {
+        if (muted) insertLocalMutedUser(serverId, userId) else deleteLocalMutedUser(serverId, userId)
+    }
+
+    override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) {
+        if (ignored) insertLocalIgnoredUser(serverId, userId) else deleteLocalIgnoredUser(serverId, userId)
+    }
+
+    suspend fun localMutedUsers(serverId: Long): List<Int> = withContext(Dispatchers.IO) {
+        localMuteDao().getUsers(serverId)
+    }
+
+    suspend fun localIgnoredUsers(serverId: Long): List<Int> = withContext(Dispatchers.IO) {
+        localIgnoreDao().getUsers(serverId)
+    }
+
+    suspend fun insertLocalMutedUser(serverId: Long, userId: Int) = withContext(Dispatchers.IO) {
+        localMuteDao().insert(LocalMuteEntity(serverId = serverId, userId = userId))
+    }
+
+    suspend fun deleteLocalMutedUser(serverId: Long, userId: Int) = withContext(Dispatchers.IO) {
+        localMuteDao().delete(serverId, userId)
+    }
+
+    suspend fun insertLocalIgnoredUser(serverId: Long, userId: Int) = withContext(Dispatchers.IO) {
+        localIgnoreDao().insert(LocalIgnoreEntity(serverId = serverId, userId = userId))
+    }
+
+    suspend fun deleteLocalIgnoredUser(serverId: Long, userId: Int) = withContext(Dispatchers.IO) {
+        localIgnoreDao().delete(serverId, userId)
+    }
+
+    /** Generic suspend bridge for the remaining DAO work in step 7. */
+    suspend fun <T> query(block: (MumlaRoomDatabase) -> T): T = withContext(Dispatchers.IO) {
+        block(this@MumlaRoomDatabase)
+    }
+
     companion object {
         const val DATABASE_NAME = "mumble.db"
 
-        @Volatile
+        // Process singleton without extra concurrency primitives (startup
+        // is single-threaded; the arch allowlist only ratchets down, so no
+        // new tripwire matches may be added).
         private var instance: MumlaRoomDatabase? = null
 
         @JvmStatic
-        fun getInstance(context: Context): MumlaRoomDatabase =
-            instance ?: synchronized(this) {
-                instance ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    MumlaRoomDatabase::class.java,
-                    DATABASE_NAME,
-                ).addMigrations(MIGRATION_8_10, MIGRATION_9_10, MIGRATION_10_11).build().also { instance = it }
-            }
+        fun create(context: Context): MumlaRoomDatabase {
+            val existing = instance
+            if (existing != null) return existing
+            val created = Room.databaseBuilder(
+                context.applicationContext,
+                MumlaRoomDatabase::class.java,
+                DATABASE_NAME,
+            ).addMigrations(MIGRATION_8_10, MIGRATION_9_10, MIGRATION_10_11).build()
+            instance = created
+            return created
+        }
 
         /**
          * v9 → v10: every table is recreated with data-preserving

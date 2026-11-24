@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.app
 
+import se.lublin.mumla.container
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ComponentName
@@ -86,6 +87,7 @@ import se.lublin.mumla.preference.SettingsActivity
 import se.lublin.mumla.servers.FavouriteServerListFragment
 import se.lublin.mumla.servers.ServerEditFragment
 import se.lublin.mumla.service.IMumlaService
+import se.lublin.mumla.feature.ChatLogFeature
 import se.lublin.mumla.service.MumlaService
 import se.lublin.mumla.util.CrashReporter
 import se.lublin.mumla.util.CrashReportSeenStore
@@ -666,7 +668,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val settings = Settings.getInstance(this)
+        val settings = this.container.settings
         mSettings = settings
 
         super.onCreate(savedInstanceState)
@@ -718,7 +720,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
 
         setStayAwake(settings.shouldStayAwake)
 
-        mDatabase = MumlaRoomDatabase.getInstance(this) // TODO add support for cloud storage
+        mDatabase = this.container.database // TODO add support for cloud storage
         // NPE-exact: the original dereferenced mDatabase unconditionally below.
         val database = mDatabase ?: throw NullPointerException("mDatabase")
         database.open()
@@ -1715,7 +1717,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                 return a.id == b.id && samePassword
             }
             // Fall back to the chat-log identity convention (normalized endpoint + username).
-            return samePassword && MumlaService.getServerKey(a) == MumlaService.getServerKey(b)
+            return samePassword && ChatLogFeature.serverKey(a) == ChatLogFeature.serverKey(b)
         }
 
         private val HEX_ARRAY = "0123456789abcdef".toCharArray()

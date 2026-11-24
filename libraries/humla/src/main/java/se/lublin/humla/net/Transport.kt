@@ -30,7 +30,7 @@ import se.lublin.humla.client.CryptCounts
  * TCP control channel. See
  * docs/target-architecture/transport.md.
  *
- * Android-free: no android.* imports. Owned by one Session; talks to the
+ * Android-free: no Android imports. Owned by one Session; talks to the
  * voice side only through [VoiceLink], so transport tests use a fake.
  */
 interface Transport {

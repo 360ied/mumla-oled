@@ -20,20 +20,31 @@ step 1 and only ever gets stricter.
 
 **Forbidden patterns** (regular expressions):
 `@Volatile`, `@Synchronized`, `\bsynchronized\s*\(`, `\bThread\s*[({]`,
-`\bHandlerThread\s*\(`, `\bHandler\s*\(`, `\brunBlocking\b`,
+`\bHandlerThread\s*\(`, `\bHandler\s*[\(.]`, `\brunBlocking\b`,
 `\bReentrantLock\b`, `\bReentrantReadWriteLock\b`, `\bExecutors\.`,
 `\bCountDownLatch\b`, `\bjava\.util\.concurrent\.locks\b`,
+`\bThreadPoolExecutor\b`, `\bScheduledThreadPoolExecutor\b`,
+`\bForkJoinPool\b`, `\bScheduledExecutorService\b`,
+`\bnewSingleThreadContext\b`,
+`\bGlobalScope\b`, `\basExecutor\b`, `\bTimer\s*\(`, `\bHandlerCompat\b`,
+`\bAlarmManager\b`, `\bWorkManager\b`,
 `\bkotlin\.concurrent\.thread\b`.
 
 `\bThread\s*[({]` catches both `Thread(...)` and Kotlin's `Thread { … }`.
 The word boundaries keep `currentThread(` from matching the `Thread`
 pattern and `createAudioHandler(` from matching the `Handler` pattern;
 `Thread.sleep`, `Thread.currentThread`, and friends are deliberately not
-matched (they are not thread creation). Java-style `synchronized (lock)`
+matched (they are not thread creation). The `Handler` pattern also matches
+`Handler.` so the `Handler.createAsync` factory cannot evade the tripwire
+(the boundary still keeps `ModelHandler.*` and `mainHandler.post` from
+matching). Java-style `synchronized (lock)`
 with a space matches, as does `Handler (`; only the import-qualified
 `kotlin.concurrent.thread` is matched, because bare prose (`render thread (`
-in comments) is too noisy. Comments are not stripped: a pattern named in
-a comment counts, which keeps the script simple and the comments honest.
+in comments) is too noisy. The constructor-form pools are listed
+separately: `\bThreadPoolExecutor\b` does not match
+`ScheduledThreadPoolExecutor`, because the preceding `d` is a word
+character. Comments are not stripped: a pattern named in a comment
+counts, which keeps the script simple and the comments honest.
 
 **Allowlist:** `scripts/architecture-allowlist.txt`, one entry per line:
 
@@ -128,12 +139,19 @@ types exist.
 ## Android-free packages
 
 The check fails if any file in these packages imports `android.*`,
-`androidx.*`, or an `R` class:
+`androidx.*`, or an `R` class, or uses a fully-qualified `android.*` /
+`androidx.*` reference, reflection (`Class.forName`, `getIdentifier`), or
+an `"android.` string literal without an import:
 
 - `se.lublin.humla.state`
 - `se.lublin.humla.client`
 - the non-JNI parts of `se.lublin.humla.net` (everything except the TLS
   socket factory, which uses Android's trust store APIs)
+
+The fully-qualified pattern is `\bandroid\s*\.`: every `android.*`
+subpackage is matched, so `android.graphics.*`, `android.bluetooth.*`,
+`android.hardware.*`, and `android.location.*` cannot be used without an
+import. `\bandroidx\s*\.` matches all `androidx.` references.
 
 This keeps state, transitions, the client state machine, and the reconnect
 policy runnable in plain JVM tests with virtual time.
@@ -148,10 +166,15 @@ in step 3, which is a strictness increase, not a relaxation.
 
 From step 6, `check_architecture.py` lists the feature classes in
 `app/src/main/java/se/lublin/mumla/feature/` (the classes that declare
-`fun start(scope: CoroutineScope)`) and fails if any file there names
-another file's feature class. Shared helpers in that package that are not
-features, such as the connection-line formatter that the chat log and TTS
-both use, may be referenced freely. Features get everything they share
+`fun start(scope: CoroutineScope)`) and fails if **any file in that
+package** names another file's feature class. The set is closed: any
+`fun start` with a different signature (including `suspend fun start`)
+fails instead of silently dropping out of the feature set. Shared
+helpers in that package that are not features, such as the
+connection-line formatter that the chat log and TTS both use, may be
+referenced freely, but they are scanned as referrers too: moving a
+cross-feature call into a start-less helper does not launder it.
+Features get everything they share
 from the container (see [app](app.md#features)); a feature that needs
 another feature's output means that output belongs in the container as a
 flow, such as the `talkKeys`, `speech`, and `appLog` hand-off flows.
@@ -164,9 +187,17 @@ From step 6, `check_architecture.py` fails if a file under `app/src/main`
 other than the `LocalFactsStore` implementation and the `db` package (which
 declares these methods) contains a call to `.addLocalMutedUser(`,
 `.removeLocalMutedUser(`, `.addLocalIgnoredUser(`, `.removeLocalIgnoredUser(`,
-`localMuteDao()`, `localIgnoreDao()`, or `.setMutedAndDeafened(`. The
-patterns are call sites, so declarations and tests never match, and the
-store's `suspend` path through the DAOs is covered by the DAO patterns.
+`localMuteDao()`, `localIgnoreDao()`, `.setMutedAndDeafened(`, or the DAO-level
+wrappers `insertLocalMutedUser(`, `deleteLocalMutedUser(`,
+`insertLocalIgnoredUser(`, `deleteLocalIgnoredUser(`. The database/DAO
+suspend writer is anchored on its receiver — `(database|db|dao).setLocalMute(`
+and `.setLocalIgnore(`, plus the read wrappers `localMutedUsers(` and
+`localIgnoredUsers(` — because the room database exposes the same rows
+through a public API. The sanctioned service funnel
+(`mService.setLocalMute` in `UserMenu.kt`) deliberately does not match:
+it goes through the store. The patterns are call sites, so declarations
+and tests never match, and the store's `suspend` path through the DAOs
+is covered by the DAO patterns.
 The session decides local mute, ignore, and self-mute, and its store is
 their only writer (see [state](state.md#self-mute-and-deafen)); before
 step 6, the adapter, the service, and the store all wrote them.
@@ -226,7 +257,15 @@ libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp: <jni.h>
   `NativeCrashTestJni.cpp` moved to `jni/diagnostics/`. The block above is
   the step-1 seed; the live list is the `[native]` section of
   `scripts/architecture-allowlist.txt`.
-- Logging through `<android/log.h>` is not forbidden.
+- Logging through `<android/log.h>` is not forbidden. Other `<sys/>` /
+  `<asm/>` / SIMD-intrinsic headers for CPU detection (such as
+  `<sys/auxv.h>`) remain allowed; only the listed I/O, thread, and JNI
+  headers are banned.
+
+Body-level indirection is also banned in the same three directories:
+`dlopen`, `dlsym`, `AAudio_`, `Oboe`, `oboe/`, `syscall`, `mmap`,
+`pthread_create`, `std::thread`, `__has_include`. All absent today; the
+tripwire fails on any occurrence.
 
 `voice_io/` is the only native directory allowed to include socket,
 AAudio, thread, and JNI headers. Third-party submodules (`opus`,

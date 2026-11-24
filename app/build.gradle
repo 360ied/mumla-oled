@@ -23,7 +23,6 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.legacy.kapt)
     alias(libs.plugins.kotlin.parcelize)
-    alias(libs.plugins.hilt)
 }
 
 // Paparazzi opt-in (-PwithPaparazzi): applying the plugin unconditionally
@@ -200,20 +199,20 @@ dependencies {
     implementation libs.preference
     implementation libs.media
     implementation libs.jsoup
-    // Migration Slice 0 scaffold: Hilt plugin requires the runtime on the classpath.
-    // No code uses it yet (first consumer is Slice 2's DatabaseModule/SettingsModule).
-    implementation libs.hilt.android
-    kapt libs.hilt.compiler
-    // Migration Slice 2 data layer: Room + DataStore + coroutines. Room compiler
-    // and androidx-hilt compiler run under kapt (no stable KSP for Kotlin 2.4).
+    // Migration Slice 2 data layer: Room + DataStore + coroutines. The Room
+    // compiler runs under kapt (no stable KSP for Kotlin 2.4).
     implementation libs.coroutines.core
+    // LocalFactsStore publishes persistent collections to the library's
+    // LocalFacts value (step 6).
+    implementation libs.collections.immutable
     implementation libs.room.runtime
     implementation libs.room.ktx
     implementation libs.datastore.preferences
     kapt libs.room.compiler
-    kapt libs.androidx.hilt.compiler
+    kapt libs.kotlin.metadata.jvm
 
     testImplementation libs.junit
+    testImplementation project(":libraries:humla-testing")
     // Robolectric pilot for the comment-dialog fragment tests; pinned: verify @Config(sdk) support before bumping.
     testImplementation libs.robolectric
     // Migration Slice 2: MigrationTestHelper for the v9 -> v10 DB migration test.

@@ -1,5 +1,6 @@
 package se.lublin.mumla.app
 
+import se.lublin.mumla.container
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import se.lublin.mumla.Settings
@@ -10,7 +11,7 @@ abstract class BaseActivity : AppCompatActivity(), Settings.OnSettingChangedList
     override fun onCreate(savedInstanceState: Bundle?) {
         MumlaApplication.applyTheme(this)
         super.onCreate(savedInstanceState)
-        val settings = Settings.getInstance(this)
+        val settings = this.container.settings
         mSettings = settings
         settings.registerListener(this)
     }

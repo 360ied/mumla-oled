@@ -45,14 +45,12 @@ coroutines = "1.11.0"
 compose-bom = "2026.09.00"
 navigation-compose = "2.10.2"
 activity-compose = "1.13.0"
-hilt-navigation-compose = "1.4.0"
 lifecycle = "2.11.0"
-# Hilt 2.60.1 requires AGP >= 9 (satisfied by the adoption above). NOTE for
-# slice 7: re-verify androidx-hilt 1.4.0 against Hilt 2.60 when adding
-# hilt-navigation-compose.
-hilt = "2.60.1"
-androidx-hilt = "1.4.0"
 room = "2.8.5"
+# Room's kapt processor needs a metadata reader that understands Kotlin 2.4
+# class files. Hilt's compiler used to pull this in transitively; the pin is
+# explicit now that Hilt is gone, and stays until kapt -> KSP.
+kotlin-metadata-jvm = "2.3.21"
 datastore-preferences = "1.2.1"
 # Legacy UI / test pins migrated from hardcoded strings in :app and
 # :libraries:humla (build/catalog-cleanup). Floors binding, patches float.
@@ -90,18 +88,15 @@ coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", ve
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
 navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation-compose" }
 activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
-hilt-navigation-compose = { module = "androidx.hilt:hilt-navigation-compose", version.ref = "hilt-navigation-compose" }
 lifecycle-service = { module = "androidx.lifecycle:lifecycle-service", version.ref = "lifecycle" }
 lifecycle-viewmodel-ktx = { module = "androidx.lifecycle:lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
 lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 lifecycle-runtime-ktx = { module = "androidx.lifecycle:lifecycle-runtime-ktx", version.ref = "lifecycle" }
 lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
-hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }
-hilt-compiler = { module = "com.google.dagger:hilt-compiler", version.ref = "hilt" }
-androidx-hilt-compiler = { module = "androidx.hilt:hilt-compiler", version.ref = "androidx-hilt" }
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+kotlin-metadata-jvm = { module = "org.jetbrains.kotlin:kotlin-metadata-jvm", version.ref = "kotlin-metadata-jvm" }
 room-testing = { module = "androidx.room:room-testing", version.ref = "room" }
 datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "datastore-preferences" }
 appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
@@ -133,5 +128,4 @@ android-library = { id = "com.android.library", version.ref = "agp" }
 # kapt runs under AGP's legacy-kapt instead.
 legacy-kapt = { id = "com.android.legacy-kapt", version.ref = "agp" }
 kotlin-parcelize = { id = "org.jetbrains.kotlin.plugin.parcelize", version.ref = "kotlin" }
-hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 paparazzi = { id = "app.cash.paparazzi", version.ref = "paparazzi" }

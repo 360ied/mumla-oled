@@ -481,28 +481,9 @@ class ChannelListAdapter(
     }
 
     override fun onLocalUserStateUpdated(user: IUser) {
+        // The session owns local mute/ignore and persists them through its
+        // LocalFactsStore; the adapter only repaints.
         notifyDataSetChanged()
-
-        // Add or remove registered user from local mute history
-        // NPE-exact: the original dereferenced the service and server unconditionally.
-        val service = mService ?: throw NullPointerException("mService")
-        val server: Server? = service.getTargetServer()
-        val target = server ?: throw NullPointerException("server")
-
-        if (user.userId >= 0 && target.isSaved()) {
-            Thread {
-                if (user.isLocalMuted) {
-                    mDatabase.addLocalMutedUser(target.id, user.userId)
-                } else {
-                    mDatabase.removeLocalMutedUser(target.id, user.userId)
-                }
-                if (user.isLocalIgnored) {
-                    mDatabase.addLocalIgnoredUser(target.id, user.userId)
-                } else {
-                    mDatabase.removeLocalIgnoredUser(target.id, user.userId)
-                }
-            }.start()
-        }
     }
 
     private class UserViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {

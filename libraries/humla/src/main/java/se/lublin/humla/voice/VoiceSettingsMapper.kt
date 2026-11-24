@@ -18,14 +18,25 @@
 package se.lublin.humla.voice
 
 import se.lublin.humla.Constants
-import se.lublin.humla.protocol.MAX_AMPLITUDE_BOOST
-import se.lublin.humla.protocol.MAX_INPUT_BITRATE
-import se.lublin.humla.protocol.MIN_AMPLITUDE_BOOST
-import se.lublin.humla.protocol.MIN_INPUT_BITRATE
+
+/** Floor for an input bitrate: no downstream sanitizer floors the native
+ * target (only the bandwidth-degraded copy is floored at 8000), and the
+ * settings UI mins at the same value. */
+internal const val MIN_INPUT_BITRATE = 8000
+
+/** Ceiling for an input bitrate: Opus NB/WB/SW/FB tops out at 510kbit/s;
+ * UI max is far below; values above are almost certainly a caller bug. */
+internal const val MAX_INPUT_BITRATE = 510000
+
+/** Gain range for the amplitude boost: 0 (mute) to 4x (+12dB).
+ * Negative gain would invert phase; huge gain overflows the native limiter. */
+internal const val MIN_AMPLITUDE_BOOST = 0f
+internal const val MAX_AMPLITUDE_BOOST = 4f
 
 /**
- * Maps user and server knobs to [VoiceSettings]. Reuses the conversion
- * rules from InputModes and ActivityInputMode without depending on them.
+ * Maps preference values and settings-delta fields to [VoiceSettings].
+ * Validation lives here so a rejected settings delta can be refused before
+ * any other part of the delta is applied.
  */
 object VoiceSettingsMapper {
     fun inputModeFor(transmitMode: Int): InputMode = when (transmitMode) {
@@ -33,6 +44,13 @@ object VoiceSettingsMapper {
         Constants.TRANSMIT_CONTINUOUS -> InputMode.CONTINUOUS
         Constants.TRANSMIT_VOICE_ACTIVITY -> InputMode.VOICE_ACTIVITY
         else -> throw IllegalArgumentException("Unknown transmit mode: $transmitMode")
+    }
+
+    /** Reverse of [inputModeFor], for the interim IHumlaSession read. */
+    fun transmitModeFor(inputMode: InputMode): Int = when (inputMode) {
+        InputMode.PUSH_TO_TALK -> Constants.TRANSMIT_PUSH_TO_TALK
+        InputMode.CONTINUOUS -> Constants.TRANSMIT_CONTINUOUS
+        InputMode.VOICE_ACTIVITY -> Constants.TRANSMIT_VOICE_ACTIVITY
     }
 
     fun vadFor(threshold: Float): Pair<Float, Float> {
@@ -44,8 +62,8 @@ object VoiceSettingsMapper {
 
     /**
      * Raw half-duplex preference (Settings.isHalfDuplex). Gating to the
-     * push-to-talk mode happens at pipeline build (legacy InputModes
-     * parity: the holder keeps the raw flag, the builder gates), so the
+     * push-to-talk mode happens at pipeline build (the raw flag survives
+     * transmit-mode round-trips), so the
      * preference survives transmit-mode round-trips; the spec effective
      * value is `halfDuplex && inputMode == PUSH_TO_TALK`.
      */
@@ -117,8 +135,8 @@ object VoiceSettingsMapper {
         if (framesPerPacket != null) {
             next = next.copy(targetFramesPerPacket = Constants.sanitizeFramesPerPacket(framesPerPacket))
         }
-        // Raw preference stored; the builder gates to push-to-talk (legacy
-        // holder parity), so mode-only switches preserve the PTT+half
+        // Raw preference stored; the builder gates to push-to-talk, so
+        // mode-only switches preserve the PTT+half
         // preference across a VAD round-trip.
         if (halfDuplex != null) {
             next = next.copy(halfDuplex = halfDuplex)

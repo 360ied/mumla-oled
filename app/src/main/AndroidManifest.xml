@@ -79,6 +79,10 @@
             android:enabled="true"
             android:foregroundServiceType="microphone" />
 
+        <receiver
+            android:name=".service.NotificationActionReceiver"
+            android:exported="false" />
+
         <activity
             android:name=".app.MumlaActivity"
             android:label="@string/app_name"

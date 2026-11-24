@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.preference
 
+import se.lublin.mumla.container
 import android.content.DialogInterface
 import android.os.Bundle
 import android.util.TypedValue
@@ -45,11 +46,11 @@ class CertificateSelectActivity : BaseActivity(), DialogInterface.OnClickListene
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val settings = Settings.getInstance(this)
+        val settings = this.container.settings
         val certificates = ArrayList<ICertificateItem>()
         mCertificates = certificates
         certificates.add(NoCertificateItem(getString(R.string.no_certificate), settings))
-        val database: MumlaDatabase = MumlaRoomDatabase.getInstance(this)
+        val database: MumlaDatabase = this.container.database
         for (certificate in database.getCertificates()) {
             certificates.add(CertificateItem(certificate, settings))
         }

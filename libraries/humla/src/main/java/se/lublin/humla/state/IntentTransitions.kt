@@ -63,6 +63,10 @@ fun applyPttIntent(state: SessionState, pressed: Boolean): IntentResult {
     return IntentResult(state.copy(local = state.local.copy(pttPressed = pressed)))
 }
 
+/** togglePtt: flips the local press state inside one atomic update. */
+fun applyTogglePttIntent(state: SessionState): IntentResult =
+    IntentResult(state.copy(local = state.local.copy(pttPressed = !state.local.pttPressed)))
+
 /** setLocalMute / setLocalIgnore: device-local, persisted by caller for registered users. */
 fun applyLocalMuteIntent(state: SessionState, session: Int, muted: Boolean): IntentResult {
     val user = state.server.users[session] ?: return IntentResult(state)

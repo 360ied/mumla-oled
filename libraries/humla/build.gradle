@@ -17,13 +17,10 @@
 
 // Migration Slice 0: plugins resolve via the version catalog (gradle/libs.versions.toml).
 // AGP 9 built-in Kotlin provides the kotlin-android plugin (no alias) and the
-// `kotlin { compilerOptions }` extension; kapt runs under legacy-kapt.
-// TODO: migrate kapt -> KSP when stable KSP for Kotlin 2.4 is published.
+// `kotlin { compilerOptions }` extension.
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.legacy.kapt)
     alias(libs.plugins.kotlin.parcelize)
-    alias(libs.plugins.hilt)
 }
 
 repositories {
@@ -38,10 +35,6 @@ dependencies {
     implementation libs.annotations
     implementation libs.minidns.hla
     implementation libs.minidns.android21
-    // Migration Slice 0 scaffold: Hilt plugin requires the runtime on the classpath.
-    // No code uses it yet.
-    implementation libs.hilt.android
-    kapt libs.hilt.compiler
     // Migration Slice 4 coroutines service core: LifecycleService base +
     // lifecycleScope is the service scope; ConnectionScope + UDP Channel need
     // coroutines-core. api for lifecycle (public base class); coroutines stays
@@ -63,6 +56,7 @@ dependencies {
     implementation libs.room.runtime
     testImplementation libs.coroutines.test
     testImplementation libs.junit
+    testImplementation project(":libraries:humla-testing")
     testImplementation libs.kotlin.reflect
     // AudioDeviceInfo/Builder doubles for the route + input-modes JVM tests.
     testImplementation libs.mockito.core

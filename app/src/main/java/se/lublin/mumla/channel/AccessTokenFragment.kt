@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.channel
 
+import se.lublin.mumla.container
 import android.content.Context
 import android.os.Bundle
 import android.util.Log
@@ -54,7 +55,7 @@ class AccessTokenFragment : HumlaServiceFragment() {
 
         mTokens = ArrayList(getAccessTokens())
         mTokenAdapter = TokenAdapter(context, mTokens ?: throw NullPointerException("mTokens"))
-        mDatabase = MumlaRoomDatabase.getInstance(context)
+        mDatabase = context.container.database
     }
 
     override fun onCreateView(

@@ -18,14 +18,16 @@
 
 package se.lublin.humla
 
+import android.app.Notification
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.wifi.WifiManager
 import android.os.Binder
-import android.os.Handler
+import android.os.Build
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
@@ -41,7 +43,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
@@ -64,7 +66,7 @@ import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.ConnectTarget
 import se.lublin.humla.client.HumlaClient
-import se.lublin.humla.client.LocalFacts
+import se.lublin.humla.client.InMemoryLocalFactsStore
 import se.lublin.humla.client.LocalFactsStore
 import se.lublin.humla.client.NetworkMonitor
 import se.lublin.humla.client.ReconnectPolicy
@@ -83,9 +85,6 @@ import se.lublin.humla.model.WhisperTargetChannel
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.voice.VoiceEngine
-import se.lublin.humla.protocol.InputModes
-import se.lublin.humla.protocol.StateEventLogger
-import se.lublin.humla.protocol.validateAudioDelta
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.state.UserHandle
@@ -100,6 +99,8 @@ import se.lublin.humla.util.VoiceTargetMode
 import java.io.File
 import java.io.IOException
 import java.time.Clock
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.collections.immutable.toPersistentList
@@ -122,8 +123,6 @@ private data class PendingConnection(
     val trustStore: String? = null,
     val trustStorePassword: String? = null,
     val trustStoreFormat: String? = null,
-    val localMuteHistory: List<Int>? = null,
-    val localIgnoreHistory: List<Int>? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -138,9 +137,7 @@ private data class PendingConnection(
             accessTokens == other.accessTokens &&
             trustStore == other.trustStore &&
             trustStorePassword == other.trustStorePassword &&
-            trustStoreFormat == other.trustStoreFormat &&
-            localMuteHistory == other.localMuteHistory &&
-            localIgnoreHistory == other.localIgnoreHistory
+            trustStoreFormat == other.trustStoreFormat
     }
 
     override fun hashCode(): Int {
@@ -153,8 +150,6 @@ private data class PendingConnection(
         result = 31 * result + (trustStore?.hashCode() ?: 0)
         result = 31 * result + (trustStorePassword?.hashCode() ?: 0)
         result = 31 * result + (trustStoreFormat?.hashCode() ?: 0)
-        result = 31 * result + (localMuteHistory?.hashCode() ?: 0)
-        result = 31 * result + (localIgnoreHistory?.hashCode() ?: 0)
         return result
     }
 }
@@ -170,6 +165,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         const val RECONNECT_DELAY_MAX = ReconnectPolicy.RECONNECT_DELAY_MAX
 
         private const val WAKELOCK_GRACE_MS = 15000L
+        private const val NOTIFICATION_ID = 1
 
         @JvmStatic
         fun init(context: Context?) {
@@ -189,57 +185,46 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             ReconnectPolicy.delayForAttempts(attempts)
     }
 
-    private val inputModes = InputModes()
-    private lateinit var routeControl: RouteControl
-    private lateinit var policyCollector: PolicyCollector
-    // Service-lifetime talk levels (step 5a.3a; VoiceEngine owns them from
-    // 5a.3b, sole writer from 5a.4). Built here next to VoiceEngine and
-    // HumlaClient and passed to both, so Session builds handles with it.
-    private val talkPublisher = TalkActivityPublisher()
-    private val voiceSettingsFlow = MutableStateFlow(VoiceSettings.initial())
-    private val routePrefsFlow = MutableStateFlow(
-        RoutePreferences(bluetoothSco = false, handsetStream = AudioManager.STREAM_MUSIC),
-    )
+    private lateinit var appRuntime: HumlaRuntime
+
+    /**
+     * Observers registered through this service instance's binder. Binder
+     * entry points may run off the main thread, and onDestroy iterates this
+     * set on main, so use the same concurrent set as HumlaCallbacks.
+     */
+    private val boundObservers: MutableSet<IHumlaObserver> =
+        Collections.newSetFromMap(ConcurrentHashMap<IHumlaObserver, Boolean>())
+
+    /** The runtime's mirror; live handles read it across reconnects. */
+    val sessionState: StateFlow<SessionState> get() = appRuntime.sessionState
+
+    /** Points at the runtime-owned callbacks once onCreate has run. */
+    private var mCallbacks: HumlaCallbacks = HumlaCallbacks()
 
     private var mWakeLock: PowerManager.WakeLock? = null
     private var mWifiLock: WifiManager.WifiLock? = null
-    private lateinit var mHandler: Handler
-    private lateinit var mCallbacks: HumlaCallbacks
-
-    // Mirrored session state: single flow across reconnects so live handles
-    // survive (Session owns per-attempt flows; this mirrors the current one).
-    private val _sessionState = MutableStateFlow(emptySessionState())
-    val sessionState: StateFlow<SessionState> = _sessionState.asStateFlow()
-
-    private var stateLogger: StateEventLogger? = null
-
-    private lateinit var voiceLink: VoiceEngine
-    private lateinit var client: HumlaClient
-    private val networkFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private var connectivityManager: ConnectivityManager? = null
 
     private val pendingConnection = AtomicReference(PendingConnection())
     private val pendingVoiceTarget = AtomicInteger(0)
     private val lastServer = AtomicReference<Server?>(null)
 
     private fun clientStateIsConnected(): Boolean {
-        if (!::client.isInitialized) return false
-        return client.state.value is ClientState.Connected
+        if (!::appRuntime.isInitialized) return false
+        return appRuntime.client.state.value is ClientState.Connected
     }
 
     private fun currentSessionId(): Int {
         return try {
-            client.currentSession.value?.id?.toInt() ?: 0
+            appRuntime.client.currentSession.value?.id?.toInt() ?: 0
         } catch (e: Exception) {
             0
         }
     }
 
     private fun currentSession(): Session? {
-        if (!::client.isInitialized) return null
+        if (!::appRuntime.isInitialized) return null
         return try {
-            client.currentSession.value
+            appRuntime.client.currentSession.value
         } catch (e: Exception) {
             null
         }
@@ -258,7 +243,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     private fun stopSelfIfIdle(startId: Int) {
-        if (!::client.isInitialized || client.state.value is ClientState.Idle) {
+        if (!::appRuntime.isInitialized || appRuntime.client.state.value is ClientState.Idle) {
             stopSelf(startId)
         }
     }
@@ -294,14 +279,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             val isConnect = ACTION_CONNECT == intent.action
             // Pre-onCreate commands cannot connect: lateinits (client, route,
             // builder) are untouched, so stop idle instead of crashing.
-            if (isConnect && !::client.isInitialized) {
+            if (isConnect && !::appRuntime.isInitialized) {
                 Log.w(TAG, "$ACTION_CONNECT before onCreate; ignoring.")
                 stopSelfIfIdle(startId)
                 return START_NOT_STICKY
             }
             // Guard initialization (unit tests construct the service without
             // onCreate): without a client there is nothing to connect.
-            if (isConnect && ::client.isInitialized && client.state.value is ClientState.Connecting) {
+            if (isConnect && ::appRuntime.isInitialized && appRuntime.client.state.value is ClientState.Connecting) {
                 Log.v(TAG, "Ignoring duplicate connect request while already connecting")
                 return START_NOT_STICKY
             }
@@ -356,322 +341,37 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             mWifiLock = null
         }
 
-        mHandler = Handler(mainLooper)
-        mCallbacks = HumlaCallbacks()
-        stateLogger = StateEventLogger(this, this)
-        val audioPlatform = try {
-            AndroidAudioPlatform(getSystemService(Context.AUDIO_SERVICE) as AudioManager?)
-        } catch (e: Exception) {
-            Log.w(TAG, "VoIP mode: no AudioManager", e)
-            AndroidAudioPlatform(null)
-        }
-        // RouteControl starts its route thread and builds the SCO link on it
-        // through this factory, with a listener that reports to itself, so
-        // the link is confined to the controller's own thread; the
-        // controller destroys it on close.
-        val scoFactory: (RouteThread, ScoLink.Listener) -> ScoLink? = { routeThread, listener ->
-            try {
-                BluetoothScoManager(this, listener, routeThread)
-            } catch (e: Exception) {
-                Log.w(TAG, "SCO: no AudioManager", e)
-                null
-            }
-        }
-        routeControl = RouteControl.create(audioPlatform, scoFactory, routePrefsFlow, lifecycleScope)
-        routeControl.onInit()
-        routeControl.start()
+        appRuntime = runtime()
+        mCallbacks = appRuntime.callbacks
 
-        // One voice control thread for VoiceEngine (network + pipeline
-        // commands): the spec's single executor for start/stop, in command
-        // order. Sharing it keeps teardown and destroy serialized without
-        // a second thread.
-        val voiceThread = Dispatchers.IO.limitedParallelism(1)
-        // Application-scoped voice engine (survives reconnects). Owns the
-        // native voice path plus the Kotlin capture/render pipeline, following
-        // RouteState on the shared voice control thread. The tunnel sink
-        // routes to the current session's transport (present only in tunnel
-        // mode).
-        voiceLink = VoiceEngine(
-            tunnelSink = { packet ->
+        // The connection notification comes from an application-lifetime
+        // feature. Post every update while connecting or connected, and
+        // remove it on Idle or Failed: a bound service outlives the
+        // connection. Callers use startService, not startForegroundService,
+        // so there is no five-second deadline and a bound-but-Idle service
+        // need not flash the connecting placeholder; the collector promotes
+        // it on the first non-Idle state. Switching callers to
+        // startForegroundService requires posting here unconditionally.
+        val foreground = foregroundNotification()
+        if (foreground != null) {
+            val initial = appRuntime.client.state.value
+            if (initial !is ClientState.Idle && initial !is ClientState.Failed) {
+                postForeground(foreground.value)
+            }
+            lifecycleScope.launch {
                 try {
-                    currentSession()?.transport?.sendTunnelled(packet)
-                } catch (ignored: Exception) {
-                }
-            },
-            talkPublisher = talkPublisher,
-            scope = CoroutineScope(SupervisorJob() + voiceThread),
-            context = this,
-            routeStates = routeControl.state,
-            prefs = routePrefsFlow,
-        )
-
-        policyCollector = PolicyCollector(
-            sessionStates = PolicyCollector.FlowOfStates { _sessionState },
-            settings = voiceSettingsFlow,
-            appScope = lifecycleScope,
-        )
-        // Policy push (5a.3b gate + filter) and settings push (5a.4 capture
-        // and render): the collector maps SessionState to VoicePolicy and
-        // VoiceEngine forwards both to native sequence locks.
-        lifecycleScope.launch {
-            try {
-                policyCollector.policy.collect { voiceLink.setPolicy(it) }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-            }
-        }
-        lifecycleScope.launch {
-            try {
-                voiceSettingsFlow.collect { voiceLink.setSettings(it) }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-            }
-        }
-
-        lifecycleScope.launch {
-            try {
-                var lastScoActive: Boolean? = null
-                routeControl.state.collect { rs ->
-                    try {
-                        val scoActive = rs is RouteState.Ready &&
-                            rs.route == AppliedRoute.VOICE_SCO
-                        when (rs) {
-                            is RouteState.Ready, is RouteState.Fallback -> {
-                                onAudioRouteChanged()
-                                mCallbacks.onAudioRouteChanged()
-                            }
-                            is RouteState.Settling -> {
-                                // Voice keeps streams; observers get no signal
-                                // (spec has no Settling callback).
-                            }
-                            is RouteState.Idle -> {
-                                onAudioRouteChanged()
-                                mCallbacks.onAudioRouteChanged()
-                            }
+                    combine(appRuntime.client.state, foreground) { state, notification ->
+                        state to notification
+                    }.collect { (state, notification) ->
+                        when (state) {
+                            is ClientState.Idle, is ClientState.Failed ->
+                                stopForeground(STOP_FOREGROUND_REMOVE)
+                            else -> postForeground(notification)
                         }
-                        if (lastScoActive != null && lastScoActive != scoActive) {
-                            mCallbacks.onBluetoothScoChanged(scoActive)
-                        }
-                        lastScoActive = scoActive
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
                     }
-                }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-            }
-        }
-        // TalkActivity repaint hints (step 5a.3a): on every talkActivity
-        // change, a hint for every user in the session, with no snapshot
-        // comparison — the bridge carries no transition memory (the
-        // no-transition-memory rule from 1fd8940f, after the stuck-indicator
-        // fix ad164673). Users cleared from talkActivity are still in the
-        // session, so clears get hints too. talkActivity emits only when a
-        // level changes, so this is a few emissions a second. Every consumer
-        // re-reads the level on use and accepts repeated hints.
-        lifecycleScope.launch {
-            try {
-                talkPublisher.talkActivity.collect { activity ->
-                    try {
-                        // The local user's state lives in selfTalking, not
-                        // the remote table, so its hint carries an override.
-                        // Old code built the same one-off hint with a set
-                        // state; getSessionId throws while unsynced, in
-                        // which case nobody gets the override.
-                        val selfSession = try {
-                            currentSession()?.getSessionId()
-                        } catch (e: IllegalStateException) {
-                            null
-                        }
-                        for (session in _sessionState.value.server.users.keys) {
-                            val hint = if (session == selfSession) {
-                                UserHandle(
-                                    session,
-                                    sessionState,
-                                    talkPublisher.talkActivity,
-                                    talkStateOverride = if (activity.selfTalking) {
-                                        TalkState.TALKING
-                                    } else {
-                                        TalkState.PASSIVE
-                                    },
-                                )
-                            } else {
-                                UserHandle(session, sessionState, talkPublisher.talkActivity)
-                            }
-                            mCallbacks.onUserTalkStateUpdated(hint)
-                        }
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                    }
-                }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-            }
-        }
-        lifecycleScope.launch {
-            try {
-                routeControl.events.collect { ev ->
-                    try {
-                        when (ev) {
-                            is RouteEvent.ScoFailed ->
-                                mCallbacks.onBluetoothScoFailed(ev.reason)
-                            is RouteEvent.RouteChanged -> {
-                                // State collector already fanned out for every
-                                // publish. Intentionally lossy: StateFlow
-                                // conflates rapid Ready(A)->Ready(B) flips to
-                                // B for late collectors, while this event bus
-                                // preserves each edge. UI/telemetry needing
-                                // every edge should consume events here.
-                            }
-                        }
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                    }
-                }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-            }
-        }
-
-        // LocalFacts persistence division of labor (legacy parity): the app
-        // adapter writes mute/ignore straight to the database on toggle and
-        // ConfigDelta reloads them at the next connect; the writes below
-        // additionally keep the pending snapshot current so a reconnect in
-        // this process picks them up even before the next apply(). Self
-        // mute/deafen stays app-owned (settings, re-pushed post-sync).
-        val localFactsStore = object : LocalFactsStore {
-            override suspend fun load(serverId: Long): LocalFacts {
-                val pending = pendingConnection.get()
-                return LocalFacts(
-                    mutedUserIds = (pending.localMuteHistory ?: emptyList()).toSet()
-                        .let { kotlinx.collections.immutable.persistentSetOf(*it.toTypedArray()) },
-                    ignoredUserIds = (pending.localIgnoreHistory ?: emptyList()).toSet()
-                        .let { kotlinx.collections.immutable.persistentSetOf(*it.toTypedArray()) },
-                    selfMuted = false,
-                    selfDeafened = false,
-                )
-            }
-
-            override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) {
-                var current = pendingConnection.get()
-                while (true) {
-                    val list = current.localMuteHistory?.toMutableList() ?: mutableListOf()
-                    if (muted) {
-                        if (!list.contains(userId)) list.add(userId)
-                    } else {
-                        list.remove(userId)
-                    }
-                    val next = current.copy(localMuteHistory = list.toList())
-                    if (pendingConnection.compareAndSet(current, next)) return
-                    current = pendingConnection.get()
-                }
-            }
-            override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) {
-                var current = pendingConnection.get()
-                while (true) {
-                    val list = current.localIgnoreHistory?.toMutableList() ?: mutableListOf()
-                    if (ignored) {
-                        if (!list.contains(userId)) list.add(userId)
-                    } else {
-                        list.remove(userId)
-                    }
-                    val next = current.copy(localIgnoreHistory = list.toList())
-                    if (pendingConnection.compareAndSet(current, next)) return
-                    current = pendingConnection.get()
-                }
-            }
-            override suspend fun setSelfMuteDeaf(muted: Boolean, deafened: Boolean) = Unit
-        }
-
-        val networkMonitor = object : NetworkMonitor {
-            override val available = networkFlow.asSharedFlow()
-        }
-
-        // Always-registered network callback (Client collects only while
-        // Reconnecting; repeated events while Connecting are ignored there).
-        // Retained for unregister in onDestroy; the system holds binder refs.
-        try {
-            val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager?
-            connectivityManager = cm
-            if (cm != null) {
-                val callback = object : ConnectivityManager.NetworkCallback() {
-                    override fun onAvailable(network: Network) {
-                        networkFlow.tryEmit(Unit)
-                    }
-                }
-                networkCallback = callback
-                cm.registerDefaultNetworkCallback(callback)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error registering network callback: " + e.message)
-        }
-
-        client = HumlaClient(
-            parentScope = lifecycleScope,
-            transports = DefaultTransportFactory(),
-            voiceLifecycle = voiceLink,
-            routeLifecycle = routeControl,
-            voiceLink = voiceLink,
-            network = networkMonitor,
-            localFactsStore = localFactsStore,
-            talkActivity = talkPublisher.talkActivity,
-            clock = Clock.systemUTC(),
-            observer = mCallbacks,
-            mainPoster = { r -> mHandler.post(r) },
-            denyFormatter = { event ->
-                try {
-                    stateLogger?.denyReason(event) ?: "Permission denied"
                 } catch (e: Exception) {
-                    "Permission denied"
+                    if (e is CancellationException) throw e
                 }
-            },
-        )
-
-        // Mirror the current session's state into the single service flow so
-        // live handles survive reconnects. Clear on disconnect. collectLatest:
-        // the inner collection suspends forever, so a nested collect would
-        // pin the first session and stall every reconnect after it.
-        lifecycleScope.launch {
-            try {
-                client.currentSession.collectLatest { session ->
-                    if (session == null) {
-                        _sessionState.value = emptySessionState()
-                    } else {
-                        try {
-                            session.state.collect { s ->
-                                _sessionState.value = s
-                            }
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-            }
-        }
-
-        // Chat-log adapter: semantic events to today's logger strings.
-        // collectLatest for the same reason: each session's event stream
-        // ends with its scope, and the next session must be observed.
-        lifecycleScope.launch {
-            try {
-                client.currentSession.collectLatest { session ->
-                    if (session != null) {
-                        try {
-                            session.events.collect { event ->
-                                try {
-                                    stateLogger?.log(listOf(event), session.state.value)
-                                } catch (ignored: Exception) {
-                                }
-                            }
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
             }
         }
 
@@ -679,7 +379,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         // fanout (for MumlaService UI: restore mute, overlay, notifications).
         lifecycleScope.launch {
             try {
-                client.state.collect { s ->
+                appRuntime.client.state.collect { s ->
                     when (s) {
                         is ClientState.Idle -> {
                             try {
@@ -688,7 +388,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             } catch (ignored: Exception) {
                             }
                             releaseWifiLock()
-                            _sessionState.value = emptySessionState()
                             resetVoiceTargetSilent()
                             onConnectionDisconnected(null)
                         }
@@ -744,7 +443,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             } catch (ignored: Exception) {
                             }
                             acquireWifiLock()
-                            _sessionState.value = emptySessionState()
                             resetVoiceTargetSilent()
                             onConnectionDisconnected(s.lastError.toHumlaException())
                         }
@@ -755,7 +453,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             } catch (ignored: Exception) {
                             }
                             releaseWifiLock()
-                            _sessionState.value = emptySessionState()
                             resetVoiceTargetSilent()
                             // Trust failures surface via onTLSHandshakeFailed below;
                             // still fan out the terminal disconnect for UI.
@@ -807,25 +504,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun onDestroy() {
-        // Order matters: disconnect first (async teardown onto the client
-        // dispatcher), owned teardowns next (each close launches a
-        // NonCancellable child so parent-scope cancellation in
-        // super.onDestroy() cannot truncate SCO/mode/mic release), then
-        // synchronous releases, super.onDestroy() last.
+        // The container owns everything application-scoped: this service only
+        // ends the connection, releases its own locks, and unregisters the
+        // observers it registered through its binder.
         try {
-            if (::client.isInitialized) client.disconnect()
-        } catch (ignored: Exception) {
-        }
-        try {
-            val callback = networkCallback
-            networkCallback = null
-            if (callback != null) {
-                try {
-                    connectivityManager?.unregisterNetworkCallback(callback)
-                } catch (ignored: Exception) {
-                }
-            }
-            connectivityManager = null
+            appRuntime.client.disconnect()
         } catch (ignored: Exception) {
         }
         try {
@@ -833,22 +516,11 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             if (wakeLock != null && wakeLock.isHeld) wakeLock.release()
         } catch (ignored: Exception) {
         }
-        try {
-            if (::routeControl.isInitialized) routeControl.close()
-        } catch (ignored: Exception) {
+        for (observer in boundObservers.toList()) {
+            boundObservers.remove(observer)
+        mCallbacks.unregisterObserver(observer)
         }
-        // Voice teardown: VoiceEngine.close joins capture/render on the
-        // control thread, then stops and destroys native, without blocking
-        // main, so the RenderGuard/CaptureGuard asserts never fire.
-        try {
-            voiceLink.close()
-        } catch (ignored: Exception) {
-        }
-        try {
-            if (::policyCollector.isInitialized) policyCollector.close()
-        } catch (ignored: Exception) {
-        }
-        _sessionState.value = emptySessionState()
+        boundObservers.clear()
         resetVoiceTargetSilent()
         releaseWifiLock()
         super.onDestroy()
@@ -905,7 +577,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             accessTokens = (pending.accessTokens ?: emptyList()).toPersistentList(),
         )
         try {
-            client.connect(target)
+            appRuntime.client.connect(target)
         } catch (e: Exception) {
             Log.e(TAG, "Connect failed", e)
         }
@@ -913,7 +585,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
     open override fun disconnect() {
         try {
-            if (::client.isInitialized) client.disconnect()
+            if (::appRuntime.isInitialized) appRuntime.client.disconnect()
         } catch (ignored: Exception) {
         }
     }
@@ -923,19 +595,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     // route thread, and callers query from main. The same test as the
     // route collector's onBluetoothScoChanged, so the two cannot disagree.
     open override fun isBluetoothScoActive(): Boolean {
-        if (!::routeControl.isInitialized) return false
-        val rs = routeControl.state.value
+        if (!::appRuntime.isInitialized) return false
+        val rs = appRuntime.routeControl.state.value
         return rs is RouteState.Ready && rs.route == AppliedRoute.VOICE_SCO
     }
 
     open override fun isMediaRouteActive(): Boolean {
-        return if (::routeControl.isInitialized) routeControl.isMediaRouteActive else false
+        return if (::appRuntime.isInitialized) appRuntime.routeControl.isMediaRouteActive else false
     }
 
     open override fun retryBluetoothSco(): Boolean {
-        if (!::routeControl.isInitialized) return false
+        if (!::appRuntime.isInitialized) return false
         return try {
-            routeControl.retrySco()
+            appRuntime.routeControl.retrySco()
             true
         } catch (_: Exception) {
             false
@@ -982,8 +654,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun getReconnectDelay(): Int {
-        if (!::client.isInitialized) return RECONNECT_DELAY_INITIAL
-        val s = client.state.value
+        if (!::appRuntime.isInitialized) return RECONNECT_DELAY_INITIAL
+        val s = appRuntime.client.state.value
         val attempts = when (s) {
             is ClientState.Connecting -> s.attempt
             is ClientState.Reconnecting -> s.attempt
@@ -992,7 +664,19 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         return getReconnectDelayForAttempts(attempts)
     }
 
-    protected open fun onAudioRouteChanged() {
+    /** The container hands the same process-lifetime runtime to every service instance. */
+    protected open fun runtime(): HumlaRuntime =
+        throw IllegalStateException("runtime() must be implemented by the app service")
+
+    /** The app's connection-notification feature; null in plain JVM tests. */
+    protected open fun foregroundNotification(): StateFlow<Notification>? = null
+
+    private fun postForeground(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun isTrustStorePathAllowed(path: String?): Boolean {
@@ -1015,14 +699,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
     open fun apply(delta: ConfigDelta): Boolean {
         check(Looper.getMainLooper() == Looper.myLooper()) { "apply must be called on main" }
-        inputModes.validateAudioDelta(delta)
         var reconnectNeeded = false
         // 1. Merge pending connection parts (lock-free AtomicReference;
         // main-confined writes, atomic reads for connect). Presence-based
         // reconnect: any delta carrying a reconnect-relevant key returns true.
-        // Single-server snapshot: histories are keyed to the staged server;
-        // switching servers without fresh history fields clears the prior
-        // server's lists instead of leaking them across servers.
+        // Device-local facts live in the container's LocalFactsStore, keyed
+        // to the server at connect time, not in this snapshot.
         run {
             var updated: PendingConnection
             do {
@@ -1075,20 +757,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                         )
                     }
                 }
-                if (delta.localMuteHistory != null) {
-                    next = next.copy(localMuteHistory = delta.localMuteHistory.toList())
-                    reconnectNeeded = true
-                } else if (delta.server != null && delta.server.id != current.server?.id) {
-                    // Server switch without fresh histories: drop the prior
-                    // server's lists (see the single-server note above).
-                    next = next.copy(localMuteHistory = emptyList())
-                }
-                if (delta.localIgnoreHistory != null) {
-                    next = next.copy(localIgnoreHistory = delta.localIgnoreHistory.toList())
-                    reconnectNeeded = true
-                } else if (delta.server != null && delta.server.id != current.server?.id) {
-                    next = next.copy(localIgnoreHistory = emptyList())
-                }
                 updated = next
             } while (!pendingConnection.compareAndSet(current, updated))
             if (delta.server != null) {
@@ -1115,67 +783,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                 }
             }
         }
-        // 3. Audio settings (VoiceSettings flow plus interim voice-link targets).
-        // Fail-fast like the legacy holder: validation errors propagate to
-        // the caller instead of landing a half-applied delta.
-        val currentSettings = voiceSettingsFlow.value
-        val nextSettings = VoiceSettingsMapper.update(
-            currentSettings,
-            transmitMode = delta.transmitMode,
-            detectionThreshold = delta.detectionThreshold,
-            amplitudeBoost = delta.amplitudeBoost,
-            inputQuality = delta.inputQuality,
-            framesPerPacket = delta.framesPerPacket,
-            halfDuplex = delta.halfDuplex,
-            adaptiveLeveler = delta.adaptiveLeveler,
-        )
-        if (nextSettings != currentSettings) {
-            voiceSettingsFlow.value = nextSettings
-        }
-        // Interim encoder target for SessionStats.currentBandwidth until the
-        // step-5a VoicePolicy carries real values (VoiceEngine status).
-        if (delta.inputQuality != null) {
-            try {
-                voiceLink.setTargetBitrate(delta.inputQuality)
-            } catch (ignored: Exception) {
-            }
-        }
-        // 4. Route inputs (prefs flow drives RouteControl).
-        val audioStream = delta.audioStream
-        if (audioStream != null) {
-            try {
-                val cur = routePrefsFlow.value
-                if (cur.handsetStream != audioStream) {
-                    routePrefsFlow.value = cur.copy(handsetStream = audioStream)
-                }
-            } catch (_: Exception) {
-            }
-        }
-        val bluetoothSco = delta.bluetoothSco
-        if (bluetoothSco != null) {
-            val requested = bluetoothSco
-            try {
-                val cur = routePrefsFlow.value
-                if (cur.bluetoothSco != requested) {
-                    routePrefsFlow.value = cur.copy(bluetoothSco = requested)
-                }
-            } catch (_: Exception) {
-            }
-        }
-        if (delta.framesPerPacket != null) {
-            try {
-                voiceLink.setTargetFramesPerPacket(delta.framesPerPacket)
-            } catch (_: Exception) {
-            }
-        }
-
-        // 5. VoiceEngine and RouteControl follow flows and recreate as needed.
         return reconnectNeeded
     }
 
     open override fun getConnectionState(): ConnectionState {
-        if (!::client.isInitialized) return ConnectionState.DISCONNECTED
-        return when (val s = client.state.value) {
+        if (!::appRuntime.isInitialized) return ConnectionState.DISCONNECTED
+        return when (val s = appRuntime.client.state.value) {
             is ClientState.Idle -> ConnectionState.DISCONNECTED
             is ClientState.Connecting -> ConnectionState.CONNECTING
             is ClientState.Connected -> ConnectionState.CONNECTED
@@ -1185,8 +798,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun getConnectionError(): HumlaException? {
-        if (!::client.isInitialized) return null
-        return when (val s = client.state.value) {
+        if (!::appRuntime.isInitialized) return null
+        return when (val s = appRuntime.client.state.value) {
             is ClientState.Reconnecting -> s.lastError.toHumlaException()
             is ClientState.Failed -> s.error.toHumlaExceptionOrNull()
             else -> null
@@ -1194,13 +807,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun isReconnecting(): Boolean {
-        if (!::client.isInitialized) return false
-        return client.state.value is ClientState.Reconnecting
+        if (!::appRuntime.isInitialized) return false
+        return appRuntime.client.state.value is ClientState.Reconnecting
     }
 
     open override fun getReconnectAttempts(): Int {
-        if (!::client.isInitialized) return 0
-        return when (val s = client.state.value) {
+        if (!::appRuntime.isInitialized) return 0
+        return when (val s = appRuntime.client.state.value) {
             is ClientState.Connecting -> s.attempt
             is ClientState.Reconnecting -> s.attempt
             else -> 0
@@ -1209,7 +822,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
     open override fun cancelReconnect() {
         try {
-            if (::client.isInitialized) client.cancelReconnect()
+            if (::appRuntime.isInitialized) appRuntime.client.cancelReconnect()
         } catch (ignored: Exception) {
         }
         if (!clientStateIsConnected()) {
@@ -1329,10 +942,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         }
     }
 
-    open override fun getTransmitMode(): Int {
-        return inputModes.transmitMode
-    }
-
     open override fun getCodec(): HumlaUDPMessageType? {
         return try {
             val opus = requireSession().state.value.server.info.opus
@@ -1343,15 +952,26 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun isTalking(): Boolean {
-        return inputModes.toggle.isTalkingOn
+        // PTT-only contract: SessionState.local.pttPressed is the record of
+        // talk state. Features gate setPtt/togglePtt on push-to-talk mode;
+        // in VAD/continuous the native engine ignores pttPressed, so only
+        // this Kotlin read would diverge if called off-mode.
+        return currentSession()?.state?.value?.local?.pttPressed ?: false
     }
 
     open override fun setTalkingState(talking: Boolean) {
-        // Step 5a.4: PTT reaches native through SessionState -> VoicePolicy;
-        // no handler to seed. The toggle stays for UI state.
-        inputModes.toggle.isTalkingOn = talking
+        // PTT-only: callers must be in push-to-talk mode (see isTalking).
+        // PTT reaches native through SessionState -> VoicePolicy.
         try {
             currentSession()?.setPtt(talking)
+        } catch (ignored: Exception) {
+        }
+    }
+
+    /** Toggle mode decides inside the session's atomic state update. */
+    open fun toggleTalkingState() {
+        try {
+            currentSession()?.togglePtt()
         } catch (ignored: Exception) {
         }
     }
@@ -1441,8 +1061,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                 UserHandle(
                     selfSession,
                     session.state,
-                    talkPublisher.talkActivity,
-                    talkStateOverride = if (talkPublisher.talkActivity.value.selfTalking) {
+                    appRuntime.talkActivity,
+                    talkStateOverride = if (appRuntime.talkActivity.value.selfTalking) {
                         TalkState.TALKING
                     } else {
                         TalkState.PASSIVE
@@ -1453,10 +1073,12 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun registerObserver(observer: IHumlaObserver) {
+        boundObservers.add(observer)
         mCallbacks.registerObserver(observer)
     }
 
     open override fun unregisterObserver(observer: IHumlaObserver) {
+        boundObservers.remove(observer)
         mCallbacks.unregisterObserver(observer)
     }
 

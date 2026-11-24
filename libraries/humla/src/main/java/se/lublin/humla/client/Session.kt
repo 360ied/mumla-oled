@@ -68,6 +68,7 @@ import se.lublin.humla.state.applyLocalMuteIntent
 import se.lublin.humla.state.applyPermissionDenied
 import se.lublin.humla.state.applyPermissionQuery
 import se.lublin.humla.state.applyPttIntent
+import se.lublin.humla.state.applyTogglePttIntent
 import se.lublin.humla.state.applyRegisterWhisperIntent
 import se.lublin.humla.state.applySelfMuteDeafIntent
 import se.lublin.humla.state.applyServerConfig
@@ -87,7 +88,7 @@ import se.lublin.humla.util.IHumlaObserver
  * One connection. Created by the client for each attempt and never reused.
  * See docs/target-architecture/client.md#session.
  *
- * Android-free: no android.* imports. All lifecycle logic runs in the
+ * Android-free: no Android imports. All lifecycle logic runs in the
  * session scope; intents are non-blocking (one atomic update and/or one
  * enqueued TCP message). Decisions that depend on current state happen
  * inside update, never after reading state.value.
@@ -104,6 +105,7 @@ class Session internal constructor(
     private val localFactsStore: LocalFactsStore,
     private val mainPoster: (Runnable) -> Unit,
     private val denyFormatter: (SessionEvent.PermissionDenied) -> String,
+    private val eventSink: (SessionEvent, SessionState) -> Unit = { _, _ -> },
     private val workDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: Clock = Clock.systemUTC(),
@@ -168,11 +170,9 @@ class Session internal constructor(
     private val _state = MutableStateFlow(initialState)
     val state: StateFlow<SessionState> = _state.asStateFlow()
 
-    private val _events = MutableSharedFlow<SessionEvent>(extraBufferCapacity = 256)
     // Ordering: inbound events emit in message order, but intent events
     // (self-mute, sent text) emit from session-scope launches and may
     // overtake them. Consumers order by sentAt/receivedAtMillis.
-    val events: SharedFlow<SessionEvent> = _events.asSharedFlow()
 
     // usingUdp comes only from the transport, which owns the decision
     // (client.md § Statistics).
@@ -224,7 +224,7 @@ class Session internal constructor(
                             }
                         }
                         is se.lublin.humla.net.VoiceEvent.UdpUnavailable -> {
-                            _events.emit(SessionEvent.ConnectionWarning("UDP unavailable, switched to TCP"))
+                            eventSink(SessionEvent.ConnectionWarning("UDP unavailable, switched to TCP"), _state.value)
                         }
                         else -> Unit
                     }
@@ -349,9 +349,18 @@ class Session internal constructor(
         }
     }
 
-    private suspend fun emitAll(events: List<SessionEvent>) {
+    private fun emitAll(events: List<SessionEvent>) {
+        // Snapshot once: every record from one transition carries the same
+        // post-transition state (SessionEventRecord contract).
+        val snapshot = _state.value
         for (event in events) {
-            _events.emit(event)
+            eventSink(event, snapshot)
+        }
+    }
+
+    private fun emitAll(events: List<SessionEvent>, snapshot: SessionState) {
+        for (event in events) {
+            eventSink(event, snapshot)
         }
     }
 
@@ -666,10 +675,10 @@ class Session internal constructor(
                 val msg = message as Mumble.TextMessage
                 var received: SessionEvent.TextMessageReceived? = null
                 if (!synced) {
+                    // No informational events pre-SYNCED (state.md#events):
+                    // fold the text into syncing state without emitting.
                     val result = applyTextMessage(syncingState, msg, clock.millis())
                     syncingState = result.state
-                    received = result.events.filterIsInstance<SessionEvent.TextMessageReceived>().firstOrNull()
-                    if (received != null) emitAll(listOf(received))
                 } else {
                     _state.update { current ->
                         val result = applyTextMessage(current, msg, clock.millis())
@@ -772,9 +781,13 @@ class Session internal constructor(
             transport.send(out, HumlaTCPMessageType.UserState)
         } catch (ignored: Exception) {
         }
+        // Capture the post-transition state synchronously: the emit runs in a
+        // child launch, and a racing echo or second intent must not re-pair
+        // these events with a newer state.
+        val snapshot = _state.value
         scope.launch {
-            emitAll(events)
-            val s = _state.value
+            emitAll(events, snapshot)
+            val s = snapshot
             val selfSession = s.server.selfSession
             if (selfSession != null && s.server.users.containsKey(selfSession)) {
                 val handle = UserHandle(selfSession, state, talkActivity)
@@ -785,6 +798,11 @@ class Session internal constructor(
 
     fun setPtt(pressed: Boolean) {
         _state.update { current -> applyPttIntent(current, pressed).state }
+    }
+
+    /** Toggle-mode talk keys: flip the press state inside one atomic update. */
+    fun togglePtt() {
+        _state.update { current -> applyTogglePttIntent(current).state }
     }
 
     fun setLocalMute(session: Int, muted: Boolean) {
@@ -1051,8 +1069,9 @@ class Session internal constructor(
         } catch (ignored: Exception) {
             return
         }
+        val snapshot = _state.value
         scope.launch {
-            _events.emit(
+            eventSink(
                 SessionEvent.TextMessageSent(
                     channels = channels,
                     trees = trees,
@@ -1060,6 +1079,7 @@ class Session internal constructor(
                     message = message,
                     sentAtMillis = clock.millis(),
                 ),
+                snapshot,
             )
         }
     }

@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.preference
 
+import se.lublin.mumla.container
 import android.os.Bundle
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import se.lublin.mumla.R
@@ -45,7 +46,7 @@ class CertificateGenerateActivity : BaseActivity() {
                     return
                 }
 
-                val settings = Settings.getInstance(this@CertificateGenerateActivity)
+                val settings = this@CertificateGenerateActivity.container.settings
                 settings.defaultCertificateId = result.id
                 // Rotation during generate() leaves this instance dead: never
                 // show on a dead window token (base onPostExecute already

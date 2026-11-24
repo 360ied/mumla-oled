@@ -27,8 +27,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -40,6 +44,7 @@ import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.state.ServerState
 import se.lublin.humla.state.SessionEvent
+import se.lublin.humla.state.SessionEventRecord
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.util.IHumlaObserver
 import se.lublin.humla.voice.TalkActivity
@@ -87,6 +92,17 @@ class HumlaClient(
 
     private val _currentSession = MutableStateFlow<Session?>(null)
     val currentSession: StateFlow<Session?> = _currentSession.asStateFlow()
+
+    // Application-lifetime: features subscribe once, when the container
+    // starts them, so a new session cannot emit before its collectors exist.
+    // DROP_OLDEST + tryEmit: the session message loop must never suspend on
+    // a slow feature (see FeatureEventQueue); a burst drops the oldest
+    // record instead of stalling TCP inbound handling.
+    private val _events = MutableSharedFlow<SessionEventRecord>(
+        extraBufferCapacity = 256,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val events: SharedFlow<SessionEventRecord> = _events.asSharedFlow()
 
     // All lifecycle vars below are confined to clientDispatcher; cross-thread
     // readers go through state.value (which carries attempt/target/error).
@@ -298,6 +314,7 @@ class HumlaClient(
             localFactsStore = localFactsStore,
             mainPoster = mainPoster,
             denyFormatter = denyFormatter,
+            eventSink = { event, state -> _events.tryEmit(SessionEventRecord(event, state)); Unit },
             workDispatcher = sessionDispatcher,
             ioDispatcher = ioDispatcher,
             clock = clock,

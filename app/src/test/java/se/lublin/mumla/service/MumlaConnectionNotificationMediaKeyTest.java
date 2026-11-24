@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.service;
 
+import se.lublin.mumla.TestSettings;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -55,26 +56,26 @@ public class MumlaConnectionNotificationMediaKeyTest {
     private MumlaConnectionNotification.MediaSessionCallback mCallback;
 
     private static Settings unboundPttSettings() {
-        return Settings.createForTesting(TestDataStores.create());
+        return TestSettings.create(TestDataStores.create());
     }
 
     private static Settings pttSettings(int pttKey) {
         DataStore<Preferences> store = TestDataStores.create();
         TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), pttKey);
-        return Settings.createForTesting(store);
+        return TestSettings.create(store);
     }
 
     private static Settings disabledMediaKeySettings() {
         DataStore<Preferences> store = TestDataStores.create();
         TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_MEDIA_KEY_MUTE), false);
-        return Settings.createForTesting(store);
+        return TestSettings.create(store);
     }
 
     private static Settings disabledMediaKeyPttSettings() {
         DataStore<Preferences> store = TestDataStores.create();
         TestDataStores.put(store, TestDataStores.booleanKey(Settings.PREF_MEDIA_KEY_MUTE), false);
         TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), KeyEvent.KEYCODE_MEDIA_PAUSE);
-        return Settings.createForTesting(store);
+        return TestSettings.create(store);
     }
 
     private static Intent mediaButtonIntent(int action, int keyCode, int repeatCount) {

@@ -21,16 +21,22 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
-import se.lublin.humla.Constants
-import se.lublin.humla.IHumlaService
-import se.lublin.humla.IHumlaSession
-import se.lublin.humla.util.HumlaDisconnectedException
+
+/** Feature-side bridge: the receiver validates, the feature owns the guards. */
+fun interface TalkStatusSink {
+    fun onTalk(status: String)
+}
 
 /**
- * Created by andrew on 08/08/14.
+ * Receives TALK broadcasts. The feature supplies a [TalkStatusSink] and owns
+ * the connected / push-to-talk guards; the receiver only parses and validates.
  */
-class TalkBroadcastReceiver(service: IHumlaService) : BroadcastReceiver() {
-    private val mService: IHumlaService = service
+class TalkBroadcastReceiver private constructor(
+    private val sink: TalkStatusSink,
+) : BroadcastReceiver() {
+
+    /** Feature path: parse and validate, then hand the status to the feature. */
+    constructor(sink: (String) -> Unit) : this(TalkStatusSink { sink(it) })
 
     override fun onReceive(context: Context?, intent: Intent?) {
         if (intent == null || BROADCAST_TALK != intent.action) {
@@ -39,39 +45,12 @@ class TalkBroadcastReceiver(service: IHumlaService) : BroadcastReceiver() {
             Log.w(TAG, "Ignoring unexpected broadcast: " + if (intent == null) "null intent" else intent.action)
             return
         }
-        if (!mService.isConnected()) {
-            return
-        }
-        // Nullable: HumlaSession() is a Java platform return that can be null.
-        val session: IHumlaSession?
-        try {
-            session = mService.HumlaSession()
-        } catch (e: HumlaDisconnectedException) {
-            // Disconnected between the isConnected check above and this call.
-            Log.i(TAG, "Ignoring TALK broadcast while disconnected")
-            return
-        }
-        if (session == null) {
-            Log.w(TAG, "Ignoring TALK broadcast with no session")
-            return
-        }
-        if (session.getTransmitMode() != Constants.TRANSMIT_PUSH_TO_TALK) {
-            // Driving talk state is meaningless under voice activity or continuous
-            // transmission; only push-to-talk honors the broadcast.
-            Log.i(TAG, "Ignoring TALK broadcast outside push-to-talk transmit mode")
-            return
-        }
-        var status: String? = intent.getStringExtra(EXTRA_TALK_STATUS)
-        if (status == null) status = TALK_STATUS_TOGGLE
-        if (TALK_STATUS_ON == status) {
-            session.setTalkingState(true)
-        } else if (TALK_STATUS_OFF == status) {
-            session.setTalkingState(false)
-        } else if (TALK_STATUS_TOGGLE == status) {
-            session.setTalkingState(!session.isTalking())
-        } else {
+        val status = intent.getStringExtra(EXTRA_TALK_STATUS) ?: TALK_STATUS_TOGGLE
+        if (status != TALK_STATUS_ON && status != TALK_STATUS_OFF && status != TALK_STATUS_TOGGLE) {
             Log.w(TAG, "Ignoring unknown TALK status: $status")
+            return
         }
+        sink.onTalk(status)
     }
 
     companion object {

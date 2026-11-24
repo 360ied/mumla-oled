@@ -17,15 +17,13 @@
 
 package se.lublin.mumla.service
 
+import se.lublin.mumla.container
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-import android.os.Build
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
@@ -43,7 +41,7 @@ import se.lublin.mumla.app.MumlaActivity
  * Created by andrew on 08/08/14.
  */
 class MumlaConnectionNotification {
-    private val mService: Service?
+    private val mContext: Context?
     private val mListener: OnActionListener?
     private val mSettings: Settings
     private var mMediaSession: MediaSessionCompat? = null
@@ -53,20 +51,21 @@ class MumlaConnectionNotification {
     private var mBigText: String? = null
     private var mActionsShown: Boolean = false
     private var mReconnectingShown: Boolean = false
+    private var sChannelCreated = false
     private var mMuted: Boolean = false
     private var mDeafened: Boolean = false
     private var mOverlayShown: Boolean = false
 
-    private constructor(service: Service?, listener: OnActionListener?) :
-        this(service, listener, service?.let { Settings.getInstance(it) })
+    private constructor(context: Context?, listener: OnActionListener?) :
+        this(context, listener, context?.let { it.container.settings })
 
     // Widened to public: Kotlin has no package visibility (was package-visible
     // in Java for the same-package service and its tests).
-    constructor(service: Service?, listener: OnActionListener?, settings: Settings?) {
-        mService = service
+    constructor(context: Context?, listener: OnActionListener?, settings: Settings?) {
+        mContext = context
         mListener = listener
         // NPE-exact: the original dereferenced service unconditionally for the default.
-        mSettings = settings ?: Settings.getInstance(service ?: throw NullPointerException("service"))
+        mSettings = settings ?: (context ?: throw NullPointerException("context")).container.settings
         mActionsShown = false
         mReconnectingShown = false
         mMuted = false
@@ -88,8 +87,8 @@ class MumlaConnectionNotification {
     }
 
     fun showConnecting(serverName: String, host: String, port: Int) {
-        // NPE-exact: the original dereferenced mService unconditionally.
-        val service = mService ?: throw NullPointerException("mService")
+        // NPE-exact: the original dereferenced mContext unconditionally.
+        val service = mContext ?: throw NullPointerException("mContext")
         mContentTitle = serverName
         mContentText = service.getString(R.string.connecting_to_server, host)
         mSubText = service.getString(R.string.mumlaConnecting)
@@ -104,8 +103,6 @@ class MumlaConnectionNotification {
         if (session != null) {
             session.isActive = false
         }
-
-        show()
     }
 
     fun showConnected(serverName: String, channelName: String?, muted: Boolean, deafened: Boolean, hostInfo: String?) {
@@ -120,8 +117,8 @@ class MumlaConnectionNotification {
         overlayShown: Boolean,
         hostInfo: String?
     ) {
-        // NPE-exact: the original dereferenced mService unconditionally.
-        val service = mService ?: throw NullPointerException("mService")
+        // NPE-exact: the original dereferenced mContext unconditionally.
+        val service = mContext ?: throw NullPointerException("mContext")
         // NPE-exact: the original dereferenced mListener unconditionally.
         val listenerSnapshot = mListener ?: throw NullPointerException("mListener")
         mContentTitle = serverName
@@ -222,13 +219,11 @@ class MumlaConnectionNotification {
             session.setPlaybackState(state)
             session.isActive = true
         }
-
-        show()
     }
 
     fun showReconnecting(serverName: String?, error: String?, attempt: Int, delaySec: Int, hostInfo: String?) {
-        // NPE-exact: the original dereferenced mService unconditionally.
-        val service = mService ?: throw NullPointerException("mService")
+        // NPE-exact: the original dereferenced mContext unconditionally.
+        val service = mContext ?: throw NullPointerException("mContext")
         val srvTitle = serverName ?: (hostInfo ?: service.getString(R.string.app_name))
         mContentTitle = service.getString(R.string.notification_reconnecting_title, srvTitle)
         mContentText = error ?: service.getString(R.string.mumlaDisconnected)
@@ -256,23 +251,25 @@ class MumlaConnectionNotification {
         if (session != null) {
             session.isActive = false
         }
-
-        show()
     }
 
     /**
-     * Shows the notification.
+     * Posts the notification. Step 6's service owns foreground posting; the
+     * view only builds the current notification and manages the media session.
      */
     fun show() {
         createNotification()
     }
 
+    /** The current notification, for the service's startForeground call. */
+    fun build(): Notification = createNotification()
+
     /**
      * Hides the notification.
      */
     fun hide() {
-        // NPE-exact: the original dereferenced mService unconditionally.
-        val service = mService ?: throw NullPointerException("mService")
+        // NPE-exact: the original dereferenced mContext unconditionally.
+        val service = mContext ?: throw NullPointerException("mContext")
         val session = mMediaSession
         if (session != null) {
             session.isActive = false
@@ -283,16 +280,16 @@ class MumlaConnectionNotification {
         if (manager != null) {
             manager.cancel(NOTIFICATION_ID)
         }
-        service.stopForeground(true)
     }
 
-    private fun createServicePendingIntent(action: String, requestCode: Int): PendingIntent {
-        // NPE-exact: the original dereferenced mService unconditionally.
-        val service = mService ?: throw NullPointerException("mService")
-        val intent = Intent(service, MumlaService::class.java)
+    private fun createActionPendingIntent(action: String, requestCode: Int): PendingIntent {
+        // Explicit broadcast: the notification works with or without a
+        // service instance, so a re-created service needs no rewiring.
+        val context = mContext ?: throw NullPointerException("mContext")
+        val intent = Intent(context, NotificationActionReceiver::class.java)
         intent.action = action
-        return PendingIntent.getService(
-            service, requestCode, intent,
+        return PendingIntent.getBroadcast(
+            context, requestCode, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
     }
@@ -301,8 +298,8 @@ class MumlaConnectionNotification {
      * Called to update/create the service's foreground Mumla notification.
      */
     private fun createNotification(): Notification {
-        // NPE-exact: the original dereferenced mService unconditionally.
-        val service = mService ?: throw NullPointerException("mService")
+        // NPE-exact: the original dereferenced mContext unconditionally.
+        val service = mContext ?: throw NullPointerException("mContext")
         if (!sChannelCreated) {
             val channelName = service.getString(R.string.connected)
             val manager = service.getSystemService(NotificationManager::class.java)
@@ -381,38 +378,32 @@ class MumlaConnectionNotification {
             builder.addAction(
                 R.drawable.ic_action_delete_dark,
                 service.getString(R.string.cancel_reconnect),
-                createServicePendingIntent(MumlaService.ACTION_CANCEL_RECONNECT, REQUEST_CODE_CANCEL_RECONNECT)
+                createActionPendingIntent(MumlaService.ACTION_CANCEL_RECONNECT, REQUEST_CODE_CANCEL_RECONNECT)
             )
         } else if (mActionsShown) {
             builder.addAction(
                 getMuteActionIcon(mMuted),
                 service.getString(R.string.mute),
-                createServicePendingIntent(MumlaService.ACTION_MUTE, REQUEST_CODE_MUTE)
+                createActionPendingIntent(MumlaService.ACTION_MUTE, REQUEST_CODE_MUTE)
             )
             builder.addAction(
                 getDeafenActionIcon(mDeafened),
                 service.getString(R.string.deafen),
-                createServicePendingIntent(MumlaService.ACTION_DEAFEN, REQUEST_CODE_DEAFEN)
+                createActionPendingIntent(MumlaService.ACTION_DEAFEN, REQUEST_CODE_DEAFEN)
             )
             builder.addAction(
                 getOverlayActionIcon(mOverlayShown),
                 service.getString(R.string.overlay),
-                createServicePendingIntent(MumlaService.ACTION_TOGGLE_OVERLAY, REQUEST_CODE_OVERLAY)
+                createActionPendingIntent(MumlaService.ACTION_TOGGLE_OVERLAY, REQUEST_CODE_OVERLAY)
             )
             builder.addAction(
                 R.drawable.ic_action_delete_dark,
                 service.getString(R.string.disconnect),
-                createServicePendingIntent(MumlaService.ACTION_DISCONNECT, REQUEST_CODE_DISCONNECT)
+                createActionPendingIntent(MumlaService.ACTION_DISCONNECT, REQUEST_CODE_DISCONNECT)
             )
         }
 
-        val notification = builder.build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            service.startForeground(NOTIFICATION_ID, notification, FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } else {
-            service.startForeground(NOTIFICATION_ID, notification)
-        }
-        return notification
+        return builder.build()
     }
 
     /**
@@ -507,8 +498,6 @@ class MumlaConnectionNotification {
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "connected_channel_v9"
         private const val LEGACY_CHANNEL_ID = "connected_channel"
-        @Volatile
-        private var sChannelCreated: Boolean = false
 
         private const val REQUEST_CODE_ACTIVITY = 0
         private const val REQUEST_CODE_MUTE = 1
@@ -524,13 +513,13 @@ class MumlaConnectionNotification {
          * @return A new MumlaNotification instance.
          */
         @JvmStatic
-        fun create(service: Service?, listener: OnActionListener?): MumlaConnectionNotification {
-            return MumlaConnectionNotification(service, listener)
+        fun create(context: Context?, listener: OnActionListener?): MumlaConnectionNotification {
+            return MumlaConnectionNotification(context, listener)
         }
 
         @JvmStatic
-        fun create(service: Service?, listener: OnActionListener?, settings: Settings): MumlaConnectionNotification {
-            return MumlaConnectionNotification(service, listener, settings)
+        fun create(context: Context?, listener: OnActionListener?, settings: Settings): MumlaConnectionNotification {
+            return MumlaConnectionNotification(context, listener, settings)
         }
 
         @JvmStatic

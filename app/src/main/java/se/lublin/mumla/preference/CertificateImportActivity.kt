@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.preference
 
+import se.lublin.mumla.container
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -311,13 +312,13 @@ class CertificateImportActivity : BaseActivity() {
                 // (secrets-at-rest-plan), so convert here and zero the char[] immediately.
                 val passwordStr = if (password.isNotEmpty()) String(password) else null
                 zeroPassword(password)
-                val database: MumlaDatabase = MumlaRoomDatabase.getInstance(this@CertificateImportActivity)
+                val database: MumlaDatabase = this@CertificateImportActivity.container.database
                 val certificate = database.addCertificate(fileName, certBytes, passwordStr)
                 database.close()
 
                 val imported = certificate != null && certificate.id >= 0
                 if (imported) {
-                    val settings = Settings.getInstance(this@CertificateImportActivity)
+                    val settings = this@CertificateImportActivity.container.settings
                     settings.defaultCertificateId = certificate.id
                 }
                 runOnUiThread {

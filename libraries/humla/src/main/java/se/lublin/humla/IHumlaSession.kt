@@ -122,8 +122,6 @@ interface IHumlaSession {
 
     fun getPermissions(): Int
 
-    fun getTransmitMode(): Int
-
     fun getCodec(): HumlaUDPMessageType?
 
     fun isTalking(): Boolean

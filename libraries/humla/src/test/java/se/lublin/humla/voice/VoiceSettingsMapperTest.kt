@@ -23,6 +23,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import se.lublin.humla.Constants
@@ -90,6 +91,88 @@ class VoiceSettingsMapperTest {
     @Test(expected = IllegalArgumentException::class)
     fun updateRejectsOutOfRangeBoost() {
         VoiceSettingsMapper.update(VoiceSettings.initial(), amplitudeBoost = 9.0f)
+    }
+
+    @Test
+    fun transmitModeMappingIsReversible() {
+        for (mode in listOf(
+            Constants.TRANSMIT_PUSH_TO_TALK,
+            Constants.TRANSMIT_CONTINUOUS,
+            Constants.TRANSMIT_VOICE_ACTIVITY,
+        )) {
+            assertEquals(mode, VoiceSettingsMapper.transmitModeFor(VoiceSettingsMapper.inputModeFor(mode)))
+        }
+    }
+
+    @Test
+    fun rejectedDeltaLeavesCurrentValueUntouched() {
+        val current = VoiceSettings.initial()
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.update(current, transmitMode = 999)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.update(current, detectionThreshold = Float.NaN)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.update(current, amplitudeBoost = Float.NEGATIVE_INFINITY)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.update(current, amplitudeBoost = -1.0f)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.update(current, amplitudeBoost = 1e30f)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.update(current, inputQuality = 7999)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.update(current, inputQuality = 510001)
+        }
+        assertEquals(VoiceSettings.initial(), current)
+    }
+
+    @Test
+    fun validationBoundariesPass() {
+        VoiceSettingsMapper.update(VoiceSettings.initial(), inputQuality = MIN_INPUT_BITRATE)
+        VoiceSettingsMapper.update(VoiceSettings.initial(), inputQuality = MAX_INPUT_BITRATE)
+        VoiceSettingsMapper.update(VoiceSettings.initial(), amplitudeBoost = MAX_AMPLITUDE_BOOST)
+        VoiceSettingsMapper.update(VoiceSettings.initial(), amplitudeBoost = MIN_AMPLITUDE_BOOST)
+        VoiceSettingsMapper.initialFromDefaults(
+            transmitMode = Constants.TRANSMIT_PUSH_TO_TALK,
+            inputQuality = MIN_INPUT_BITRATE,
+        )
+    }
+
+    @Test
+    fun initialFromDefaultsRejectsUnknownMode() {
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.initialFromDefaults(transmitMode = 999)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.initialFromDefaults(detectionThreshold = Float.NaN)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.initialFromDefaults(amplitudeBoost = Float.POSITIVE_INFINITY)
+        }
+    }
+
+    @Test
+    fun finiteOutOfRangeThresholdsClamp() {
+        val high = VoiceSettingsMapper.update(VoiceSettings.initial(), detectionThreshold = 2.0f)
+        assertEquals(1.0f, high.vadMax)
+        val low = VoiceSettingsMapper.update(VoiceSettings.initial(), detectionThreshold = -1.0f)
+        assertEquals(0.0f, low.vadMax)
+        assertEquals(0.0f, low.vadMin)
+    }
+
+    @Test
+    fun infiniteThresholdRejectedAndBoostRangePinned() {
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.update(VoiceSettings.initial(), detectionThreshold = Float.POSITIVE_INFINITY)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            VoiceSettingsMapper.update(VoiceSettings.initial(), detectionThreshold = Float.NEGATIVE_INFINITY)
+        }
     }
 
     @Test

@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.preference
 
+import se.lublin.mumla.container
 import android.content.DialogInterface
 import android.net.Uri
 import android.os.Bundle
@@ -52,7 +53,7 @@ class CertificateExportActivity : BaseActivity(), DialogInterface.OnClickListene
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val database = MumlaRoomDatabase.getInstance(this)
+        val database = this.container.database
         mDatabase = database
         val certificates = database.getCertificates()
         mCertificates = certificates

@@ -26,7 +26,7 @@ public class SettingsCertificateTest extends TestCase {
 
     public void testCertificateDefaultState() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         assertEquals(-1L, settings.getDefaultCertificate());
         assertFalse("By default, certificate should not be used", settings.isUsingCertificate());
@@ -34,19 +34,19 @@ public class SettingsCertificateTest extends TestCase {
 
     public void testSetDefaultCertificateId() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         long testCertId = 42L;
         settings.setDefaultCertificateId(testCertId);
 
         assertEquals(testCertId, settings.getDefaultCertificate());
         assertTrue("Certificate should be active after setDefaultCertificateId", settings.isUsingCertificate());
-        assertEquals(testCertId, (long) TestDataStores.get(store, TestDataStores.longKey(Settings.PREF_CERT_ID), -1L));
+        assertEquals(testCertId, (long) TestSettings.get(settings, TestDataStores.longKey(Settings.PREF_CERT_ID), -1L));
     }
 
     public void testDisableCertificate() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         settings.setDefaultCertificateId(123L);
         assertTrue(settings.isUsingCertificate());
@@ -54,12 +54,12 @@ public class SettingsCertificateTest extends TestCase {
         settings.disableCertificate();
         assertEquals(-1L, settings.getDefaultCertificate());
         assertFalse(settings.isUsingCertificate());
-        assertEquals(-1L, (long) TestDataStores.get(store, TestDataStores.longKey(Settings.PREF_CERT_ID), 0L));
+        assertEquals(-1L, (long) TestSettings.get(settings, TestDataStores.longKey(Settings.PREF_CERT_ID), 0L));
     }
 
     public void testSwitchCertificateId() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         settings.setDefaultCertificateId(1L);
         assertEquals(1L, settings.getDefaultCertificate());

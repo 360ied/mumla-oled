@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.util
 
+import se.lublin.mumla.container
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
@@ -88,7 +89,7 @@ class MumbleImageGetter : Html.ImageGetter {
 
     constructor(context: Context, listener: OnImageLoadedListener?) {
         mContext = context.applicationContext
-        mSettings = Settings.getInstance(mContext)
+        mSettings = mContext.container.settings
         mListener = listener
 
         // Allocate up to 1/8th of available runtime memory for the LRU bitmap cache (in KB)

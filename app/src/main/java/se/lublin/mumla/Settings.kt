@@ -17,56 +17,38 @@
 
 package se.lublin.mumla
 
-import android.content.Context
 import android.view.Gravity
 import android.view.KeyEvent
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
 import java.util.HashMap
 import java.util.HashSet
 import java.util.Optional
 import se.lublin.humla.Constants
 
 /**
- * Singleton settings class for universal access to the app's preferences.
+ * Typed settings facade over the container's [SettingsRepository]. The
+ * public surface (keys, defaults, accessors, validation) is unchanged —
+ * fleet settings survive through `SharedPreferencesMigration` with no
+ * silent resets.
  *
- * Migration slice 2: backed by the Preferences DataStore via
- * [SettingsRepository] instead of SharedPreferences. The public surface
- * (keys, defaults, accessors, validation) is unchanged — fleet settings
- * survive through `SharedPreferencesMigration` with no silent resets.
- *
- * Threading (interim): the surface is synchronous, so every call bridges to
- * the store with a blocking read/write on DataStore's in-memory cache.
+ * Getters read the repository's in-memory snapshot and setters go through
+ * its non-blocking [SettingsRepository.updateTyped]; neither ever blocks.
  *
  * Accessors are properties, so Java callers keep their `getX()`/`isX()`/
  * `setX()` signatures bit-for-bit while Kotlin callers use property syntax.
  *
  * @author morlunk
  */
-class Settings {
-    private val repository: SettingsRepository
+class Settings(val repository: SettingsRepository) {
     // Concurrent map with atomic check-then-act (putIfAbsent): dropping the
     // hand-rolled HashMap + synchronized without losing the
     // duplicate-registration guard below.
     private val listenerAdapters =
         java.util.concurrent.ConcurrentHashMap<OnSettingChangedListener, java.util.function.Consumer<String>>()
 
-    // Widened to public: Kotlin has no package visibility (pre-image was package-private).
-    // All involved parties must share the single DataStore instance per process
-    // (see AppDataStore): constructing directly with a second store for the
-    // same file forks the key space. createForTesting remains the test seam.
-    constructor(store: DataStore<Preferences>) {
-        repository = SettingsRepository(store)
-    }
-
-    // One-shot DataStore read. Compound derived accessors below call this
-    // twice (e.g. isOverlayPinned then overlayGravity) and can therefore
-    // observe two different snapshots under a concurrent write; paired reads
-    // that must agree should snapshot once into a local and derive both
-    // values from it (see isOverlayPinned/overlayGravity).
-    private fun snapshot(): PrefSnapshot {
-        return repository.snapshotBlocking()
-    }
+    // One snapshot read. Compound derived accessors below may call this more
+    // than once; paired reads that must agree should snapshot once into a
+    // local and derive both values from it (see isOverlayPinned/overlayGravity).
+    private fun snapshot(): PrefSnapshot = repository.state.value.snapshot
 
     fun registerListener(listener: OnSettingChangedListener) {
         val adapter: java.util.function.Consumer<String> =
@@ -100,7 +82,7 @@ class Settings {
                 ARRAY_INPUT_METHOD_PTT == inputMethod ||
                 ARRAY_INPUT_METHOD_CONTINUOUS == inputMethod
             ) {
-                repository.updateBlocking { prefs -> prefs.audioInputMethod = inputMethod }
+                repository.updateTyped { prefs -> prefs.audioInputMethod = inputMethod }
             } else {
                 throw IllegalArgumentException("Invalid input method $inputMethod")
             }
@@ -232,7 +214,7 @@ class Settings {
     fun setNotificationStyle(style: String?) {
         val valid = style ?: throw IllegalArgumentException("Invalid notification style: $style")
         if (NOTIFICATION_STYLE_BIGTEXT == valid || NOTIFICATION_STYLE_MEDIA == valid) {
-            repository.updateBlocking { prefs ->
+            repository.updateTyped { prefs ->
                 prefs.notificationStyle = valid
             }
         } else {
@@ -272,7 +254,7 @@ class Settings {
          * or the system default if pkg is null.
          */
         set(pkg) {
-            repository.updateBlocking { prefs ->
+            repository.updateTyped { prefs ->
                 // Normalize "" to empty: toSnapshot() reads "" back as null,
                 // so storing "" would leave a dead value in the file.
                 prefs.ttsEngine = if (pkg.isNullOrEmpty()) Optional.empty() else Optional.of(pkg)
@@ -291,7 +273,7 @@ class Settings {
     var isFirstRun: Boolean
         get() = snapshot().firstRun
         set(run) {
-            repository.updateBlocking { prefs ->
+            repository.updateTyped { prefs ->
                 prefs.firstRun = run
             }
         }
@@ -303,7 +285,7 @@ class Settings {
         get() = snapshot().loadImages
 
     fun setMutedAndDeafened(muted: Boolean, deafened: Boolean) {
-        repository.updateBlocking { prefs ->
+        repository.updateTyped { prefs ->
             prefs.muted = muted || deafened
             prefs.deafened = deafened
         }
@@ -327,7 +309,7 @@ class Settings {
     var isBluetoothHeadset: Boolean
         get() = snapshot().bluetoothHeadset
         set(enabled) {
-            repository.updateBlocking { prefs ->
+            repository.updateTyped { prefs ->
                 prefs.bluetoothHeadset = enabled
             }
         }
@@ -345,13 +327,13 @@ class Settings {
     var defaultCertificateId: Long
         get() = snapshot().certificateId
         set(defaultCertificateId) {
-            repository.updateBlocking { prefs ->
+            repository.updateTyped { prefs ->
                 prefs.certificateId = defaultCertificateId
             }
         }
 
     fun disableCertificate() {
-        repository.updateBlocking { prefs ->
+        repository.updateTyped { prefs ->
             prefs.certificateId = DEFAULT_CERT_ID
         }
     }
@@ -373,7 +355,7 @@ class Settings {
     var isOverlayShown: Boolean
         get() = snapshot().overlayShown
         set(shown) {
-            repository.updateBlocking { prefs ->
+            repository.updateTyped { prefs ->
                 prefs.overlayShown = shown
             }
         }
@@ -381,7 +363,7 @@ class Settings {
     var overlayPlacement: String
         get() = snapshot().overlayPlacement
         set(placement) {
-            repository.updateBlocking { prefs ->
+            repository.updateTyped { prefs ->
                 prefs.overlayPlacement = placement
             }
         }
@@ -411,7 +393,7 @@ class Settings {
     }
 
     fun setOverlayPosition(x: Int, y: Int) {
-        repository.updateBlocking { prefs ->
+        repository.updateTyped { prefs ->
             prefs.overlayPosX = x
             prefs.overlayPosY = y
         }
@@ -420,7 +402,7 @@ class Settings {
     var theme: String
         get() = snapshot().theme
         set(theme) {
-            repository.updateBlocking { prefs ->
+            repository.updateTyped { prefs ->
                 prefs.theme = theme
             }
         }
@@ -428,7 +410,7 @@ class Settings {
     var language: String
         get() = snapshot().language
         set(language) {
-            repository.updateBlocking { prefs ->
+            repository.updateTyped { prefs ->
                 prefs.language = language
             }
         }
@@ -442,14 +424,14 @@ class Settings {
         val clean = versions.filter { !it.isNullOrEmpty() }
         if (shownVersions.addAll(clean)) {
             val updated: Set<String> = shownVersions
-            repository.updateBlocking { prefs ->
+            repository.updateTyped { prefs ->
                 prefs.newsShownVersions = updated
             }
         }
     }
 
     fun resetNewsShownVersion() {
-        repository.updateBlocking { prefs ->
+        repository.updateTyped { prefs ->
             prefs.newsShownVersions = HashSet()
         }
     }
@@ -650,14 +632,5 @@ class Settings {
             return pttKey > KeyEvent.KEYCODE_UNKNOWN && keyCode == pttKey
         }
 
-        @JvmStatic
-        fun getInstance(context: Context): Settings {
-            return Settings(AppDataStore.get(context))
-        }
-
-        @JvmStatic
-        fun createForTesting(store: DataStore<Preferences>): Settings {
-            return Settings(store)
-        }
     }
 }

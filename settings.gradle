@@ -23,4 +23,4 @@ pluginManagement {
     }
 }
 
-include ':libraries:humla', ':app'
+include ':libraries:humla', ':libraries:humla-testing', ':app'
