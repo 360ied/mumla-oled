@@ -24,6 +24,7 @@ class HumlaClient(
     private val clock: Clock,
 ) {
     val state: StateFlow<ClientState>
+    val events: SharedFlow<SessionEvent>      // every session's events, client lifetime (state.md#events)
 
     fun connect(target: ConnectTarget)        // non-blocking
     fun disconnect()                          // non-blocking
@@ -204,8 +205,7 @@ class Session internal constructor(
     transport: Transport,
     localFacts: LocalFacts,                   // loaded before construction
 ) {
-    val state: StateFlow<SessionState>
-    val events: SharedFlow<SessionEvent>
+    val state: StateFlow<SessionState>    // events go to HumlaClient.events
     val stats: StateFlow<SessionStats>
     val failure: Deferred<ClientError>        // completes once, when the session fails
 
@@ -286,7 +286,7 @@ records both directions from the event stream.
 
 | Today (`IHumlaService`) | Target |
 |---|---|
-| `registerObserver`, `unregisterObserver` | Collect `client.state`, `session.state`, `session.events` |
+| `registerObserver`, `unregisterObserver` | Collect `client.state`, `session.state`, `client.events` |
 | `isConnected`, `getConnectionState`, `getConnectionError`, `getTargetServer` | `client.state` |
 | `isReconnecting`, `getReconnectAttempts`, `getReconnectDelay`, `cancelReconnect` | `ClientState.Reconnecting`; `client.cancelReconnect()` |
 | `disconnect` | `client.disconnect()` |

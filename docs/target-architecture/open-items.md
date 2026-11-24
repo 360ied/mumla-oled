@@ -33,6 +33,21 @@ None. The three step-5b spikes were replaced by decisions (see
 
 ## Resolved
 
+Items resolved by the step-6 spec review (2026-11-23):
+
+| Item | Resolution | Where |
+|---|---|---|
+| Lifetime of container-owned objects | Process lifetime, never closed; `HumlaService.onDestroy` keeps only `client.disconnect()` and its own locks, because the service is re-created within one process. Idle cost accepted | [migration](migration.md#step-6--container-storage-and-features), [app](app.md#appcontainer) |
+| Settings without `runBlocking` | `StateFlow<PrefSnapshot>` seeded by one blocking startup read in `AppContainer` (a new boundary file), plus a non-blocking `update` with read-your-writes and a single writer that converges to memory. Screens keep their call sites | [app](app.md#settings), [enforcement](enforcement.md#concurrency-tripwire) |
+| Database bridge | Gains `suspend` methods in step 6 for the service, features, and `LocalFactsStore`; the synchronous bridge stays for screens and goes in step 7 with them | [migration](migration.md#step-7--screens-and-service-cut-over) |
+| Hilt and kapt | Hilt removed in step 6 (nothing injects). kapt removed from `:libraries:humla` only; `:app` needs it for the Room compiler until stable KSP | [migration](migration.md#step-6--container-storage-and-features) |
+| Interim observer bridge after the container | The container owns `HumlaCallbacks`, the main-thread poster, and the deny formatter; `HumlaService` gets the library objects as `HumlaRuntime` | [app](app.md#appcontainer) |
+| Session events subscription | `HumlaClient.events` replaces `Session.events`, so collectors subscribe once and never miss a new session's first events | [state](state.md#events) |
+| Local-fact writers | One commit swaps in the database-backed store and removes the adapter, service, and `ConfigDelta` writers; a check pins it | [migration](migration.md#step-6--container-storage-and-features), [enforcement](enforcement.md#local-facts-writer) |
+| Permission-denied dialog | Not a feature: it lives in `MumlaActivity` and moves to `MainViewModel` in step 7, with the error-shown flag; the connection notification keeps the re-show | [app](app.md#mumlaactivity-responsibilities) |
+| `MumlaService` behavior missing from the feature table | Avatar requests (once per user and hash) and the reconnect-required notice became features; rotation reaches the overlay and hot corner through the container's `configuration` flow | [app](app.md#features) |
+| Step 6 done-when | Executable container lifecycle test, chat-log goldens, a detector per invariant, and an allowlist target of 18 / 47 | [migration](migration.md#step-6--container-storage-and-features), [testing](testing.md#app-layer-tests) |
+
 Items resolved while fixing audio quality (2026-11-23):
 
 | Item | Resolution | Where |

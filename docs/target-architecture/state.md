@@ -304,8 +304,12 @@ never after reading `state.value` (see
 
 ## Events
 
-`Session.events` is a `SharedFlow<SessionEvent>` with a replay of 0 and a
-buffer of 256. It never drops: a full buffer suspends the message
+`HumlaClient.events` is a `SharedFlow<SessionEvent>` with a replay of 0
+and a buffer of 256. It lives as long as the client, and every session
+emits into it (from step 6; before that each `Session` had its own
+`events`). Collectors subscribe once, so a new session cannot emit before
+they exist, and events from a session that has ended stop with its scope.
+It never drops: a full buffer suspends the message
 coroutine, which slows the server stream rather than losing events. To
 keep that from stalling the connection, **collectors never do slow work
 inline**: features hand anything slow (TTS synthesis, database writes,

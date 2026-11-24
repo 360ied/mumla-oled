@@ -50,24 +50,33 @@ steps, the kill criteria, and the decisions this work reverses.
 - Until step 7, today's `ConfigDelta` path keeps applying settings live:
   `HumlaService.apply` stays as a bridge that forwards each delta to the
   new components as they appear (the client in step 3; voice, route, and
-  `VoiceSettings` in step 4). It is deleted in step 7.
+  `VoiceSettings` in step 4). Step 6 takes the voice, route, and local-fact
+  fields out of it (the container derives them from settings, and the
+  session persists local facts), leaving only the connect-target half,
+  which step 7 deletes.
 - **Interim owners.** Until step 6 creates `AppContainer`, `HumlaService`
   constructs the new application-scoped objects itself (`HumlaClient`,
   `LocalFactsStore`, `NetworkMonitor`, `TransportFactory`, and from step 4
-  `RouteControl` and the voice control). Step 6 moves their construction
-  into `AppContainer` and hands the same instances to `HumlaService`, so
-  there is only ever one of each.
+  `RouteControl` and the voice control) and closes them in `onDestroy`.
+  Step 6 moves their construction into `AppContainer` and hands the same
+  instances to `HumlaService` through `HumlaRuntime`, so there is only ever
+  one of each. From then on they live as long as the process, and the
+  service never closes them (see the
+  [step 6 lifetime rule](#step-6--container-storage-and-features)).
 - **Interim observer bridge.** Until step 7, `HumlaClient` and `Session`
   take `IHumlaObserver`, a main-thread poster, and the deny formatter so
-  today's screens keep working. Step 7 removes them along with
+  today's screens keep working. From step 6 the container owns all three
+  (the observer is its `HumlaCallbacks`), because the client outlives
+  every service instance. Step 7 removes them along with
   `IHumlaObserver`.
 - **Other recorded interims** (found by the
   [steps 1–4 audit](issues/README.md)):
   - Until step 6, the self-mute/deafen half of the interim
     `LocalFactsStore` in `HumlaService` is a stub (loads unset, drops
     writes); `MumlaService` restores self-mute after sync and persists it,
-    as before the migration. Step 6 moves both into the session and
-    `LocalFactsStore` in one change, so there is never zero or two owners.
+    as before the migration. Step 6 (commit 5) moves both into the session
+    and `LocalFactsStore` in one change, so there is never zero or two
+    owners.
   - Until step 5a, `IHumlaService.getCurrentBandwidth` reads the current
     `AudioHandler`, not `SessionStats.currentBandwidth`.
   - Until step 5a.4, `AudioHandler.updateMuteState` and
@@ -675,28 +684,155 @@ daily use without regressions the developer notices against 5a.
 
 ## Step 6 — Container, storage, and features
 
-`MumlaService` stays the bound service in this step; each feature moves a
-responsibility out of it, and `MumlaService` delegates the matching
-`IMumlaService` calls to the feature until step 7 deletes it. The binder
-calls stay synchronous: reads return the feature's current `StateFlow`
-value (for example `getMessageLog` returns the chat log's `value`), and
-writes launch into the feature's scope.
+`MumlaService` stays the bound service in this step, and `HumlaService`
+stays its base class. The step moves construction into `AppContainer`,
+gives storage a non-blocking current-value API, and moves each
+`MumlaService` responsibility into a feature. `MumlaService` delegates the
+matching `IMumlaService` calls to the feature until step 7 deletes it.
+Binder calls stay synchronous: reads return the feature's current
+`StateFlow` value (for example `getMessageLog` returns the chat log's
+`value`), and writes launch into the feature's scope.
 
-1. `AppContainer` and the ViewModel factory. The container takes over
-   constructing the application-scoped objects `HumlaService` built as
-   interim owner (see the ground rules) and hands the same instances to
-   `HumlaService`. Storage APIs become `suspend` and the `runBlocking`
-   bridges are deleted; the few synchronous readers left read the settings
-   `StateFlow`'s current value.
-2. Features, one per commit (see [app](app.md#features)); the
-   `chat_notify_*`, `deny_reason_*`, and `audio_max_bandwidth` strings
-   (with their translations) move from `:libraries:humla` resources to
-   `:app`, and the step-2 logging adapter is deleted when the chat log
-   feature lands.
+**Lifetime rule.** Everything the container builds lives as long as the
+process and is never closed (see [app](app.md#appcontainer)). Today
+`HumlaService.onDestroy` closes `RouteControl`, `VoiceEngine`, and
+`PolicyCollector` and unregisters the network callback. From commit 3 on
+it does none of that. The service is destroyed and re-created within one
+process (disconnect, leave the app, come back), and a second instance
+handed closed objects has no voice. This is the same class of failure that
+ended the first step-5a attempt. `onDestroy` keeps `client.disconnect()`,
+which ends a connection exactly as today, and releases the service's own
+wake lock and Wi-Fi lock. The idle cost is accepted: the route thread and
+the voice control dispatcher sit idle, the audio-device and default-network
+callbacks stay registered, and the native engine is created on the first
+voice start and then kept, as `VoiceEngine` already does across reconnects.
 
-**Done when:** every row of the [feature table](app.md#features) has a
-feature class, and `MumlaService` contains only service lifetime and
-delegation.
+Commits, in order:
+
+1. **Remove Hilt.** Nothing uses the Hilt graph: there is no
+   `@AndroidEntryPoint`, and the only `@Inject` is `SettingsRepository`'s
+   constructor. Delete `@HiltAndroidApp`, that `@Inject`, `DatabaseModule`,
+   `SettingsModule`, the Hilt plugin and dependencies in both modules, and
+   kapt in `:libraries:humla`, where Hilt is its only processor. `:app`
+   keeps kapt for the Room compiler until the KSP TODO in
+   `gradle/libs.versions.toml` lands. Doing this first means the container
+   never shares construction with a second provider.
+2. **`AppContainer` and storage.** `MumlaApplication.onCreate` builds the
+   container and exposes it as `container`. The container constructs the
+   settings `DataStore`, `SettingsRepository`, and `MumlaRoomDatabase` once.
+   The `AppDataStore.get` and `MumlaRoomDatabase.getInstance` singletons
+   and the `Settings.getInstance` factory are deleted, and every call site
+   reads the container. Settings get the current-value API from
+   [app](app.md#settings): `SettingsRepository.snapshot` is a
+   `StateFlow<PrefSnapshot>` seeded by the one blocking load at container
+   construction, and `update` applies to it at once and persists in the
+   background. The `Settings` facade's getters read `snapshot.value` and
+   its setters call `update`; `DataStorePreferenceDataStore` does the same.
+   After startup, no settings read or write blocks. `MumlaApplication`
+   collects theme and language from the flow instead of registering a
+   listener; the listener bridge stays, reading `snapshot.value` for its
+   baseline, for the screens that still register (`BaseActivity`,
+   `ChannelFragment`, `ChannelListFragment`) until step 7. The database
+   keeps its synchronous `runBlocking` bridge for screens until step 7 and
+   gains `suspend` methods, which the service, the features, and
+   `LocalFactsStore` use from here on.
+3. **Library objects into the container.** The container builds what
+   `HumlaService` built as interim owner (see the ground rules), plus the
+   interim pieces those objects reference: `HumlaCallbacks`, the
+   main-thread poster, the deny formatter, the session-state mirror, the
+   policy collector with its two pushes into `VoiceEngine`, and the
+   observer-bridge collectors that forward route, SCO, and talk hints into
+   `HumlaCallbacks`. `HumlaService` receives them as one `HumlaRuntime`
+   value from an abstract `runtime()` that `MumlaService` implements from
+   the container, and constructs and closes none of them (lifetime rule).
+   The container derives `VoiceSettings` and `RoutePreferences` from the
+   settings snapshot, so `HumlaService.apply` loses its voice and route
+   branches, including the `setTargetBitrate` and
+   `setTargetFramesPerPacket` calls, and `ConfigDelta` loses those fields.
+   Until step 7, `apply` keeps only the connect-target half. An invalid
+   stored input method maps to the default and logs a warning, which is
+   what `apply`'s guard does today when it keeps the running configuration.
+4. **Client-level events.** `HumlaClient.events` replaces `Session.events`
+   (see [state](state.md#events)): one application-lifetime `SharedFlow`
+   that every session emits into. Features subscribe once, when the
+   container starts them, so a new session cannot emit an event before its
+   collectors exist, and no collector needs its own
+   `currentSession.collectLatest`. The interim chat-log adapter switches
+   to it.
+5. **Local facts.** The container's `LocalFactsStore` reads and writes the
+   database (mute and ignore lists per server ID) and settings (self-mute
+   and self-deafen). The same commit removes the other writers, so there is
+   never zero or two: `ChannelListAdapter` stops writing local mute to the
+   database; `MumlaService` stops writing self-mute and deafen to settings
+   on each self `UserState` and stops restoring them after sync (the
+   session does both, see [state](state.md#self-mute-and-deafen)); and
+   `ConfigDelta.localMuteHistory`, `ConfigDelta.localIgnoreHistory`, and
+   `HumlaService`'s pending-snapshot store are deleted.
+6. **Features, one per commit** (see [app](app.md#features)), chat log
+   first. Before the chat-log commit deletes `StateEventLogger`, it records
+   golden strings from it for every `SessionEvent` case (self, other, and
+   actor variants, and both sides of the move and recording filters), and
+   the feature must reproduce them. The `chat_notify_*`, `deny_reason_*`,
+   and `audio_max_bandwidth` strings (with their translations) move from
+   `:libraries:humla` to `:app` in that commit, and the deny formatter
+   that the client's interim observer bridge uses moves with them. The
+   other features follow in any order. The connection notification
+   feature exposes its notification, and `HumlaService` posts it with
+   `startForeground` until step 7 hands that to `ConnectionService`.
+
+What step 6 leaves in `MumlaService` for step 7: `onCreate`, `onDestroy`,
+`onBind`, `onStartCommand`, the `IMumlaService` delegations, the connect
+half of `ConfigDelta` (`buildConnectDelta`, read at connect time), and the
+error-shown flag (`isErrorShown`, `markErrorShown`), which step 7 moves into
+`MainViewModel`.
+
+**Done when:**
+
+- **Executable:** `AppContainerLifecycleTest` (Robolectric, `:app`) builds
+  the real container with fakes only at the platform edges (the native
+  engine factory and the transport factory). It drives `MumlaService`
+  through create, destroy, create, and destroy, and asserts that:
+  - the second instance holds the same `HumlaClient`, `RouteControl`,
+    `VoiceEngine`, and `HumlaCallbacks` as the first;
+  - after the first destroy, `RouteControl` still answers `SessionStarted`
+    and `SessionEnded` with state changes;
+  - an observer registered through the second instance receives a
+    callback, and the first instance's observer does not;
+  - a connect through the second instance reaches `Connected` on the fake
+    transport, and the features see its events.
+- **Executable:** the chat-log goldens recorded from `StateEventLogger`
+  pass against the chat log feature.
+- Every row of the [feature table](app.md#features) has a feature class
+  in `se.lublin.mumla.feature`, and `MumlaService` holds only the residue
+  listed above: no field of type `TextToSpeech`, `SoundPool`,
+  `MumlaOverlay`, `MumlaHotCorner`, `MumlaConnectionNotification`,
+  `MumlaMessageNotification`, `TalkBroadcastReceiver`, or `WakeLock`, and
+  no chat log.
+- Invariants and their detectors:
+  - **One instance of each application-scoped object:** the identity
+    assertions above, and the concurrency tripwire, which fails if a
+    `synchronized` or `@Volatile` singleton returns to the storage files
+    after they leave the allowlist.
+  - **One writer for local facts:** a `LocalFactsStore` test (one database
+    write per mute or ignore toggle, one settings write per self-mute
+    intent), and a check in `check_architecture.py` that fails if anything
+    in `:app` other than the store calls `addLocalMutedUser`,
+    `removeLocalMutedUser`, `addLocalIgnoredUser`, `removeLocalIgnoredUser`,
+    or `setMutedAndDeafened`.
+  - **Features do not call each other:** the
+    [feature isolation check](enforcement.md#feature-isolation).
+  - **Event collectors never stall the session:** for each feature that
+    collects `client.events`, a test emits more events than the buffer
+    holds (300) while the feature's slow dependency (TTS engine,
+    notification manager, database) is blocked, and asserts that the
+    emitter never suspends.
+- **Allowlist:** `AppDataStore.kt`, `DataStorePreferenceDataStore.kt`,
+  `MumlaService.kt`, `MumlaConnectionNotification.kt`,
+  `MumlaMessageNotification.kt`, and `HumlaService.kt` leave the list;
+  `SettingsRepository.kt` drops to 3 (the listener bridge) and
+  `MumlaRoomDatabase.kt` to 2 (the `io` bridge and its import);
+  `AppContainer.kt` joins as a boundary file with 1 (the startup load).
+  That takes the list from 23 / 74 to 18 / 47.
 
 ## Step 7 — Screens and service cut-over
 
@@ -705,23 +841,36 @@ delegation.
    comment fragments, `ChannelChatFragment`, `ChannelFragment`,
    `ChannelListFragment` (with the menus), `MumlaActivity`. Each commit
    removes that screen's `IHumlaObserver` and `HumlaServiceFragment` use
-   (see [app](app.md#screens)).
-2. `ConnectionService` with the foreground rules; the UI starts it before
-   connecting.
-3. Delete `MumlaService`, `IMumlaService`, `HumlaService`,
+   (see [app](app.md#screens)). The `MumlaActivity` commit moves the
+   permission-denied dialog and the error-shown flag into `MainViewModel`.
+2. Storage off the main thread. Screens without a ViewModel that use the
+   database (`FavouriteServerListFragment`, `ServerEditFragment`, the
+   certificate activities, `MumlaCertificateGenerateTask`) call its
+   `suspend` methods from `lifecycleScope`. `BaseActivity`,
+   `ChannelFragment`, and `ChannelListFragment` collect the settings flow.
+   Then the database's `runBlocking` bridge and the settings listener
+   bridge are deleted.
+3. `ConnectionService` with the foreground rules; the UI starts it before
+   connecting. It posts the connection notification feature's
+   notification, as `HumlaService` does in step 6.
+4. Delete `MumlaService`, `IMumlaService`, `HumlaService`, `HumlaRuntime`,
    `HumlaServiceProvider`, `HumlaServiceFragment`, `ConfigDelta` and its
-   bridge, and the service-binding code.
-4. Remove Hilt and kapt from both modules (`@HiltAndroidApp`, the one
-   `@Inject`, `DatabaseModule`, `SettingsModule`), now that `AppContainer`
-   constructs everything.
+   bridge, the container's observer-bridge collectors, and the
+   service-binding code.
 5. Update the migration README's native fence and binder-surface decisions
    (see [below](#decisions-this-reverses)).
 
-**Done when:** no screen implements an observer or extends
-`HumlaServiceFragment`; nothing binds a service; the allowlist no longer
-lists `HumlaService`, `MumlaService`, `MumlaActivity`, or the storage files
-(`MumlaRoomDatabase.kt`, `SettingsRepository.kt`, `AppDataStore.kt`,
-`DataStorePreferenceDataStore.kt`).
+**Done when:**
+
+- **Executable:** `AppContainerLifecycleTest` is rewritten for
+  `ConnectionService`: a connect started from the UI path starts the
+  service in the foreground, a fake-transport session reaches `Connected`
+  with no bound service, and the service stops itself on `Idle` and on
+  `Failed`.
+- No screen implements an observer or extends `HumlaServiceFragment`, and
+  nothing binds a service.
+- The allowlist no longer lists `HumlaService`, `MumlaService`,
+  `MumlaActivity`, `SettingsRepository.kt`, or `MumlaRoomDatabase.kt`.
 
 ## Step 8 — Clean up
 
@@ -749,6 +898,9 @@ Delete `IHumlaObserver`, `HumlaCallbacks`, the live handles, `IUser`,
   connection survival in daily use and cannot be fixed. Revert the 5b
   commits with `git revert` and stay on 5a's `AudioRecord` and
   `AudioTrack`, which still leaves all transmit state on the native side.
+- **Step 6:** if a feature cannot be built without calling another feature,
+  holding a lock, or blocking an event collector, the feature table is
+  wrong. Revise [app](app.md#features) on `master` before continuing.
 - **Any step:** if a file cannot leave the allowlist without new
   coordination machinery, treat it as a design problem and revisit the
   spec, not the code.
@@ -762,4 +914,4 @@ Updated in the branch of the step that reverses them:
 | Native fence: "C++ frozen, no behavior touch" ([migration README](../migration/README.md)) | The engine stays free of I/O; it may be refactored, pinned by golden outputs | 5a (recorded), 7 (README updated) |
 | "No Oboe/AAudio" in the audio pipeline description ([`AGENTS.md`](../../AGENTS.md)) | AAudio, callback mode, for capture and playback | 5b (recorded) |
 | Frozen binder surface `IMumlaService`/`IHumlaService`/`IHumlaSession` ([migration README](../migration/README.md)) | Removed; screens and features collect flows | 7 |
-| Hilt as the DI framework ([migration slices](../migration/slices.md)) | Hand-written `AppContainer` | 7 |
+| Hilt as the DI framework ([migration slices](../migration/slices.md)) | Hand-written `AppContainer` | 6 |
