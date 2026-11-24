@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="perm_denied">Tilladelse nægtet.</string>
-    <string name="server">Server</string>
-    <string name="chat_notify_connected">%s forbundet.</string>
-</resources>

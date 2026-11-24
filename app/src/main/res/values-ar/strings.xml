@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Chat and permission-denied strings moved from :libraries:humla in step 6.
+  -->
+
+<resources>
+    <string name="chat_notify_unmuted">فُك كتمه.</string>
+    <string name="chat_notify_connected">%s متصل.</string>
+    <string name="chat_notify_disconnected">%s غير متصل.</string>
+    <string name="server">خادم</string>
+    <string name="chat_notify_muted">كُتم.</string>
+    <string name="chat_notify_muted_deafened">كُتم وأُصمّ</string>
+    <string name="chat_notify_now_muted">%s مكتوم.</string>
+    <string name="chat_notify_now_unmuted">%s غير مكتوم.</string>
+</resources>

@@ -48,14 +48,14 @@ import kotlinx.coroutines.runBlocking
 import se.lublin.humla.Constants
 import se.lublin.humla.HumlaRuntime
 import se.lublin.humla.client.LocalFactsStore
-import se.lublin.humla.protocol.StateEventLogger
 import se.lublin.humla.route.RoutePreferences
 import se.lublin.humla.state.SessionEvent
-import se.lublin.humla.util.HumlaLogger
 import se.lublin.humla.voice.VoiceSettings
 import se.lublin.humla.voice.VoiceSettingsMapper
 import se.lublin.mumla.app.MumlaApplication
 import se.lublin.mumla.db.MumlaRoomDatabase
+import se.lublin.mumla.feature.ChatEventFormatter
+import se.lublin.mumla.feature.ChatLogFeature
 import java.time.Clock
 
 /**
@@ -93,9 +93,10 @@ open class AppContainer(
 
     open val localFactsStore: LocalFactsStore = AppLocalFactsStore(database, settings)
 
-    /** Interim deny formatter; the strings move to :app with the chat log feature. */
-    private val denyLogger = StateEventLogger(context, NoopHumlaLogger)
-    open val denyFormatter: (SessionEvent.PermissionDenied) -> String = { denyLogger.denyReason(it) }
+    /** Interim deny formatter, now over the app's moved resources. */
+    open val chatFormatter = ChatEventFormatter(context)
+    open val denyFormatter: (SessionEvent.PermissionDenied) -> String =
+        { chatFormatter.denyReason(it) }
 
     // A snapshot the mapper rejects keeps the previous value and logs, so a
     // corrupt preference cannot strand the running voice configuration.
@@ -166,12 +167,6 @@ open class AppContainer(
         ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
             PackageManager.PERMISSION_GRANTED
 
-    private object NoopHumlaLogger : HumlaLogger {
-        override fun logInfo(message: String?) = Unit
-        override fun logWarning(message: String?) = Unit
-        override fun logError(message: String?) = Unit
-    }
-
     // Hand-off flows: one feature's output reaches another without a call.
     // Emitted with tryEmit on the main thread and collected on the main
     // thread without slow work inline.
@@ -201,6 +196,23 @@ open class AppContainer(
 
     open fun updateConfiguration(next: Configuration) {
         _configuration.value = Configuration(next)
+    }
+
+    /** Features are built once and started with appScope; they never close. */
+    open val chatLog: ChatLogFeature = ChatLogFeature(
+        context = context,
+        clientState = runtime.client.state,
+        events = runtime.events,
+        voiceEvents = runtime.voiceEvents,
+        appLog = appLog,
+        callbacks = runtime.callbacks,
+        formatter = chatFormatter,
+    )
+
+    init {
+        // Interim: received text still arrives through the observer bridge.
+        runtime.callbacks.registerObserver(chatLog.receivedTextObserver)
+        chatLog.start(appScope)
     }
 
     companion object {

@@ -44,9 +44,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
-import java.util.ArrayList
-import java.util.Collections
-import java.util.LinkedHashMap
 import java.util.Optional
 import se.lublin.humla.Constants
 import se.lublin.humla.HumlaService
@@ -57,7 +54,6 @@ import se.lublin.humla.model.IUser
 import se.lublin.humla.model.Message
 import se.lublin.humla.model.Server
 import se.lublin.humla.model.TalkState
-import se.lublin.humla.net.TlsHostnameVerifier
 import se.lublin.humla.util.CertRef
 import se.lublin.humla.util.ConfigDelta
 import se.lublin.humla.util.HumlaException
@@ -126,14 +122,6 @@ open class MumlaService : HumlaService(),
      * This should serve as a hint not to bother the user.
      */
     private var mErrorShown: Boolean = false
-    private val mServerChatLogs: MutableMap<String, MutableList<IChatMessage>> =
-        object : LinkedHashMap<String, MutableList<IChatMessage>>(MAX_CACHED_SERVERS + 1, 0.75f, true) {
-            override fun removeEldestEntry(eldest: Map.Entry<String, MutableList<IChatMessage>>): Boolean {
-                return size > MAX_CACHED_SERVERS
-            }
-        }
-    private var mActiveServerKey: String = ""
-    private var mMessageLog: MutableList<IChatMessage>? = null
     private var mSuppressNotifications: Boolean = false
     private var mWasReconnecting: Boolean = false
 
@@ -268,7 +256,6 @@ open class MumlaService : HumlaService(),
             val notification = mNotification ?: throw NullPointerException("mNotification")
             notification.showConnecting(serverName, host, port)
             mErrorShown = false
-            updateActiveServerLog()
         }
 
         override fun onConnected() {
@@ -439,19 +426,6 @@ open class MumlaService : HumlaService(),
                 messageNotification.show(msg)
             }
 
-            addChatMessageToLog(IChatMessage.TextMessage(msg, false))
-        }
-
-        override fun onLogInfo(message: String?) {
-            addChatMessageToLog(IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.INFO, message))
-        }
-
-        override fun onLogWarning(message: String?) {
-            addChatMessageToLog(IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.WARNING, message))
-        }
-
-        override fun onLogError(message: String?) {
-            addChatMessageToLog(IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.ERROR, message))
         }
 
         override fun onPermissionDenied(reason: String?) {
@@ -659,7 +633,6 @@ open class MumlaService : HumlaService(),
         // XML <application> theme does NOT do this!
         MumlaApplication.applyTheme(this)
 
-        mMessageLog = ArrayList()
         mMessageNotification = MumlaMessageNotification(this)
 
         // Instantiate overlay view
@@ -706,11 +679,6 @@ open class MumlaService : HumlaService(),
         if (tts != null) {
             tts.shutdown()
             mTTS = null
-        }
-        synchronized(this) {
-            mMessageLog = null
-            mServerChatLogs.clear()
-            mActiveServerKey = ""
         }
         val messageNotification = mMessageNotification
         if (messageNotification != null) {
@@ -1305,28 +1273,9 @@ open class MumlaService : HumlaService(),
         }
     }
 
-    @Synchronized
-    override fun getMessageLog(): List<IChatMessage> {
-        updateActiveServerLog()
-        val log = mMessageLog
-        if (log == null) {
-            return Collections.emptyList()
-        }
-        return Collections.unmodifiableList(ArrayList(log))
-    }
+    override fun getMessageLog(): List<IChatMessage> = container.chatLog.currentMessages()
 
-    @Synchronized
-    override fun clearMessageLog() {
-        val log = mMessageLog
-        if (log != null) {
-            log.clear()
-        }
-        if (mActiveServerKey.isNotEmpty()) {
-            mServerChatLogs.remove(mActiveServerKey)
-        }
-        mActiveServerKey = ""
-        mMessageLog = null
-    }
+    override fun clearMessageLog() = container.chatLog.clear()
 
     /**
      * Sets whether or not notifications should be suppressed.
@@ -1351,50 +1300,14 @@ open class MumlaService : HumlaService(),
 
     override fun sendUserTextMessage(session: Int, message: String?): Message? {
         val msg = super.sendUserTextMessage(session, message)
-
-        addChatMessageToLog(IChatMessage.TextMessage(msg, true))
+        container.chatLog.addSentText(msg)
         return msg
     }
 
     override fun sendChannelTextMessage(channel: Int, message: String?, tree: Boolean): Message? {
         val msg = super.sendChannelTextMessage(channel, message, tree)
-
-        addChatMessageToLog(IChatMessage.TextMessage(msg, true))
+        container.chatLog.addSentText(msg)
         return msg
-    }
-
-    // Widened to public: Kotlin has no package visibility (was package-visible
-    // synchronized in Java for the same-package Robolectric suite).
-    @Synchronized
-    fun updateActiveServerLog() {
-        val server = getTargetServer()
-        val key = getServerKey(server)
-        if (key.isNotEmpty() && key != mActiveServerKey) {
-            mActiveServerKey = key
-            val cached = mServerChatLogs[mActiveServerKey]
-            mMessageLog = cached ?: ArrayList()
-        } else if (mMessageLog == null) {
-            mMessageLog = ArrayList()
-        }
-    }
-
-    // Widened to public: Kotlin has no package visibility (was package-visible
-    // synchronized in Java for the same-package Robolectric suite).
-    @Synchronized
-    fun addChatMessageToLog(message: IChatMessage) {
-        updateActiveServerLog()
-        var log = mMessageLog
-        if (log == null) {
-            log = ArrayList()
-            mMessageLog = log
-        }
-        if (mActiveServerKey.isNotEmpty()) {
-            mServerChatLogs[mActiveServerKey] = log
-        }
-        if (log.size >= MAX_CHAT_LOG_SIZE) {
-            log.removeAt(0)
-        }
-        log.add(message)
     }
 
     companion object {
@@ -1408,9 +1321,6 @@ open class MumlaService : HumlaService(),
         /** Undocumented constant that permits a proximity-sensing wake lock. */
         const val PROXIMITY_SCREEN_OFF_WAKE_LOCK = 32
         const val TTS_THRESHOLD = 250 // Maximum number of characters to read
-
-        const val MAX_CHAT_LOG_SIZE = 500
-        const val MAX_CACHED_SERVERS = 10
 
         const val ACTION_DISCONNECT = "se.lublin.mumla.action.DISCONNECT"
         const val ACTION_MUTE = "se.lublin.mumla.action.MUTE"
@@ -1432,24 +1342,5 @@ open class MumlaService : HumlaService(),
             else
                 R.string.bluetooth_sco_failed
 
-        @JvmStatic
-        fun getServerKey(server: Server?): String {
-            if (server == null) {
-                return ""
-            }
-            if (server.isSaved()) {
-                return "id:" + server.id
-            }
-            // Shared canonicalization with TLS pinning (trim + trailing-dot +
-            // lowercase); IPv6 literals pass through unchanged. Password is
-            // deliberately excluded: chat-log identity must survive password
-            // corrections (see MumlaActivity.isSameServer, which compares the
-            // password separately to force a reconnect on change).
-            val rawHost = server.host?.trim() ?: ""
-            val host = TlsHostnameVerifier.canonicalizeHost(rawHost) ?: ""
-            val port = if (server.port > 0) server.port else Constants.DEFAULT_PORT
-            val user = server.username ?: ""
-            return "endpoint:$host:$port:$user"
-        }
     }
 }

@@ -82,7 +82,6 @@ import se.lublin.humla.model.WhisperTargetChannel
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.voice.VoiceEngine
-import se.lublin.humla.protocol.StateEventLogger
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.state.UserHandle
@@ -187,8 +186,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
     /** The runtime's mirror; live handles read it across reconnects. */
     val sessionState: StateFlow<SessionState> get() = appRuntime.sessionState
-
-    private var stateLogger: StateEventLogger? = null
 
     /** Points at the runtime-owned callbacks once onCreate has run. */
     private var mCallbacks: HumlaCallbacks = HumlaCallbacks()
@@ -335,7 +332,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
         appRuntime = runtime()
         mCallbacks = appRuntime.callbacks
-        stateLogger = StateEventLogger(this, this)
 
         // Per-instance route hook: the runtime's own collector only fans out
         // hints into HumlaCallbacks and cannot reach a service override.
@@ -444,21 +440,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                             }
                             onConnectionDisconnected(s.error.toHumlaExceptionOrNull())
                         }
-                    }
-                }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-            }
-        }
-
-        // Chat-log adapter: one application-lifetime event stream, so no
-        // session can emit before this collector exists.
-        lifecycleScope.launch {
-            try {
-                appRuntime.client.events.collect { record ->
-                    try {
-                        stateLogger?.log(listOf(record.event), record.state)
-                    } catch (ignored: Exception) {
                     }
                 }
             } catch (e: Exception) {

@@ -25,14 +25,20 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import android.os.Looper
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import se.lublin.humla.HumlaRuntime
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.FakeFactory
 import se.lublin.humla.client.FakeTransport
+import se.lublin.humla.client.syncSequence
 import se.lublin.humla.client.testTarget
+import se.lublin.humla.client.userState
+import se.lublin.humla.net.HumlaTCPMessageType
+import se.lublin.humla.net.Inbound
 import se.lublin.humla.route.RouteState
 import se.lublin.humla.util.HumlaObserver
 import se.lublin.humla.voice.EngineNative
@@ -144,6 +150,9 @@ class AppContainerLifecycleTest {
         runBlocking {
         val app = RuntimeEnvironment.getApplication() as TestApplication
         val container = app.container
+        // Robolectric's paused main looper: let the process-lifetime feature
+        // collectors subscribe before the first event can be emitted.
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
         val firstController = Robolectric.buildService(MumlaService::class.java).create()
         val first = firstController.get()
         firstController.destroy()
@@ -170,6 +179,34 @@ class AppContainerLifecycleTest {
         }
         assertTrue("connect must reach the fake transport factory", factory.created.isNotEmpty())
         assertTrue(container.runtime.routeState.value is RouteState)
+
+        // Drive the fake transport through ServerSync: the second service's
+        // connect reaches Connected, and the application-lifetime features
+        // see the resulting session events.
+        for (message in syncSequence()) {
+            transport.inboundChannel.trySend(message)
+        }
+        withTimeout(5_000) {
+            while (container.runtime.client.state.value !is ClientState.Connected) {
+                Shadows.shadowOf(Looper.getMainLooper()).idle()
+                kotlinx.coroutines.delay(10)
+            }
+        }
+        // A join after sync is a semantic event; the process-lifetime chat
+        // log collector must see it even though the service was re-created.
+        transport.inboundChannel.trySend(
+            Inbound.Message(HumlaTCPMessageType.UserState, userState(3, "carol", 0)),
+        )
+        withTimeout(5_000) {
+            while (container.chatLog.currentMessages().isEmpty()) {
+                Shadows.shadowOf(Looper.getMainLooper()).idle()
+                kotlinx.coroutines.delay(10)
+            }
+        }
+        assertTrue(
+            "features must see events from the second service's connection",
+            container.chatLog.currentMessages().any { it.body?.contains("carol") == true },
+        )
         container.runtime.client.disconnect()
         secondController.destroy()
     }

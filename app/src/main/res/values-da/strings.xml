@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ~ Chat and permission-denied strings moved from :libraries:humla in step 6.
+  -->
+
+<resources>
+    <string name="server">Server</string>
+    <string name="chat_notify_connected">%s forbundet.</string>
+</resources>
