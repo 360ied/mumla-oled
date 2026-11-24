@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">İzin reddedildi.</string>
     <string name="the_server">sunucu</string>
     <string name="server">Sunucu</string>
     <string name="deny_reason_other">Neden: %s</string>

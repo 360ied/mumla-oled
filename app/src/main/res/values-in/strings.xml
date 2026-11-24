@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Izin ditolak.</string>
     <string name="deny_reason_text_too_long">Ditolak: pesan teks terlalu panjang.</string>
     <string name="deny_reason_no_operation_temp">Ditolak: Operasi tidak diizinkan di channel sementara.</string>
     <string name="deny_reason_channel_nesting">Batas nesting channel sudah tercapai.</string>

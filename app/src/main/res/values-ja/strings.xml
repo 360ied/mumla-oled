@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">権限が拒否されました。</string>
     <string name="audio_max_bandwidth">サーバーの最大ネットワーク帯域幅は %1$d kbit/s のみです。オーディオ品質は %2$d kbit/s (%3$d ms) に自動調整されました。</string>
     <string name="chat_notify_muted_deafened">ミュートおよび防音。</string>
     <string name="chat_notify_muted">ミュートしました。</string>

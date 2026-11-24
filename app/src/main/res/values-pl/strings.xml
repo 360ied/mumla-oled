@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Odmowa dostępu.</string>
     <string name="audio_max_bandwidth">Maksymalna przepustowość sieci serwera to tylko %1$d kbit/s. Dostosowywanie jakości audio do %2$d kbit/s (%3$d ms).</string>
     <string name="chat_notify_muted_deafened">Wyciszony i ogłuszony.</string>
     <string name="chat_notify_muted">Wyciszony.</string>

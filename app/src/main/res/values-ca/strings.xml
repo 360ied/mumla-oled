@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Permís denegat.</string>
     <string name="chat_notify_disconnected">%s s\'ha desconnectat.</string>
     <string name="chat_notify_muted">Silenciat.</string>
     <string name="server">Servidor</string>

@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Permiso denegado.</string>
     <string name="audio_max_bandwidth">El ancho de banda máximo del servidor es solo de %1$d kbit/s. Calidad de audio ajustada a %2$d kbit/s (%3$d ms).</string>
     <string name="chat_notify_muted_deafened">Mudo y sordo.</string>
     <string name="chat_notify_muted">Mudo.</string>

@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">இசைவு மறுக்கப்பட்டது.</string>
     <string name="chat_notify_user_recording_stopped">%s பதிவு செய்வதை நிறுத்தினார்.</string>
     <string name="chat_notify_user_joined_channel">%s தடத்தில் நுழைந்தார்.</string>
     <string name="chat_notify_user_left_channel">%1$s %2$s க்கு நகர்ந்தார்.</string>

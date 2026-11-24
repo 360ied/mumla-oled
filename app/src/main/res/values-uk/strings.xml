@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Відмовлено в доступі.</string>
     <string name="chat_notify_muted_deafened">Звук та мікрофон вимкнені.</string>
     <string name="chat_notify_muted">Мікрофон вимкнено.</string>
     <string name="chat_notify_unmuted">Мікрофон увімкнено.</string>

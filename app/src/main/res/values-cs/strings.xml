@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Přístup zamítnut.</string>
     <string name="the_server">server</string>
     <string name="deny_reason_other">Důvod: %s</string>
     <string name="deny_reason_channel_nesting">Dosaženo limitu vnoření kanálu.</string>

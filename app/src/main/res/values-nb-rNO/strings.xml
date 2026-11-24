@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Tilgang nektet.</string>
     <string name="deny_reason_channel_nesting">Grensen for underkanaler er nådd.</string>
     <string name="audio_max_bandwidth">Maksimal tjenernettverksbåndbredde er kun %1$d kbit/s. Justerer lydkvalitet til %2$d kbit/s (%3$d ms).</string>
     <string name="the_server">tjeneren</string>

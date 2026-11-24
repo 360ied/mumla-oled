@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Доступ запрещён.</string>
     <string name="audio_max_bandwidth">Максимальная пропускная способность сервера %1$d Кбит/с. Качество звука изменено на %2$d Кбит/с (%3$d мс).</string>
     <string name="chat_notify_muted_deafened">Звук и микрофон отключены.</string>
     <string name="chat_notify_muted">Микрофон отключен.</string>

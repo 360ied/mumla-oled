@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Permesso negato.</string>
     <string name="deny_reason_channel_nesting">Raggiunto il limite di nesting dei canali.</string>
     <string name="chat_notify_disconnected">%s disconnesso.</string>
     <string name="the_server">il server</string>

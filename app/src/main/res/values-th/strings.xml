@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">ไม่มีสิทธิ์</string>
     <string name="deny_reason_channel_nesting">ถึงขีดจำกัดการซ้อนช่องแล้ว.</string>
     <string name="deny_reason_channel_full">แชนเนลเต็ม.</string>
     <string name="deny_reason_invalid_username">ชื่อผู้ใช้ไม่ถูกต้อง.</string>

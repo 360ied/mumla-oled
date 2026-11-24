@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Åtkomst nekad.</string>
     <string name="chat_notify_muted">Tystad.</string>
     <string name="deny_reason_text_too_long">Nekad: Textmeddelande för långt.</string>
     <string name="audio_max_bandwidth">Maximal bandbredd för servernätet är bara %1$d kbit/s. Justerar ljudkvaliten till %2$d kbit/s (%3$d ms).</string>

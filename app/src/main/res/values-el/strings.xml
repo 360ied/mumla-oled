@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Δεν επιτρέπεται η πρόσβαση.</string>
     <string name="audio_max_bandwidth">Το μέγιστο εύρος ζώνης δικτύου διακομιστή είναι μόνο %1$d kbit/s. Ρύθμιση της ποιότητας ήχου σε %2$d kbit/s (%3$d ms).</string>
     <string name="chat_notify_muted_deafened">Φιμώθηκε και κωφώθηκε.</string>
     <string name="chat_notify_muted">Φιμωμένος.</string>

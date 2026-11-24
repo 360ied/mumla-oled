@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">權限被拒絕。</string>
     <string name="deny_reason_no_certificate">需要憑證才能進行操作。</string>
     <string name="deny_reason_no_operation_temp">禁止：此操作在暫時頻道不能進行。</string>
     <string name="deny_reason_text_too_long">禁止：文字過長。</string>

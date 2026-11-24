@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Käyttöoikeus evätty.</string>
     <string name="chat_notify_kick_self">Sinut on potkittu palvelimelta %1$s:%2$s toimesta.</string>
     <string name="the_server">palvelin</string>
     <string name="server">Palvelin</string>

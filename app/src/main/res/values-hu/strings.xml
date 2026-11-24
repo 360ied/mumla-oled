@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Engedély megtagadva.</string>
     <string name="chat_notify_muted_deafened">Némítva és süketítve.</string>
     <string name="chat_notify_muted">Némítva.</string>
     <string name="chat_notify_unmuted">Némítás visszavonva.</string>

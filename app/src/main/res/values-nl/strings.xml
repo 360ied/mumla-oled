@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Geen toelating.</string>
     <string name="chat_notify_muted_deafened">Gedempt en doof gemaakt.</string>
     <string name="chat_notify_muted">Gedempt.</string>
     <string name="chat_notify_unmuted">Dempen opgeheven.</string>

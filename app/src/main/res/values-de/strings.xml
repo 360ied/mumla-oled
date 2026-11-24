@@ -4,6 +4,7 @@
   -->
 
 <resources>
+    <string name="perm_denied">Zugriff verweigert.</string>
     <string name="audio_max_bandwidth">Die maximale Netzwerk-Bandbreite des Servers beträgt nur %1$d kbit/s. Die Audioqualität wird automatisch angepasst auf %2$d kbit/s (%3$d ms).</string>
     <string name="chat_notify_muted_deafened">Stumm und taub.</string>
     <string name="chat_notify_muted">Stumm.</string>
