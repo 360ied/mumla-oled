@@ -3,7 +3,7 @@
 Snapshot: claims about today's code verified against `master` at `c988bbfe`, 2026-11-10. Citations name files and
 symbols, not line numbers.
 
-Status: migration in progress; steps 1–4 are implemented (see
+Status: migration in progress; steps 1–5b are implemented (see
 [`PROGRESS.md`](PROGRESS.md)). Nothing here authorizes work; each migration
 step starts only on explicit request, once the [open items](open-items.md)
 that gate it are resolved.

@@ -365,62 +365,122 @@ class TestNative(unittest.TestCase):
 
 
 class TestVoiceLifecycle(unittest.TestCase):
-    HEALTHY = (
+    # Step 5b splits the pin: asserts live in the JNI lifecycle file, both
+    # guards live in the host-compiled AAudio callback bodies.
+    LIFECYCLE = (
         "#include <cassert>\n"
-        "struct RenderGuard { explicit RenderGuard(std::atomic<bool>* f) : m(f) {}\n"
-        "  ~RenderGuard() {}\n"
-        "  std::atomic<bool>* m; };\n"
         "void nativeDestroy() {\n"
-        "  assert(!ctx->renderActive.load(std::memory_order_acquire));\n"
+        "  assert(!ctx->streams.renderActive.load(std::memory_order_acquire));\n"
+        "  assert(!ctx->streams.captureActive.load(std::memory_order_acquire));\n"
         "}\n"
-        "void nativeRender() { RenderGuard guard(&ctx->renderActive); }\n"
         "void nativeClear() {\n"
-        "  assert(!ctx->renderActive.load(std::memory_order_acquire));\n"
+        "  assert(!ctx->streams.renderActive.load(std::memory_order_acquire));\n"
+        "  assert(!ctx->streams.captureActive.load(std::memory_order_acquire));\n"
         "}\n"
     )
+    CALLBACKS = (
+        "#include \"VoiceStreamContext.h\"\n"
+        "bool renderStreamFrames() { RenderGuard guard(&ctx->renderActive);\n"
+        "  return true; }\n"
+        "void captureStreamFrames() { CaptureGuard guard(&ctx->captureActive); }\n"
+    )
 
-    def write_lifecycle(self, root, text):
+    def write_lifecycle(self, root, lifecycle=None, callbacks=None):
         d = root / "libraries/humla/src/main/jni/voice_io"
         d.mkdir(parents=True)
-        # Keep in sync with the gate: the lifecycle pin follows the file,
-        # not the other way round (renamed NativeVoiceIoJni ->
+        # Keep in sync with the gate: the pins follow the files, not the
+        # other way round (renamed NativeVoiceIoJni ->
         # NativeVoiceEngineJni in 5a.3b).
-        (d / Path(ca.VOICE_IO_LIFECYCLE_FILE).name).write_text(text, encoding="utf-8")
+        if lifecycle is not None:
+            (d / Path(ca.VOICE_IO_LIFECYCLE_FILE).name).write_text(
+                lifecycle, encoding="utf-8"
+            )
+        if callbacks is not None:
+            (d / Path(ca.VOICE_IO_CALLBACKS_FILE).name).write_text(
+                callbacks, encoding="utf-8"
+            )
 
     def test_absent_voice_io_passes_trivially(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(ca.check_voice_lifecycle(Path(tmp)), [])
 
-    def test_healthy_file_passes(self):
+    def test_healthy_files_pass(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write_lifecycle(root, self.HEALTHY)
+            self.write_lifecycle(root, self.LIFECYCLE, self.CALLBACKS)
             self.assertEqual(ca.check_voice_lifecycle(root), [])
 
     def test_missing_assert_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            text = self.HEALTHY.replace(
+            text = self.LIFECYCLE.replace(
                 "void nativeClear() {\n"
-                "  assert(!ctx->renderActive.load(std::memory_order_acquire));\n"
+                "  assert(!ctx->streams.renderActive.load(std::memory_order_acquire));\n"
+                "  assert(!ctx->streams.captureActive.load(std::memory_order_acquire));\n"
                 "}\n",
-                "void nativeClear() {}\n",
+                "void nativeClear() {\n"
+                "  assert(!ctx->streams.captureActive.load(std::memory_order_acquire));\n"
+                "}\n",
             )
-            self.write_lifecycle(root, text)
+            self.write_lifecycle(root, text, self.CALLBACKS)
             errors = ca.check_voice_lifecycle(root)
             self.assertEqual(len(errors), 1)
             self.assertTrue(any("voice-lifecycle" in e for e in errors))
 
+    def test_missing_capture_assert_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            text = self.LIFECYCLE.replace(
+                "void nativeClear() {\n"
+                "  assert(!ctx->streams.renderActive.load(std::memory_order_acquire));\n"
+                "  assert(!ctx->streams.captureActive.load(std::memory_order_acquire));\n"
+                "}\n",
+                "void nativeClear() {\n"
+                "  assert(!ctx->streams.renderActive.load(std::memory_order_acquire));\n"
+                "}\n",
+            )
+            self.write_lifecycle(root, text, self.CALLBACKS)
+            errors = ca.check_voice_lifecycle(root)
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(any("captureActive" in e for e in errors))
+
     def test_missing_guard_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            text = self.HEALTHY.replace(
+            text = self.CALLBACKS.replace(
                 "RenderGuard guard(&ctx->renderActive);", "/* guard removed */"
             )
-            self.write_lifecycle(root, text)
+            self.write_lifecycle(root, self.LIFECYCLE, text)
             errors = ca.check_voice_lifecycle(root)
             self.assertEqual(len(errors), 1)
             self.assertTrue(any("RenderGuard" in e for e in errors))
+
+    def test_missing_capture_guard_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            text = self.CALLBACKS.replace(
+                "CaptureGuard guard(&ctx->captureActive);", "/* guard removed */"
+            )
+            self.write_lifecycle(root, self.LIFECYCLE, text)
+            errors = ca.check_voice_lifecycle(root)
+            self.assertEqual(len(errors), 1)
+            self.assertTrue(any("CaptureGuard" in e for e in errors))
+
+    def test_missing_callbacks_file_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_lifecycle(root, self.LIFECYCLE)
+            errors = ca.check_voice_lifecycle(root)
+            self.assertEqual(len(errors), 3)
+            self.assertTrue(any("VoiceStreamCallbacks.cpp" in e for e in errors))
+
+    def test_missing_lifecycle_file_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write_lifecycle(root, callbacks=self.CALLBACKS)
+            errors = ca.check_voice_lifecycle(root)
+            self.assertEqual(len(errors), 3)
+            self.assertTrue(any("NativeVoiceEngineJni.cpp" in e for e in errors))
 
 
 class TestRunAll(unittest.TestCase):

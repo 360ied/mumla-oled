@@ -35,9 +35,10 @@
     preferences.
   - `libraries/humla/` (`:libraries:humla`): Mumble protocol engine,
     background service, codec bindings, and native JNI audio pipeline
-    over `AudioRecord`/`AudioTrack` (no Oboe/AAudio), organized under
+    over AAudio callback streams (no Oboe), organized under
     `libraries/humla/src/main/jni/` (`audio_engine/`, `crypto/`,
-    `voice_codec/`, `voice_io/`, `nanopb/`).
+    `voice_codec/`, `voice_io/`, `nanopb/`). Android links `aaudio`; the
+    host library and host tests compile the callback bodies only.
 - **Third-Party Submodules**: Registered directly in the root
   `.gitmodules` (not nested inside another submodule):
   `libraries/humla/src/main/jni/{opus, rnnoise, nanopb}`.

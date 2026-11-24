@@ -16,9 +16,10 @@
  */
 
 // Host tests for the 5a.3a native render core: the SPSC rings and VoiceIo.
-// VoiceIo owns the output engine; the render thread is the only path into
-// it. Producers push frames or removals; render drains both rings, mixes in
-// quanta of at most 60 ms, and folds talk transitions into a level table.
+// VoiceIo owns the output engine; the AAudio render callback (and the JNI
+// test entry) is the only path into it. Producers push frames or removals;
+// render drains both rings, mixes whole 10 ms frames, and folds talk
+// transitions into a level table. Step 5b removed the render idle wake.
 
 #include "TestHarness.h"
 #include "CryptStateOCB2.h"
@@ -181,7 +182,6 @@ void testSilentRenderReportsZero() {
     VoiceIo::RenderOut result;
     io.render(pcm.data(), pcm.size(), &result);
     TEST_ASSERT_EQ(result.samples, 0u);
-    TEST_ASSERT_FALSE(result.hasActiveVoices);
     TEST_ASSERT_EQ(result.talk.count, 0u);
     TEST_ASSERT_EQ(result.droppedInbound, 0u);
     TEST_ASSERT_EQ(result.droppedTunnel, 0u);
@@ -198,7 +198,6 @@ void testRenderDrainsBothRings() {
     VoiceIo::RenderOut result;
     io.render(pcm.data(), pcm.size(), &result);
     TEST_ASSERT_TRUE(result.samples > 0);
-    TEST_ASSERT_TRUE(result.hasActiveVoices);
     TEST_ASSERT_TRUE(snapshotHas(result.talk, 11, OutputTalkState::TALKING));
     TEST_ASSERT_TRUE(snapshotHas(result.talk, 22, OutputTalkState::TALKING));
     TEST_ASSERT_EQ(result.talk.count, 2u);
@@ -253,7 +252,6 @@ void testRemoveUserOrderedAfterTunnelVoice() {
     // TALKING and the removal's PASSIVE fold to absent).
     TEST_ASSERT_FALSE(snapshotHas(result.talk, 33, OutputTalkState::TALKING));
     TEST_ASSERT_EQ(result.talk.count, 0u);
-    TEST_ASSERT_FALSE(result.hasActiveVoices);
     std::cout << "  [PASS] testRemoveUserOrderedAfterTunnelVoice" << std::endl;
 }
 
@@ -268,7 +266,6 @@ void testRemoveUserClearsTalkLevel() {
     TEST_ASSERT_TRUE(io.pushRemoveUser(44));
     io.render(pcm.data(), pcm.size(), &result);
     TEST_ASSERT_EQ(result.talk.count, 0u);
-    TEST_ASSERT_FALSE(result.hasActiveVoices);
     std::cout << "  [PASS] testRemoveUserClearsTalkLevel" << std::endl;
 }
 
@@ -473,7 +470,6 @@ void testClearEmptiesTalkLevels() {
     io.clear();
     io.render(pcm.data(), pcm.size(), &result);
     TEST_ASSERT_EQ(result.talk.count, 0u);
-    TEST_ASSERT_FALSE(result.hasActiveVoices);
     std::cout << "  [PASS] testClearEmptiesTalkLevels" << std::endl;
 }
 
@@ -499,7 +495,6 @@ void testVoiceIoEnginesArePrivatelyOwned() {
     TEST_ASSERT_TRUE(snapshotHas(result.talk, 41, OutputTalkState::TALKING));
     second.render(pcm.data(), pcm.size(), &result);
     TEST_ASSERT_EQ(result.talk.count, 0u);
-    TEST_ASSERT_FALSE(result.hasActiveVoices);
     TEST_ASSERT_EQ(result.samples, 0u);
     std::cout << "  [PASS] testVoiceIoEnginesArePrivatelyOwned" << std::endl;
 }
@@ -525,84 +520,8 @@ void testClearWhileStoppedPublishesEmptyAndEngineSurvives() {
     TEST_ASSERT_EQ(pub.talk.count, 0u);
     io.render(pcm.data(), pcm.size(), &result);
     TEST_ASSERT_EQ(result.talk.count, 0u);
-    TEST_ASSERT_FALSE(result.hasActiveVoices);
     std::cout << "  [PASS] testClearWhileStoppedPublishesEmptyAndEngineSurvives"
               << std::endl;
-}
-
-void testAwaitWorkPushInboundWakes() {
-    g_testCount++;
-    VoiceIo io(fakeFactory());
-    std::atomic<bool> woke{false};
-    std::thread waiter([&] { woke.store(io.awaitWork(-1)); });
-    // Let the waiter enter the semaphore before pushing.
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    TEST_ASSERT_TRUE(io.pushInbound(makePacket(91, 0)));
-    waiter.join();
-    TEST_ASSERT_TRUE(woke.load());
-    std::cout << "  [PASS] testAwaitWorkPushInboundWakes" << std::endl;
-}
-
-void testAwaitWorkPushTunnelWakes() {
-    g_testCount++;
-    VoiceIo io(fakeFactory());
-    std::atomic<bool> woke{false};
-    std::thread waiter([&] { woke.store(io.awaitWork(-1)); });
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    TEST_ASSERT_TRUE(io.pushTunnel(makePacket(92, 0)));
-    waiter.join();
-    TEST_ASSERT_TRUE(woke.load());
-    std::cout << "  [PASS] testAwaitWorkPushTunnelWakes" << std::endl;
-}
-
-void testAwaitWorkStopWakes() {
-    g_testCount++;
-    VoiceIo io(fakeFactory());
-    std::atomic<bool> done{false};
-    std::thread waiter([&] {
-        io.awaitWork(-1);
-        done.store(true);
-    });
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    io.wakeForStop();
-    waiter.join();
-    TEST_ASSERT_TRUE(done.load());
-    std::cout << "  [PASS] testAwaitWorkStopWakes" << std::endl;
-}
-
-void testAwaitWorkTimeoutFires() {
-    g_testCount++;
-    VoiceIo io(fakeFactory());
-    const auto start = std::chrono::steady_clock::now();
-    TEST_ASSERT_FALSE(io.awaitWork(20));
-    const auto elapsed = std::chrono::steady_clock::now() - start;
-    TEST_ASSERT_TRUE(elapsed >= std::chrono::milliseconds(15));
-    TEST_ASSERT_TRUE(elapsed < std::chrono::milliseconds(500));
-    std::cout << "  [PASS] testAwaitWorkTimeoutFires" << std::endl;
-}
-
-void testAwaitWorkStressLosesNoWakeup() {
-    g_testCount++;
-    VoiceIo io(fakeFactory());
-    constexpr int kRounds = 200;
-    for (int i = 0; i < kRounds; ++i) {
-        std::atomic<bool> woke{false};
-        std::thread waiter([&] { woke.store(io.awaitWork(1000)); });
-        // Push immediately, with and without a settle delay on alternate
-        // rounds: either the push lands before the waiter's ring check
-        // (returns without waiting) or it sees idle and posts.
-        if ((i & 1) == 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        TEST_ASSERT_TRUE(io.pushInbound(makePacket(93, static_cast<uint32_t>(i))));
-        waiter.join();
-        TEST_ASSERT_TRUE(woke.load());
-        // Drain so the next round starts empty.
-        std::vector<int16_t> pcm(kFrame * 2);
-        VoiceIo::RenderOut result;
-        io.render(pcm.data(), pcm.size(), &result);
-    }
-    std::cout << "  [PASS] testAwaitWorkStressLosesNoWakeup" << std::endl;
 }
 
 void testPolicyDropsMutedOverUdpAndTunnel() {
@@ -1124,11 +1043,6 @@ void run_voice_io_tests() {
     testClearEmptiesTalkLevels();
     testVoiceIoEnginesArePrivatelyOwned();
     testClearWhileStoppedPublishesEmptyAndEngineSurvives();
-    testAwaitWorkPushInboundWakes();
-    testAwaitWorkPushTunnelWakes();
-    testAwaitWorkStopWakes();
-    testAwaitWorkTimeoutFires();
-    testAwaitWorkStressLosesNoWakeup();
     testPolicyDropsMutedOverUdpAndTunnel();
     testPolicyUnknownHoldsNoSlot();
     testPolicyKnownOverflowFailsOpen();

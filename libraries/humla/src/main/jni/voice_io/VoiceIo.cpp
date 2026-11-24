@@ -19,8 +19,6 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cerrno>
-#include <ctime>
 
 #include "VoiceConfig.h"
 #include "VoiceTalk.h"
@@ -35,83 +33,15 @@ using mumla::audio::RenderResult;
 
 VoiceIo::VoiceIo(AudioOutputEngine::DecoderFactory factory)
     : m_engine(std::make_unique<AudioOutputEngine>(std::move(factory),
-                                                   AudioOutputEngine::DEFAULT_JITTER_MARGIN_FRAMES)) {
-    sem_init(&m_sem, 0, 0);
-}
+                                                   AudioOutputEngine::DEFAULT_JITTER_MARGIN_FRAMES)) {}
 
-VoiceIo::~VoiceIo() { sem_destroy(&m_sem); }
-
-void VoiceIo::postIfIdle() {
-    // Sequentially consistent on both sides: a push either lands before
-    // render's ring check or sees the flag and carries the wake.
-    if (m_idle.exchange(false, std::memory_order_seq_cst)) {
-        sem_post(&m_sem);
-    }
-}
-
-bool VoiceIo::awaitWork(int timeoutMs) {
-    m_idle.store(true, std::memory_order_seq_cst);
-    // No lost wakeups: a push that landed before this check leaves a
-    // non-empty ring; one that lands after sees idle and posts.
-    if (!m_inbound.empty() || !m_tunnel.empty()) {
-        m_idle.store(false, std::memory_order_seq_cst);
-        return true;
-    }
-    if (timeoutMs < 0) {
-        int r;
-        do {
-            r = sem_wait(&m_sem);
-        } while (r != 0 && errno == EINTR);
-    } else if (timeoutMs == 0) {
-        // Zero timeout: poll only, no wait (keeps the protocol testable
-        // without sleeping).
-    } else {
-        struct timespec ts;
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        ts.tv_sec += timeoutMs / 1000;
-        ts.tv_nsec += static_cast<long>((timeoutMs % 1000) * 1000000L);
-        if (ts.tv_nsec >= 1000000000L) {
-            ts.tv_sec += 1;
-            ts.tv_nsec -= 1000000000L;
-        }
-        int r;
-        do {
-#if defined(__ANDROID__) || (defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 30)))
-            r = sem_clockwait(&m_sem, CLOCK_MONOTONIC, &ts);
-#else
-            // Older host libc without sem_clockwait: fall back to realtime.
-            struct timespec rt;
-            clock_gettime(CLOCK_REALTIME, &rt);
-            rt.tv_sec += timeoutMs / 1000;
-            rt.tv_nsec += static_cast<long>((timeoutMs % 1000) * 1000000L);
-            if (rt.tv_nsec >= 1000000000L) {
-                rt.tv_sec += 1;
-                rt.tv_nsec -= 1000000000L;
-            }
-            r = sem_timedwait(&m_sem, &rt);
-#endif
-        } while (r != 0 && errno == EINTR);
-    }
-    // A stop post also lands here; the caller re-renders and observes
-    // running == false. Spurious wakes cost one empty quantum.
-    if (!m_inbound.empty() || !m_tunnel.empty()) {
-        m_idle.store(false, std::memory_order_seq_cst);
-        return true;
-    }
-    // Timeout with both rings still empty: stay idle so the next push
-    // still posts; the next await rechecks before waiting again.
-    return false;
-}
-
-void VoiceIo::wakeForStop() { sem_post(&m_sem); }
+VoiceIo::~VoiceIo() = default;
 
 bool VoiceIo::pushInbound(const InboundPacket& packet) {
     if (m_inbound.tryPush(packet)) {
-        postIfIdle();
         return true;
     }
     m_droppedInbound++;
-    postIfIdle();
     return false;
 }
 
@@ -121,11 +51,9 @@ bool VoiceIo::pushTunnel(const InboundPacket& packet) {
     item.session = packet.session;
     item.packet = packet;
     if (m_tunnel.tryPush(item)) {
-        postIfIdle();
         return true;
     }
     m_droppedTunnel++;
-    postIfIdle();
     return false;
 }
 
@@ -134,7 +62,6 @@ bool VoiceIo::pushRemoveUser(int32_t session) {
     item.isRemove = true;
     item.session = session;
     if (m_tunnel.tryPush(item)) {
-        postIfIdle();
         return true;
     }
     // A removal that finds the ring full is dropped and counted like any
@@ -143,7 +70,6 @@ bool VoiceIo::pushRemoveUser(int32_t session) {
     // the engine's dead-voice rule (10 missed frames) releases the slot about
     // 100 ms after its buffered audio runs out.
     m_droppedTunnel++;
-    postIfIdle();
     return false;
 }
 
@@ -209,12 +135,32 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
     const bool duplexMuted = halfDuplex && selfTalking;
     size_t written = 0;
     bool silent = true;
+    result->nonSilentFrames = 0;
+    constexpr size_t kFrameSamples =
+        static_cast<size_t>(AudioOutputEngine::FRAME_SIZE);
+    auto markAllFrames = [&](size_t start, size_t sampleCount) {
+        const size_t frameCount =
+            (sampleCount + kFrameSamples - 1) / kFrameSamples;
+        const size_t baseFrame = start / kFrameSamples;
+        for (size_t frame = 0; frame < frameCount; ++frame) {
+            const size_t bit = baseFrame + frame;
+            if (bit < 64) {
+                result->nonSilentFrames |= 1ULL << bit;
+            }
+        }
+    };
     // The engine covers quanta up to MAX_QUANTUM_SAMPLES (60 ms); larger
     // requests split into several render calls. Every quantum's talk events
     // fold into the same level table, so nothing is lost across the split.
     // A quantum the engine reports as silent (0 samples) is zero-filled
-    // here; result->samples is 0 only when every quantum was silent, so
-    // the Kotlin idle wait can idle on silence.
+    // here; result->samples is 0 only when every quantum was silent. The
+    // AAudio callback writes these zeros through silence so the output
+    // stream stays active, and the JNI test entry reports silence as 0.
+    // nonSilentFrames pins which 10 ms frames within a quantum must be
+    // reported as non-silent, so a burst that copies only a silent carried
+    // frame can still return 0. A quantum with reported audio but all-zero
+    // PCM (startup gating, half duplex, or decoded silence) marks every
+    // frame, preserving 5a's pacing contract.
     while (written < samples) {
         size_t want = std::min(samples - written,
                                AudioOutputEngine::MAX_QUANTUM_SAMPLES);
@@ -231,8 +177,33 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
             std::fill(out + written, out + written + want, 0);
             if (engineResult.samples > 0) {
                 silent = false;
+                markAllFrames(written, want);
             }
         } else if (engineResult.samples > 0) {
+            bool sawNonZero = false;
+            const size_t frameCount =
+                (want + kFrameSamples - 1) / kFrameSamples;
+            for (size_t frame = 0; frame < frameCount; ++frame) {
+                const size_t begin = frame * kFrameSamples;
+                const size_t end = std::min(want, begin + kFrameSamples);
+                bool nonZero = false;
+                for (size_t i = begin; i < end; ++i) {
+                    if (out[written + i] != 0) {
+                        nonZero = true;
+                        break;
+                    }
+                }
+                if (nonZero) {
+                    sawNonZero = true;
+                    const size_t bit = written / kFrameSamples + frame;
+                    if (bit < 64) {
+                        result->nonSilentFrames |= 1ULL << bit;
+                    }
+                }
+            }
+            if (!sawNonZero) {
+                markAllFrames(written, want);
+            }
             silent = false;
         } else {
             std::fill(out + written, out + written + want, 0);
@@ -240,7 +211,6 @@ void VoiceIo::render(int16_t* out, size_t samples, RenderOut* result) {
         written += want;
     }
     result->samples = silent ? 0 : written;
-    result->hasActiveVoices = m_engine->activeUserCount() > 0;
     result->droppedInbound = m_droppedInbound;
     result->droppedTunnel = m_droppedTunnel;
     result->droppedJitter = m_droppedJitter;

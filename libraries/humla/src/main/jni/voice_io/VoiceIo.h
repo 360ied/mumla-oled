@@ -21,7 +21,6 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <semaphore.h>
 
 #include "AudioOutputEngine.h"
 #include "VoiceRings.h"
@@ -33,10 +32,11 @@ class TalkCell;
 class SettingsCell;
 
 /**
- * Native voice I/O core (step 5a.3a native render, 5a.3b render wake).
+ * Native voice I/O core (step 5a.3a native render; step 5b callback mode).
  *
- * Owns the output engine and the two inbound rings; the render thread is the
- * only thread that touches the engine. Producers never reach the engine:
+ * Owns the output engine and the two inbound rings; the AAudio render
+ * callback is the only caller that touches the engine. Producers never reach
+ * the engine:
  * UDP frames arrive via pushInbound, tunnelled frames via pushTunnel, and
  * user removals via pushRemoveUser as a control item on the tunnel ring, so
  * a removal stays ordered after that user's already-queued tunnelled voice.
@@ -49,20 +49,17 @@ class SettingsCell;
  *
  * Threading: pushInbound has one producer (the UDP path), pushTunnel and
  * pushRemoveUser share one logical producer (the session message coroutine),
- * render has one consumer (the render thread). No locks, no allocation on
- * the render path, no Kotlin calls from render (the notifier calls Kotlin,
- * never render). Jitter margin is the I/O layer's constant; half duplex
+ * render has one consumer (the AAudio render callback). No locks, no
+ * allocation on the render path, and no Kotlin calls from render (the
+ * notifier calls Kotlin; render never does). Jitter margin is the I/O
+ * layer's constant; half duplex
  * is native from 5a.4 (render reads the settings cell and the capture
  * self-talking flag, both lock-free).
  *
- * Render wake (5a.3b item 1): a POSIX semaphore owned here. Render waits in
- * awaitWork between render calls after a silent quantum; every producer
- * pushes first, then posts only if it clears the idle flag, so one push
- * either lands before render's ring check or carries the post. Stop posts
- * unconditionally. The semaphore remembers the post, so a stop racing the
- * wait entry cannot strand render and no thread interrupt is needed. The
- * wait is not a lock: it blocks only between render calls, after a quantum
- * with no audio. The only realtime syscalls remain audio I/O plus sem_post.
+ * In step 5b AAudio calls render once per burst, so there is no idle state,
+ * no render wake, and no producer posts: the callback writes zeros through
+ * silence and the engine is fed 20 ms chunks (two whole 10 ms frames) by
+ * the stream layer, so a first-frame loss can use in-band FEC.
  */
 class VoiceIo {
 public:
@@ -87,10 +84,15 @@ public:
         size_t count = 0;
     };
 
-    // Render result for the Kotlin idle wait and the drop-count log.
+    // Render result for the JNI test entry and the drop-count log.
     struct RenderOut {
         size_t samples = 0; // mixed PCM samples written to out (0 when silent)
-        bool hasActiveVoices = false; // the idle wait reads this, not an engine call
+        // Bit i is set when frame i * AudioOutputEngine::FRAME_SIZE must be
+        // reported as non-silent. The AAudio callback uses it to answer for
+        // the exact carried range it copies, not for the whole 20 ms chunk.
+        // Gated or half-duplex zero-PCM quanta set every frame they cover,
+        // preserving 5a's pacing contract.
+        uint64_t nonSilentFrames = 0;
         uint64_t droppedInbound = 0; // cumulative full-ring drops
         uint64_t droppedTunnel = 0; // cumulative full-ring drops (voice + removals)
         uint64_t droppedJitter = 0; // cumulative pool-exhausted drops from the engine
@@ -103,7 +105,7 @@ public:
     VoiceIo(const VoiceIo&) = delete;
     VoiceIo& operator=(const VoiceIo&) = delete;
 
-    // Producer side (never the render thread). Each ring keeps one producer:
+    // Producer side (never the render callback). Each ring keeps one producer:
     // overlapping old and new UDP coroutines during a UDP restart are
     // serialized by AudioOutput's monitor in Kotlin, and the tunnel callers
     // share the session message coroutine. False means the ring was full;
@@ -113,7 +115,8 @@ public:
     bool pushRemoveUser(int32_t session);
 
     /**
-     * Render entry point (render thread only).
+     * Render entry point (AAudio render callback only; the JNI test entry
+     * drives the same body synchronously).
      *
      * Drains the inbound ring then the tunnel ring into queuePacket,
      * applying removals inline, then renders up to `samples` PCM into `out`
@@ -122,19 +125,6 @@ public:
      * JVM and never calls into Kotlin.
      */
     void render(int16_t* out, size_t samples, RenderOut* result);
-
-    // Waits for work after a silent quantum (render thread only, between
-    // render calls, never inside one). Sets idle, rechecks both rings, and
-    // skips the wait when either is non-empty. timeoutMs < 0 waits
-    // indefinitely (no active voices); otherwise waits at most timeoutMs
-    // (20 ms with active voices). Returns true when either ring is
-    // non-empty after the wait, false on a timeout with both still empty.
-    // Timeouts use sem_clockwait on CLOCK_MONOTONIC (API 30, the minimum
-    // SDK). Never attaches to the JVM, never calls into Kotlin.
-    bool awaitWork(int timeoutMs);
-    // Unconditional post for Stop (control thread): clears no flag, the
-    // semaphore remembers the post across a racing wait entry.
-    void wakeForStop();
 
     // Attaches the talk cell render publishes into after every render.
     // Control thread only, while render is stopped (no race: render is the
@@ -161,16 +151,9 @@ private:
     void publishTalk();
     static bool talkEqual(const TalkSnapshot& a, const TalkSnapshot& b);
 
-    void postIfIdle();
-
     std::unique_ptr<mumla::audio::AudioOutputEngine> m_engine;
     SpscRing<mumla::audio::InboundPacket, kInboundRingCapacity> m_inbound;
     SpscRing<TunnelItem, kTunnelRingCapacity> m_tunnel;
-    // Render-wake state (5a.3b item 1). idle is sequentially consistent on
-    // both sides so a push either lands before render's ring check or sees
-    // the flag; at most one post per idle period.
-    std::atomic<bool> m_idle{false};
-    sem_t m_sem;
     TalkCell* m_talkCell = nullptr;
     SettingsCell* m_settingsCell = nullptr;
     const std::atomic<bool>* m_selfTalking = nullptr;

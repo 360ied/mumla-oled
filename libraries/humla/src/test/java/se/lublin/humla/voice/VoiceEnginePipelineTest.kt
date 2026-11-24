@@ -27,8 +27,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import se.lublin.humla.audio.InputPipeline
-import se.lublin.humla.audio.OutputPipeline
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.route.AppliedRoute
@@ -36,65 +34,44 @@ import se.lublin.humla.route.RoutePreferences
 import se.lublin.humla.route.RouteState
 import se.lublin.humla.route.StreamProfile
 
+private fun protobufFormat() = VoiceFormat(UdpFormat.PROTOBUF, 0x10500)
+
 /**
- * Route-following pipeline tests (issue 03 lesson): `VoiceEngine` starts a
- * session (running) and drives `RouteState` through every transition with a
- * fake native layer and fake AudioRecord/Track, asserting build, rebuild,
- * and teardown. Fast JVM tests, no hardware.
+ * Route-following tests (issue 03 lesson): `VoiceEngine` starts a session
+ * and drives `RouteState` through every transition with a fake native layer
+ * that records AAudio opens, starts, stops, and closes. Fast JVM tests, no
+ * hardware. Stream parameters follow route.md#stream-parameters.
  */
 class VoiceEnginePipelineTest {
-    private class FakeInput : InputPipeline {
-        var started = false
-        var shut = false
-        override fun startRecording() { started = true }
-        override fun shutdown() { shut = true }
-    }
-
-    private class FakeOutput : OutputPipeline {
-        var startedStream: Int? = null
-        var stopped = false
-        override fun startPlaying(audioStream: Int) { startedStream = audioStream }
-        override fun stopPlaying() { stopped = true }
-    }
-
-    private fun protobufFormat() = VoiceFormat(UdpFormat.PROTOBUF, 0x10500)
-
     private class Harness(
-        val routeStates: MutableStateFlow<RouteState> = MutableStateFlow(RouteState.Idle),
+        val fake: VoiceEngineTest.FakeEngineNative = VoiceEngineTest.FakeEngineNative(),
+    ) {
+        val routeStates: MutableStateFlow<RouteState> = MutableStateFlow(RouteState.Idle)
         val prefs: MutableStateFlow<RoutePreferences> = MutableStateFlow(
             RoutePreferences(bluetoothSco = false, handsetStream = AudioManager.STREAM_MUSIC),
-        ),
-        val inputBuilds: MutableList<FakeInput> = mutableListOf(),
-        val outputBuilds: MutableList<FakeOutput> = mutableListOf(),
-        var failInput: Boolean = false,
-    ) {
+        )
         val engine = VoiceEngine(
             talkPublisher = TalkActivityPublisher(),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
-            engineFactory = { NativeVoiceEngine(0) },
+            engineFactory = { fake },
             context = null,
             routeStates = routeStates,
             prefs = prefs,
-            inputFactory = { _, _ ->
-                if (failInput) throw RuntimeException("no mic")
-                FakeInput().also { inputBuilds.add(it) }
-            },
-            outputFactory = { _, _ ->
-                FakeOutput().also { outputBuilds.add(it) }
-            },
         )
 
         fun start() {
-            engine.startVoice(
-                "example.org",
-                64738,
-                VoiceFormat(UdpFormat.PROTOBUF, 0x10500),
-                null,
-            )
+            engine.startVoice("example.org", 64738, protobufFormat(), null)
         }
 
         fun stop() {
             engine.stopVoice()
+        }
+
+        fun ready(
+            route: AppliedRoute = AppliedRoute.VOICE_HANDSET,
+            profile: StreamProfile = StreamProfile.VOICE,
+        ) {
+            routeStates.value = RouteState.Ready(route, profile)
         }
     }
 
@@ -102,41 +79,42 @@ class VoiceEnginePipelineTest {
     fun `no pipeline while idle even when started`() {
         val h = Harness()
         h.start()
-        // Route Idle (initial): no build despite running.
         assertNull(h.engine.pipelineForTests())
-        assertTrue(h.inputBuilds.isEmpty())
-        assertTrue(h.outputBuilds.isEmpty())
+        assertTrue(h.fake.streamOpens.isEmpty())
+        assertEquals(0, h.fake.streamStarts)
     }
 
     @Test
     fun `builds once on Ready and tears down on Idle`() {
         val h = Harness()
         h.start()
-        h.routeStates.value = RouteState.Ready(AppliedRoute.VOICE_HANDSET, StreamProfile.VOICE)
+        h.ready()
         val built = h.engine.pipelineForTests()
         assertNotNull(built)
-        assertEquals(1, h.inputBuilds.size)
-        assertEquals(1, h.outputBuilds.size)
-        assertTrue(h.inputBuilds[0].started)
-        assertEquals(AudioManager.STREAM_MUSIC, h.outputBuilds[0].startedStream)
+        assertEquals(1, h.fake.streamOpens.size)
+        // AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION, AAUDIO_USAGE_MEDIA.
+        assertEquals(7 to 1, h.fake.streamOpens[0])
+        assertEquals(1, h.fake.streamStarts)
+        assertEquals(1L, built!!.generation)
+        assertTrue(built.attachedEffects.isEmpty())
         // Settling keeps streams (spec): no teardown.
         h.routeStates.value = RouteState.Settling(AppliedRoute.MEDIA)
         assertEquals(built, h.engine.pipelineForTests())
-        // Idle stops streams.
+        // Idle stops, then closes the streams.
         h.routeStates.value = RouteState.Idle
         assertNull(h.engine.pipelineForTests())
-        assertTrue(h.inputBuilds[0].shut)
-        assertTrue(h.outputBuilds[0].stopped)
+        assertEquals(1, h.fake.streamStops)
+        assertEquals(1, h.fake.streamCloses)
     }
 
     @Test
     fun `rebuilds on route change but not on same route`() {
         val h = Harness()
         h.start()
-        h.routeStates.value = RouteState.Ready(AppliedRoute.VOICE_HANDSET, StreamProfile.VOICE)
+        h.ready()
         val first = h.engine.pipelineForTests()
         assertNotNull(first)
-        // Same route/profile: no rebuild (same instance).
+        // Same route/profile: no rebuild.
         h.engine.setSettings(
             VoiceSettings(
                 inputMode = InputMode.VOICE_ACTIVITY,
@@ -146,69 +124,74 @@ class VoiceEnginePipelineTest {
             )
         )
         assertEquals(first, h.engine.pipelineForTests())
-        assertEquals(1, h.inputBuilds.size)
-        // Different route: rebuild (old joined, new live).
-        h.routeStates.value = RouteState.Ready(AppliedRoute.VOICE_SCO, StreamProfile.VOICE)
+        assertEquals(1, h.fake.streamOpens.size)
+        // Different route: stop/close the old pair, then open/start a new one.
+        h.ready(AppliedRoute.MEDIA, StreamProfile.MEDIA)
         val second = h.engine.pipelineForTests()
         assertNotNull(second)
         assertTrue(first !== second)
-        assertEquals(2, h.inputBuilds.size)
-        assertEquals(2, h.outputBuilds.size)
-        assertTrue(h.inputBuilds[0].shut)
-        assertTrue(h.outputBuilds[0].stopped)
-        assertTrue(h.inputBuilds[1].started)
+        assertEquals(1, second!!.inputPreset) // AAUDIO_INPUT_PRESET_GENERIC
+        assertEquals(1, second.usage) // AAUDIO_USAGE_MEDIA
+        assertEquals(2L, second.generation)
+        assertEquals(2, h.fake.streamOpens.size)
+        assertEquals(2, h.fake.streamStarts)
+        assertEquals(1, h.fake.streamStops)
+        assertEquals(1, h.fake.streamCloses)
+    }
+
+    @Test
+    fun `handset stream preference changes the output usage`() {
+        val h = Harness()
+        h.start()
+        h.ready(AppliedRoute.VOICE_HANDSET)
+        assertEquals(1, h.engine.pipelineForTests()!!.usage)
+        h.prefs.value = RoutePreferences(false, AudioManager.STREAM_VOICE_CALL)
+        assertEquals(2, h.engine.pipelineForTests()!!.usage) // VOICE_COMMUNICATION
+        assertEquals(2, h.fake.streamOpens.size)
+        assertEquals(7 to 2, h.fake.streamOpens[1])
     }
 
     @Test
     fun `changed Start tears down live pipeline before reset`() {
         val h = Harness()
         h.start()
-        h.routeStates.value = RouteState.Ready(AppliedRoute.VOICE_HANDSET, StreamProfile.VOICE)
+        h.ready()
         val first = h.engine.pipelineForTests()
         assertNotNull(first)
-        // Same session, new endpoint: the live pipeline is joined first,
-        // then a full Start rebuilds it, so reset() never races in-flight
-        // capture on the old pipeline.
-        h.engine.startVoice(
-            "other.example",
-            64739,
-            VoiceFormat(UdpFormat.PROTOBUF, 0x10500),
-            null,
-        )
+        // Same session, new endpoint: the live streams are stopped and closed
+        // first, then a full Start rebuilds them.
+        h.engine.startVoice("other.example", 64739, protobufFormat(), null)
         val second = h.engine.pipelineForTests()
         assertNotNull(second)
         assertTrue(first !== second)
-        assertEquals(2, h.inputBuilds.size)
-        assertTrue(h.inputBuilds[0].shut)
-        assertTrue(h.outputBuilds[0].stopped)
-        assertTrue(h.inputBuilds[1].started)
+        assertEquals(2, h.fake.streamOpens.size)
+        assertEquals(1, h.fake.streamStops)
+        assertEquals(1, h.fake.streamCloses)
     }
 
     @Test
     fun `stop tears down even with Ready route`() {
         val h = Harness()
         h.start()
-        h.routeStates.value = RouteState.Ready(AppliedRoute.MEDIA, StreamProfile.MEDIA)
+        h.ready(AppliedRoute.MEDIA, StreamProfile.MEDIA)
         assertNotNull(h.engine.pipelineForTests())
         h.stop()
         assertNull(h.engine.pipelineForTests())
-        assertTrue(h.inputBuilds[0].shut)
-        assertTrue(h.outputBuilds[0].stopped)
+        assertEquals(1, h.fake.streamStops)
+        assertEquals(1, h.fake.streamCloses)
     }
 
     @Test
-    fun `build failure retries on next route event`() {
+    fun `failed open retries on next route event`() {
         val h = Harness()
         h.start()
-        h.failInput = true
-        h.routeStates.value = RouteState.Ready(AppliedRoute.VOICE_HANDSET, StreamProfile.VOICE)
-        // Build threw: no pipeline, no crash.
+        h.fake.openStreamsOk = false
+        h.ready()
         assertNull(h.engine.pipelineForTests())
-        assertTrue(h.inputBuilds.isEmpty())
-        // Next event with a working factory builds.
-        h.failInput = false
-        h.routeStates.value = RouteState.Ready(AppliedRoute.MEDIA, StreamProfile.MEDIA)
+        assertEquals(0, h.fake.streamStarts)
+        h.fake.openStreamsOk = true
+        h.ready(AppliedRoute.MEDIA, StreamProfile.MEDIA)
         assertNotNull(h.engine.pipelineForTests())
-        assertEquals(1, h.inputBuilds.size)
+        assertEquals(1, h.fake.streamStarts)
     }
 }

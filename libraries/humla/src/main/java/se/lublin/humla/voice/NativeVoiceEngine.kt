@@ -49,9 +49,12 @@ interface EngineNative {
     fun queueTunnelled(packet: ByteArray?): Boolean
     fun pushRemoveUser(session: Int): Boolean
     fun render(out: ShortArray?, offset: Int, length: Int): Int
-    fun awaitWork(timeoutMs: Int): Boolean
-    fun wakeForStop()
-    fun lastHasActiveVoices(): Boolean
+    // Step 5b AAudio streams. Open returns the input session ID and the new
+    // stream generation, or null when either stream fails to open.
+    fun openStreams(inputPreset: Int, usage: Int): LongArray?
+    fun startStreams(): Boolean
+    fun stopStreams()
+    fun closeStreams()
     fun lastDroppedInbound(): Long
     fun lastDroppedTunnel(): Long
     fun lastDroppedJitter(): Long
@@ -125,13 +128,16 @@ class NativeVoiceEngine : EngineNative {
         private external fun nativeRender(handle: Long, out: ShortArray?, offset: Int, length: Int): Int
 
         @JvmStatic
-        private external fun nativeAwaitWork(handle: Long, timeoutMs: Int): Boolean
+        private external fun nativeOpenStreams(handle: Long, inputPreset: Int, usage: Int): LongArray?
 
         @JvmStatic
-        private external fun nativeWakeForStop(handle: Long)
+        private external fun nativeStartStreams(handle: Long): Boolean
 
         @JvmStatic
-        private external fun nativeLastHasActiveVoices(handle: Long): Boolean
+        private external fun nativeStopStreams(handle: Long)
+
+        @JvmStatic
+        private external fun nativeCloseStreams(handle: Long)
 
         @JvmStatic
         private external fun nativeLastDroppedInbound(handle: Long): Long
@@ -268,21 +274,28 @@ class NativeVoiceEngine : EngineNative {
         return 0
     }
 
-    override fun awaitWork(timeoutMs: Int): Boolean {
+    override fun openStreams(inputPreset: Int, usage: Int): LongArray? {
         val handle = nativeHandle.get()
-        return handle != 0L && nativeAwaitWork(handle, timeoutMs)
+        return if (handle != 0L) nativeOpenStreams(handle, inputPreset, usage) else null
     }
 
-    override fun wakeForStop() {
+    override fun startStreams(): Boolean {
+        val handle = nativeHandle.get()
+        return handle != 0L && nativeStartStreams(handle)
+    }
+
+    override fun stopStreams() {
         val handle = nativeHandle.get()
         if (handle != 0L) {
-            nativeWakeForStop(handle)
+            nativeStopStreams(handle)
         }
     }
 
-    override fun lastHasActiveVoices(): Boolean {
+    override fun closeStreams() {
         val handle = nativeHandle.get()
-        return handle != 0L && nativeLastHasActiveVoices(handle)
+        if (handle != 0L) {
+            nativeCloseStreams(handle)
+        }
     }
 
     override fun lastDroppedInbound(): Long {
@@ -331,5 +344,6 @@ class NativeVoiceEngine : EngineNative {
             selfTalking: Boolean
         )
         fun onTunnelPacket(packet: ByteArray)
+        fun onStreamDisconnect(generation: Long)
     }
 }

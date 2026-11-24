@@ -18,8 +18,6 @@ app/src/main/java/se/lublin/mumla/service/MumlaService.kt  12
 app/src/main/java/se/lublin/mumla/util/CrashReporter.kt  6
 app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.kt  4
 libraries/humla/src/main/java/se/lublin/humla/HumlaService.kt  1
-libraries/humla/src/main/java/se/lublin/humla/audio/AudioInput.kt  14
-libraries/humla/src/main/java/se/lublin/humla/audio/AudioOutput.kt  11
 libraries/humla/src/main/java/se/lublin/humla/audio/inputmode/ToggleInputMode.kt  1
 libraries/humla/src/main/java/se/lublin/humla/model/Server.kt  5
 libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt  5

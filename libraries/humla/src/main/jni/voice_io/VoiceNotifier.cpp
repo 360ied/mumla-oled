@@ -22,10 +22,14 @@ namespace voice_io {
 
 VoiceNotifier::VoiceNotifier(const TalkCell* cell,
                              const std::atomic<bool>* selfTalking, Sink sink,
+                             const std::atomic<uint64_t>* disconnect,
+                             DisconnectSink disconnectSink,
                              std::chrono::milliseconds interval)
     : m_cell(cell),
       m_selfTalking(selfTalking),
       m_sink(std::move(sink)),
+      m_disconnect(disconnect),
+      m_disconnectSink(std::move(disconnectSink)),
       m_interval(interval) {}
 
 VoiceNotifier::~VoiceNotifier() { stop(); }
@@ -49,6 +53,18 @@ void VoiceNotifier::stop() {
 }
 
 bool VoiceNotifier::notifyNow() {
+    // Before the talk-cell read that can return early: a disconnect during
+    // silence must still reach Kotlin, where the control thread decides
+    // whether the generation is current enough to reopen the streams.
+    if (m_disconnect != nullptr) {
+        const uint64_t generation = m_disconnect->load(std::memory_order_acquire);
+        if (generation != m_deliveredDisconnect) {
+            m_deliveredDisconnect = generation;
+            if (m_disconnectSink) {
+                m_disconnectSink(generation);
+            }
+        }
+    }
     TalkPublication pub;
     if (!m_cell->tryRead(&pub)) {
         return false;

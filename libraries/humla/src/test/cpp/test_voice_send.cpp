@@ -18,14 +18,19 @@
 // Host tests for the 5a.4 native send half: gate/settings cells, the capture
 // entry point (any block size, exact 10 ms frames, self-talking flag), the
 // outbound queue (full-ring drop-newest, 200 ms drop-oldest), and the native
-// half-duplex render rule.
+// half-duplex render rule. Step 5b adds the AAudio callback bodies: render
+// through the two-frame (20 ms) carry buffer and disconnect delivery by the
+// notifier.
 
 #include "TestHarness.h"
 #include "AudioInputEngine.h"
 #include "VoiceConfig.h"
 #include "VoiceIo.h"
+#include "VoiceNotifier.h"
 #include "VoiceReceive.h"
 #include "VoiceSend.h"
+#include "VoiceStreamContext.h"
+#include "VoiceTalk.h"
 
 #include <algorithm>
 #include <chrono>
@@ -88,17 +93,26 @@ void operator delete[](void* ptr, size_t) noexcept { __real_free(ptr); }
 namespace {
 
 using mumla::audio::AudioInputEngine;
+using mumla::audio::AudioOutputEngine;
 using mumla::audio::IDenoiser;
+using mumla::audio::IOutputDecoder;
 using mumla::audio::IVoiceEncoder;
+using mumla::audio::InboundPacket;
 using mumla::voice_io::PolicyCell;
 using mumla::voice_io::PolicySnapshot;
 using mumla::voice_io::OutboundPacket;
 using mumla::voice_io::SettingsCell;
 using mumla::voice_io::SettingsSnapshot;
+using mumla::voice_io::TalkCell;
+using mumla::voice_io::TalkPublication;
 using mumla::voice_io::VoiceIo;
+using mumla::voice_io::VoiceNotifier;
 using mumla::voice_io::VoiceReceive;
 using mumla::voice_io::VoiceSend;
+using mumla::voice_io::VoiceStreamContext;
 using mumla::voice_io::kOutboundRingCapacity;
+using mumla::voice_io::kStreamChunkSamples;
+using mumla::voice_io::renderStreamFrames;
 
 /** Deterministic fake encoder: 32 bytes per encode, no allocation. */
 class FakeVoiceEncoder : public IVoiceEncoder {
@@ -423,7 +437,6 @@ void testHalfDuplexRenderSilences() {
     for (size_t i = 0; i < result.samples; ++i) {
         TEST_ASSERT_EQ(pcm[i], 0);
     }
-    TEST_ASSERT_TRUE(result.hasActiveVoices);
     std::cout << "  [PASS] testHalfDuplexRenderSilences" << std::endl;
 }
 
@@ -487,6 +500,349 @@ void testSendStartStopIdempotent() {
     std::cout << "  [PASS] testSendStartStopIdempotent" << std::endl;
 }
 
+/** Constant-level decoder; counts FEC attempts and concealment frames. */
+class CallbackDecoder : public IOutputDecoder {
+public:
+    CallbackDecoder(int* fecAttempts, int* concealedFrames, bool payloadLevel)
+        : m_fecAttempts(fecAttempts),
+          m_concealedFrames(concealedFrames),
+          m_payloadLevel(payloadLevel) {}
+
+    int decodeFloat(const uint8_t* data, size_t length, float* out,
+                    int maxSamples, int decodeFec) override {
+        const int n = std::min<int>(480, maxSamples);
+        if (decodeFec != 0 && m_fecAttempts != nullptr) {
+            ++(*m_fecAttempts);
+        }
+        float level = decodeFec != 0 ? 0.3f : 0.2f;
+        if (m_payloadLevel && data != nullptr && length > 0 && data[0] == 0) {
+            level = 0.0f;
+        }
+        for (int i = 0; i < n; ++i) out[i] = level;
+        return n;
+    }
+
+    int decodeConcealment(float* out, int frameSize) override {
+        if (m_concealedFrames != nullptr) {
+            ++(*m_concealedFrames);
+        }
+        for (int i = 0; i < frameSize; ++i) out[i] = 0.0f;
+        return frameSize;
+    }
+
+    int packetSampleCount(const uint8_t*, size_t) const override { return 480; }
+    bool isValid() const override { return true; }
+    void reset() override {}
+
+private:
+    int* m_fecAttempts;
+    int* m_concealedFrames;
+    bool m_payloadLevel;
+};
+
+AudioOutputEngine::DecoderFactory callbackDecoderFactory(
+    int* fecAttempts = nullptr, int* concealedFrames = nullptr,
+    bool payloadLevel = false) {
+    return [fecAttempts, concealedFrames, payloadLevel] {
+        return std::make_unique<CallbackDecoder>(fecAttempts,
+                                                concealedFrames, payloadLevel);
+    };
+}
+
+InboundPacket makeInboundPacket(int32_t session, uint32_t sequence) {
+    InboundPacket packet;
+    packet.session = session;
+    packet.sequence = sequence;
+    static const uint8_t kPayload[8] = {0xF8, 1, 2, 3, 4, 5, 6, 7};
+    packet.length = sizeof(kPayload);
+    std::memcpy(packet.data, kPayload, sizeof(kPayload));
+    return packet;
+}
+
+// A payload whose first byte is zero makes the payload-level decoder emit
+// one silent 10 ms frame without changing its timing or sequence.
+InboundPacket makeSilentInboundPacket(int32_t session, uint32_t sequence) {
+    InboundPacket packet = makeInboundPacket(session, sequence);
+    packet.data[0] = 0;
+    return packet;
+}
+
+/** The real objects behind one VoiceStreamContext, as in JNI. */
+struct StreamFixture {
+    explicit StreamFixture(int* fecAttempts = nullptr,
+                           int* concealedFrames = nullptr,
+                           bool payloadLevel = false)
+        : io(callbackDecoderFactory(fecAttempts, concealedFrames,
+                                    payloadLevel)),
+          send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr),
+          streams(&io, &send) {}
+
+    PolicyCell policy;
+    SettingsCell settings;
+    VoiceIo io;
+    VoiceSend send;
+    VoiceStreamContext streams;
+};
+
+void testRenderCallbackBurstsWriteExactly() {
+    g_testCount++;
+    // AAudio hands the render callback whatever burst size the device picks.
+    // The body renders one 20 ms chunk at a time and copies out exactly the
+    // requested number of samples, keeping the remainder for the next call.
+    StreamFixture fixture;
+    std::vector<int16_t> out(960, 0x1234);
+    // Warm up so the first counted calls cannot hide one-time setup.
+    TEST_ASSERT_TRUE(renderStreamFrames(&fixture.streams, out.data(), 960));
+    TEST_ASSERT_EQ(fixture.streams.renderCarryRemaining, 0u);
+    const size_t before = g_allocations;
+    const size_t bursts[] = {96, 192, 441, 960};
+    for (size_t burst : bursts) {
+        std::fill(out.begin(), out.begin() + static_cast<long>(burst), 0x1234);
+        const bool silent =
+            renderStreamFrames(&fixture.streams, out.data(), burst);
+        TEST_ASSERT_TRUE(silent);
+        for (size_t i = 0; i < burst; ++i) {
+            TEST_ASSERT_EQ(out[i], 0);
+        }
+    }
+    TEST_ASSERT_EQ(g_allocations, before);
+    // 96 samples ten times consumes exactly one 960-sample carry chunk; one
+    // more 96 leaves 864 samples of the next chunk for later calls.
+    mumla::voice_io::resetRenderCarry(&fixture.streams);
+    for (int i = 0; i < 10; ++i) {
+        renderStreamFrames(&fixture.streams, out.data(), 96);
+    }
+    TEST_ASSERT_EQ(fixture.streams.renderCarryRemaining, 0u);
+    renderStreamFrames(&fixture.streams, out.data(), 96);
+    TEST_ASSERT_EQ(fixture.streams.renderCarryRemaining,
+                   kStreamChunkSamples - 96u);
+    std::cout << "  [PASS] testRenderCallbackBurstsWriteExactly" << std::endl;
+}
+
+void testRenderCallbackChunksGateAndFec() {
+    g_testCount++;
+    // A 20 ms chunk is two whole 10 ms frames: the startup gate counts
+    // samples / FRAME_SIZE (so two per chunk), and a first-frame loss can be
+    // recovered from the successor's in-band FEC in the same render call.
+    {
+        StreamFixture fixture;
+        TEST_ASSERT_TRUE(fixture.io.pushInbound(makeInboundPacket(9, 0)));
+        std::vector<int16_t> out(96);
+        int audioChunk = -1;
+        constexpr int kCallsPerChunk =
+            static_cast<int>(kStreamChunkSamples) / 96;
+        constexpr int kChunks = AudioOutputEngine::GATE_TIMEOUT_FRAMES / 2 + 2;
+        for (int i = 0; i < kCallsPerChunk * kChunks; ++i) {
+            (void)renderStreamFrames(&fixture.streams, out.data(), 96);
+            // Gated quanta are reported as non-silent (they keep a sink fed
+            // with zeros), so the pin scans PCM instead of the silence flag.
+            int peak = 0;
+            for (int16_t sample : out) {
+                peak = std::max<int>(peak, std::abs(static_cast<int>(sample)));
+            }
+            if (peak > 100 && audioChunk < 0) {
+                audioChunk = i / kCallsPerChunk + 1;
+            }
+        }
+        TEST_ASSERT_EQ(audioChunk,
+                       AudioOutputEngine::GATE_TIMEOUT_FRAMES / 2);
+    }
+    // A gap in a chunk's first frame is recovered by an FEC decode; a gap in
+    // its second frame is concealed, because the unrecovered debt slot is
+    // settled at the end of the call and the successor arrives in the next
+    // chunk. Playback starts at seq 0, so chunks are [0,1], [2,3], [4,5],
+    // [6,7], ...: even gaps land in the first frame, odd in the second.
+    struct FecOutcome {
+        int fec;
+        int concealed;
+    };
+    constexpr int kCallsPerChunk =
+        static_cast<int>(kStreamChunkSamples) / 96;
+    auto runGap = [kCallsPerChunk](uint32_t gap) {
+        int fecAttempts = 0;
+        int concealedFrames = 0;
+        StreamFixture fixture(&fecAttempts, &concealedFrames);
+        for (uint32_t seq = 0; seq <= 12; ++seq) {
+            if (seq == gap) continue;
+            TEST_ASSERT_TRUE(
+                fixture.io.pushInbound(makeInboundPacket(11, seq)));
+        }
+        std::vector<int16_t> out(96);
+        for (int i = 0; i < kCallsPerChunk * 12; ++i) {
+            (void)renderStreamFrames(&fixture.streams, out.data(), 96);
+        }
+        return FecOutcome{fecAttempts, concealedFrames};
+    };
+    // First-frame loss (gap 6, successor 7 in the same chunk): an FEC decode.
+    const FecOutcome firstFrameLoss = runGap(6);
+    TEST_ASSERT_EQ(firstFrameLoss.fec, 1);
+    // Second-frame loss (gap 7, successor 8 in the next chunk): concealment,
+    // no FEC decode.
+    const FecOutcome secondFrameLoss = runGap(7);
+    TEST_ASSERT_EQ(secondFrameLoss.fec, 0);
+    TEST_ASSERT_TRUE(secondFrameLoss.concealed > 0);
+    // The split alternates with chunk parity across several gaps, so the pin
+    // is about the two-frame chunk structure, not one lucky packet pattern.
+    for (uint32_t gap = 2; gap <= 11; ++gap) {
+        const FecOutcome outcome = runGap(gap);
+        if (gap % 2u == 0u) {
+            TEST_ASSERT_TRUE(outcome.fec > 0);
+        } else {
+            TEST_ASSERT_EQ(outcome.fec, 0);
+        }
+    }
+    std::cout << "  [PASS] testRenderCallbackChunksGateAndFec" << std::endl;
+}
+
+void testRenderCallbackSilenceReportCoversCarry() {
+    g_testCount++;
+    // A burst that only consumes leftover PCM from a non-silent carry frame
+    // must not report silence: nativeRender returns 0 on silence, so that
+    // would hide the audio from the host and interop test entries.
+    StreamFixture fixture;
+    for (uint32_t seq = 0; seq <= 5; ++seq) {
+        TEST_ASSERT_TRUE(fixture.io.pushInbound(makeInboundPacket(13, seq)));
+    }
+    std::vector<int16_t> out(96);
+    int audibleBursts = 0;
+    for (int i = 0; i < 10 * 6; ++i) {
+        const bool silent =
+            renderStreamFrames(&fixture.streams, out.data(), 96);
+        int peak = 0;
+        for (int16_t sample : out) {
+            peak = std::max<int>(peak, std::abs(static_cast<int>(sample)));
+        }
+        if (peak > 100) {
+            ++audibleBursts;
+            TEST_ASSERT_FALSE(silent);
+        }
+    }
+    TEST_ASSERT_TRUE(audibleBursts > 0);
+    std::cout << "  [PASS] testRenderCallbackSilenceReportCoversCarry" << std::endl;
+}
+
+void testRenderCallbackSilenceReportUsesCopiedFrames() {
+    g_testCount++;
+    // Even packets decode to one silent 10 ms frame, odd packets to an
+    // audible frame. A 20 ms chunk therefore has one silent and one audible
+    // frame: 96-sample bursts align with frame boundaries, so a burst from
+    // the silent half must report silence even though the chunk has audio.
+    StreamFixture fixture(nullptr, nullptr, true);
+    for (uint32_t seq = 0; seq <= 11; ++seq) {
+        TEST_ASSERT_TRUE(fixture.io.pushInbound(
+            seq % 2u == 0u ? makeSilentInboundPacket(23, seq)
+                           : makeInboundPacket(23, seq)));
+    }
+    constexpr int kBurstsPerChunk =
+        static_cast<int>(kStreamChunkSamples) / 96;
+    std::vector<int16_t> out(96);
+    bool foundMixedChunk = false;
+    for (int chunk = 0; chunk < 12 && !foundMixedChunk; ++chunk) {
+        std::vector<int> peaks(kBurstsPerChunk, 0);
+        std::vector<bool> silent(kBurstsPerChunk, true);
+        for (int burst = 0; burst < kBurstsPerChunk; ++burst) {
+            std::fill(out.begin(), out.end(), 0x1234);
+            silent[burst] =
+                renderStreamFrames(&fixture.streams, out.data(), 96);
+            for (int16_t sample : out) {
+                peaks[burst] = std::max<int>(
+                    peaks[burst], std::abs(static_cast<int>(sample)));
+            }
+        }
+        bool hasSilentBurst = false;
+        bool hasAudibleBurst = false;
+        for (int burst = 0; burst < kBurstsPerChunk; ++burst) {
+            if (peaks[burst] > 100) {
+                hasAudibleBurst = true;
+            } else {
+                hasSilentBurst = true;
+            }
+        }
+        if (!hasSilentBurst || !hasAudibleBurst) {
+            continue;
+        }
+        foundMixedChunk = true;
+        for (int burst = 0; burst < kBurstsPerChunk; ++burst) {
+            if (peaks[burst] > 100) {
+                TEST_ASSERT_FALSE(silent[burst]);
+            } else {
+                TEST_ASSERT_TRUE(silent[burst]);
+            }
+        }
+    }
+    TEST_ASSERT_TRUE(foundMixedChunk);
+    std::cout << "  [PASS] testRenderCallbackSilenceReportUsesCopiedFrames"
+              << std::endl;
+}
+
+void testRenderCallbackGatingStillReportsNonSilent() {
+    g_testCount++;
+    // A gated quantum writes zeros but 5a reported it as non-silent so the
+    // Kotlin pacer kept the sink fed. The callback must preserve that
+    // contract even though the copied PCM is all silence.
+    StreamFixture fixture;
+    TEST_ASSERT_TRUE(fixture.io.pushInbound(makeInboundPacket(29, 0)));
+    std::vector<int16_t> out(96, 0x1234);
+    TEST_ASSERT_FALSE(
+        renderStreamFrames(&fixture.streams, out.data(), 96));
+    for (int16_t sample : out) {
+        TEST_ASSERT_EQ(sample, 0);
+    }
+    std::cout << "  [PASS] testRenderCallbackGatingStillReportsNonSilent"
+              << std::endl;
+}
+
+void testCaptureCallbackForwardsAnyBlock() {
+    g_testCount++;
+    StreamFixture fixture;
+    publishOpenGate(&fixture.policy, 1);
+    publishContinuousSettings(&fixture.settings);
+    fixture.send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
+    std::vector<int16_t> pcm(137, 1000);
+    TEST_ASSERT_FALSE(fixture.streams.captureActive.load());
+    mumla::voice_io::captureStreamFrames(&fixture.streams, pcm.data(), 137);
+    TEST_ASSERT_FALSE(fixture.streams.captureActive.load());
+    TEST_ASSERT_EQ(fixture.send.outboundSizeForTest(), 0u);
+    std::vector<int16_t> rest(343, 1000);
+    mumla::voice_io::captureStreamFrames(&fixture.streams, rest.data(), 343);
+    // 137 + 343 completes one 480-sample frame; FPP=1 emits one packet.
+    TEST_ASSERT_EQ(fixture.send.outboundSizeForTest(), 1u);
+    TEST_ASSERT_EQ(fixture.streams.lastDroppedOutbound.load(),
+                   fixture.send.droppedOutbound());
+    std::cout << "  [PASS] testCaptureCallbackForwardsAnyBlock" << std::endl;
+}
+
+void testNotifierDeliversDisconnectWithoutTalkChange() {
+    g_testCount++;
+    // The disconnect check runs before the talk-cell read that can return
+    // early, so a disconnect during silence still reaches Kotlin.
+    TalkCell cell;
+    std::atomic<uint64_t> disconnect{0};
+    std::vector<uint64_t> delivered;
+    VoiceNotifier notifier(&cell, nullptr, [](const TalkPublication&) {},
+                           &disconnect,
+                           [&](uint64_t generation) {
+                               delivered.push_back(generation);
+                           });
+    TEST_ASSERT_FALSE(notifier.notifyNow());
+    TEST_ASSERT_TRUE(delivered.empty());
+    disconnect.store(7, std::memory_order_release);
+    TEST_ASSERT_FALSE(notifier.notifyNow()); // no talk snapshot change
+    TEST_ASSERT_EQ(delivered.size(), 1u);
+    TEST_ASSERT_EQ(delivered[0], 7u);
+    // One delivery per change, not one per tick.
+    TEST_ASSERT_FALSE(notifier.notifyNow());
+    TEST_ASSERT_EQ(delivered.size(), 1u);
+    // nativeReset clears the atomic; the change is delivered and Kotlin
+    // skips generation 0 as older than the current stream generation.
+    disconnect.store(0, std::memory_order_release);
+    TEST_ASSERT_FALSE(notifier.notifyNow());
+    TEST_ASSERT_EQ(delivered.size(), 2u);
+    TEST_ASSERT_EQ(delivered[1], 0u);
+    std::cout << "  [PASS] testNotifierDeliversDisconnectWithoutTalkChange"
+              << std::endl;
+}
+
 } // namespace
 
 void run_voice_send_tests() {
@@ -499,4 +855,11 @@ void run_voice_send_tests() {
     testHalfDuplexRenderSilences();
     testAllocationFreeSteadyState();
     testSendStartStopIdempotent();
+    testRenderCallbackBurstsWriteExactly();
+    testRenderCallbackChunksGateAndFec();
+    testRenderCallbackSilenceReportCoversCarry();
+    testRenderCallbackSilenceReportUsesCopiedFrames();
+    testRenderCallbackGatingStillReportsNonSilent();
+    testCaptureCallbackForwardsAnyBlock();
+    testNotifierDeliversDisconnectWithoutTalkChange();
 }

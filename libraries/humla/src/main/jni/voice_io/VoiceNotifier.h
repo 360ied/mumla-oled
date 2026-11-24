@@ -18,6 +18,7 @@
 #ifndef MUMLA_VOICE_NOTIFIER_H_
 #define MUMLA_VOICE_NOTIFIER_H_
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -41,18 +42,28 @@ namespace voice_io {
  * stale state survives a miss.
  *
  * The sink is a callback so the core stays host-testable: the JNI layer
- * passes a callback that posts the snapshot to Kotlin, and the render thread
- * never calls it. notifyNow() runs one delivery synchronously for tests;
+ * passes a callback that posts the snapshot to Kotlin, and the AAudio render
+ * callback never calls it. notifyNow() runs one delivery synchronously for tests;
  * production also runs the thread loop. Stop joins the thread; delivery
  * after stop never happens.
+ *
+ * From step 5b, each tick also compares the stream-disconnect atomic with
+ * the last generation delivered and calls a second sink when it changed.
+ * That check runs before the talk-cell read, which can return early, so a
+ * disconnect during silence is still delivered. Both new constructor
+ * arguments default to unset, keeping the host tests' three-argument
+ * constructions valid.
  */
 class VoiceNotifier {
 public:
     using Sink = std::function<void(const TalkPublication&)>;
+    using DisconnectSink = std::function<void(uint64_t)>;
     static constexpr std::chrono::milliseconds kInterval{20};
 
     VoiceNotifier(const TalkCell* cell, const std::atomic<bool>* selfTalking,
                   Sink sink,
+                  const std::atomic<uint64_t>* disconnect = nullptr,
+                  DisconnectSink disconnectSink = {},
                   std::chrono::milliseconds interval = kInterval);
 
     VoiceNotifier(const VoiceNotifier&) = delete;
@@ -78,6 +89,8 @@ private:
     const TalkCell* m_cell;
     const std::atomic<bool>* m_selfTalking = nullptr;
     Sink m_sink;
+    const std::atomic<uint64_t>* m_disconnect = nullptr;
+    DisconnectSink m_disconnectSink;
     std::chrono::milliseconds m_interval;
     std::function<void()> m_onStart;
     std::function<void()> m_onExit;
@@ -85,6 +98,7 @@ private:
     std::atomic<bool> m_running{false};
     uint64_t m_deliveredVersion = 0;
     bool m_deliveredSelfTalking = false;
+    uint64_t m_deliveredDisconnect = 0;
 };
 
 } // namespace voice_io

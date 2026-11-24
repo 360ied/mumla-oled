@@ -501,7 +501,9 @@ explicit source lists of the Android `humlaaudio` target, the host
 including the stream JNI functions, goes in an Android-only file,
 `voice_io/AAudioStreams.cpp`, and only the Android target links `aaudio`.
 The host library never sees AAudio, so it still links; host tests never
-open streams.
+open streams. `nativeDestroy` also stops and closes any streams
+defensively before deleting the context, so a missed Kotlin teardown
+cannot leave callback user data dangling.
 
 1. **Native stream layer in `voice_io`, not yet used.**
    - **Shared state.** `VoiceStreamContext` holds pointers to the `VoiceIo`
@@ -520,9 +522,11 @@ open streams.
      `closeStreams` for both streams, as JNI functions in
      `AAudioStreams.cpp` and methods on `EngineNative`. Open takes the
      route's [stream parameters](route.md#stream-parameters), clears the
-     carry buffer, bumps the generation before building the streams (it
-     starts at 0, so the first open returns 1) and rolls it back if either
-     open fails, and returns a `LongArray` of the input stream's session ID
+     carry buffer and disconnect slot, bumps the generation before building
+     the streams (it starts at 0, so the first open returns 1) and never
+     rolls it back: a failed attempt consumes its generation, so a late
+     disconnect can never match a later stream pair. It returns a
+     `LongArray` of the input stream's session ID
      (allocated with `AAUDIO_SESSION_ID_ALLOCATE`) and the new generation,
      or `null` on failure. Start returns `false` if either stream fails to
      start. Start and stop are separate from open and close so Kotlin can
@@ -558,10 +562,12 @@ open streams.
    - **Both callbacks** are C++ functions, never JNI (callbacks never touch
      the JVM), and set `renderActive` or `captureActive` through their
      guard for the whole call.
-   - **Disconnects.** The error callback only stores its stream's
-     generation in the disconnect atomic (initially 0; `nativeReset` sets
-     it back to 0); AAudio's documentation says not to stop, close, or
-     reopen a stream from that callback, and it does not log.
+   - **Disconnects.** The error callback stores its stream's generation in
+     the disconnect atomic and its `aaudio_result_t` in a second atomic
+     (both initially 0; open and `nativeReset` clear them); AAudio's
+     documentation says not to stop, close, or reopen a stream from that
+     callback, and it does not log. The control thread logs the stored
+     error when it tears the streams down.
      `VoiceNotifier` gains two constructor parameters, a pointer to the
      atomic and a second sink, both defaulting to `nullptr`/empty so the
      existing three-argument constructions in `test_voice_io.cpp` still
@@ -609,10 +615,10 @@ open streams.
 
    - **On `onStreamDisconnect(generation)`** it posts one reopen of both
      streams to the voice control thread. The control thread skips it if
-     voice is not running, no streams are open, or the generation is older
-     than the current one (a route change already reopened them). If the
-     reopened streams disconnect again within 5 s, that counts as a failed
-     reopen.
+     voice is not running, no streams are open, or the generation does not
+     exactly equal the live pair's generation. Only a disconnect of the
+     exact generation built by the last reopen counts as a failed reopen
+     within 5 s; route and preference rebuilds clear that history.
    - **A failed open, start, or reopen** stops and closes whatever streams
      are open, releases the capture effects, and leaves voice without
      streams. It follows the [voice failure table](voice.md#failures):
@@ -647,8 +653,9 @@ open streams.
      return value, 0 when the render body reports silence. `RenderGuard` is
      now used only in the callback bodies, so `check_architecture.py`'s
      voice lifecycle check splits in the same commit: the `RenderGuard`-use
-     rule targets `VoiceStreamCallbacks.cpp`, the `renderActive`-assert
-     rule keeps targeting `NativeVoiceEngineJni.cpp`, and the fixtures in
+     rule targets `VoiceStreamCallbacks.cpp`, the `renderActive` and
+     `captureActive` assert rules keep targeting
+     `NativeVoiceEngineJni.cpp`, and the fixtures in
      `scripts/test_check_architecture.py` follow.
    - Docs: update the audio pipeline description in `AGENTS.md` and the
      [decisions table](#decisions-this-reverses).
@@ -753,6 +760,6 @@ Updated in the branch of the step that reverses them:
 | Decision (where recorded) | Replaced by | Step |
 |---|---|---|
 | Native fence: "C++ frozen, no behavior touch" ([migration README](../migration/README.md)) | The engine stays free of I/O; it may be refactored, pinned by golden outputs | 5a (recorded), 7 (README updated) |
-| "No Oboe/AAudio" in the audio pipeline description ([`AGENTS.md`](../../AGENTS.md)) | AAudio, callback mode, for capture and playback | 5b |
+| "No Oboe/AAudio" in the audio pipeline description ([`AGENTS.md`](../../AGENTS.md)) | AAudio, callback mode, for capture and playback | 5b (recorded) |
 | Frozen binder surface `IMumlaService`/`IHumlaService`/`IHumlaSession` ([migration README](../migration/README.md)) | Removed; screens and features collect flows | 7 |
 | Hilt as the DI framework ([migration slices](../migration/slices.md)) | Hand-written `AppContainer` | 7 |
