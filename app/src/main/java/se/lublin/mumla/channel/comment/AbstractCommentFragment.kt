@@ -17,10 +17,8 @@
 
 package se.lublin.mumla.channel.comment
 
-import se.lublin.mumla.container
 import android.app.Dialog
 import android.content.ActivityNotFoundException
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -34,52 +32,39 @@ import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.TabHost
 import androidx.fragment.app.DialogFragment
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import se.lublin.humla.IHumlaService
-import se.lublin.humla.util.HumlaObserver
+import kotlinx.coroutines.launch
 import se.lublin.mumla.R
-import se.lublin.mumla.Settings
-import se.lublin.mumla.util.HumlaServiceProvider
+import se.lublin.mumla.container
 
 /**
  * Fragment to change your comment using basic WYSIWYG tools.
  * Created by andrew on 10/08/13.
+ *
+ * The comment's text comes from [CommentViewModel] and arrives through
+ * state; the dialog no longer registers one-shot observers on a service.
  */
 abstract class AbstractCommentFragment : DialogFragment() {
+
+    /** The target-specific model built by the one factory. */
+    protected abstract val viewModel: CommentViewModel
 
     private var mTabHost: TabHost? = null
     private var mCommentView: WebView? = null
     private var mCommentEdit: EditText? = null
-    private var mProvider: HumlaServiceProvider? = null
-    private var mPendingObserver: HumlaObserver? = null
-    private var mPendingService: IHumlaService? = null
     private var mComment: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val args = requireArguments()
-        mComment = args.getString(ARG_COMMENT)
-        validateArguments(args)
-    }
-
-    override fun onAttach(context: Context) {
-        super.onAttach(context)
-
-        try {
-            mProvider = context as HumlaServiceProvider
-        } catch (e: ClassCastException) {
-            // A wrapped context (theme wrapper, test harness) is not the host activity itself.
-            if (activity is HumlaServiceProvider) {
-                mProvider = activity as HumlaServiceProvider
-            } else {
-                throw RuntimeException(context.javaClass.name + " must implement HumlaServiceProvider!", e)
+        validateArguments(requireArguments())
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.state.collect { onCommentState(it) }
             }
         }
-    }
-
-    override fun onDetach() {
-        mProvider = null
-        super.onDetach()
     }
 
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
@@ -87,27 +72,21 @@ abstract class AbstractCommentFragment : DialogFragment() {
         val inflater = LayoutInflater.from(requireContext())
         val view = inflater.inflate(R.layout.dialog_comment, null, false)
 
-        val commentView = view.findViewById(R.id.comment_view) as WebView
+        val commentView = view.findViewById<WebView>(R.id.comment_view)
         mCommentView = commentView
         hardenCommentWebView(commentView)
-        val commentEdit = view.findViewById(R.id.comment_edit) as EditText
+        val commentEdit = view.findViewById<EditText>(R.id.comment_edit)
         mCommentEdit = commentEdit
 
-        val tabHost = view.findViewById(R.id.comment_tabhost) as TabHost
+        val tabHost = view.findViewById<TabHost>(R.id.comment_tabhost)
         mTabHost = tabHost
         tabHost.setup()
 
-        val comment = mComment
-        if (comment == null) {
+        val known = viewModel.state.value.comment
+        if (known == null) {
             commentView.loadData("Loading...", null, null)
-            val service = boundService()
-            if (service != null) {
-                requestComment(service)
-            } else {
-                Log.w(TAG, "No bound service; cannot fetch comment")
-            }
         } else {
-            loadComment(comment)
+            loadComment(known)
         }
 
         val viewTab = tabHost.newTabSpec(TAB_VIEW)
@@ -142,14 +121,8 @@ abstract class AbstractCommentFragment : DialogFragment() {
                 .setView(view)
                 .setNegativeButton(R.string.close, null)
                 .setPositiveButton(R.string.save) { _, _ ->
-                    val service = boundService()
-                    // NPE-exact: the original dereferenced mCommentEdit unconditionally.
-                    val edit = mCommentEdit ?: throw NullPointerException("mCommentEdit")
-                    if (service != null) {
-                        editComment(service, edit.text.toString())
-                    } else {
-                        Log.w(TAG, "No bound service; save discarded")
-                    }
+                    val edit = mCommentEdit ?: return@setPositiveButton
+                    viewModel.save(edit.text.toString())
                 }
                 .create()
         } else {
@@ -179,10 +152,9 @@ abstract class AbstractCommentFragment : DialogFragment() {
 
     /**
      * Locks down the comment WebView against hostile server-supplied HTML.
-     * Both the received comment ({@link #loadComment}) and the edit-preview
-     * path in {@link #onCreateDialog} render through the comment view,
-     * so hardening here covers both. Remote images follow the existing
-     * external-images setting (default off).
+     * Both the received comment and the edit-preview path render through the
+     * comment view, so hardening here covers both. Remote images follow the
+     * existing external-images setting (default off).
      */
     private fun hardenCommentWebView(commentView: WebView) {
         commentView.webViewClient = object : WebViewClient() {
@@ -233,11 +205,19 @@ abstract class AbstractCommentFragment : DialogFragment() {
         return true
     }
 
-    protected fun loadComment(comment: String?) {
+    /** Renders the comment once it is known; later identical states are no-ops. */
+    private fun onCommentState(state: CommentUiState) {
+        val comment = state.comment ?: return
+        if (comment == mComment) {
+            return
+        }
+        loadComment(comment)
+    }
+
+    private fun loadComment(comment: String) {
         mComment = comment
         val commentView = mCommentView ?: return
-        // NPE-exact: WebView.loadData rejects null data; the original NPE'd inside it.
-        commentView.loadData(comment ?: throw NullPointerException("comment"), "text/html", "UTF-8")
+        commentView.loadData(comment, "text/html", "UTF-8")
     }
 
     protected fun isEditing(): Boolean {
@@ -271,63 +251,12 @@ abstract class AbstractCommentFragment : DialogFragment() {
         return args.getInt(key)
     }
 
-    /**
-     * Tracks an observer registered with the service so that dismissing the
-     * dialog before the async reply arrives does not leak it (or the fragment
-     * it captures). A previous pending observer is released first, so repeat
-     * registrations cannot orphan one. Unregistered in {@link #onDestroy}
-     * against the cached service, which stays valid for unregistration even
-     * if the provider has since unbound.
-     */
-    protected fun trackCommentObserver(service: IHumlaService, observer: HumlaObserver) {
-        releasePendingObserver()
-        mPendingService = service
-        mPendingObserver = observer
-    }
-
-    private fun releasePendingObserver() {
-        val observer = mPendingObserver
-        if (observer != null) {
-            val service = mPendingService
-            if (service != null) {
-                service.unregisterObserver(observer)
-            }
-            mPendingObserver = null
-            mPendingService = null
-        }
-    }
-
-    /** Returns the bound service, or null when the provider is gone or unbound. */
-    private fun boundService(): IHumlaService? {
-        return mProvider?.getService()
-    }
-
-    override fun onDestroy() {
-        releasePendingObserver()
-        super.onDestroy()
-    }
-
-    /**
-     * Requests a comment from the service. Will not be called if we already have a comment provided.
-     * This method is expected to set a callback that will call {@link se.lublin.mumla.channel.comment.AbstractCommentFragment#loadComment(String comment)}.
-     * @param service The bound Humla service to use for remote calls.
-     */
-    abstract fun requestComment(service: IHumlaService)
-
-    /**
-     * Asks the service to replace the comment.
-     * @param service The bound Humla service to use for remote calls.
-     * @param comment The comment the user has defined.
-     */
-    abstract fun editComment(service: IHumlaService, comment: String)
-
     companion object {
         private const val TAG = "AbstractCommentFragment"
 
         private const val TAB_VIEW = "View"
         private const val TAB_EDIT = "Edit"
 
-        const val ARG_COMMENT = "comment"
         const val ARG_EDITING = "editing"
     }
 }

@@ -23,6 +23,8 @@ import static org.junit.Assert.assertNull;
 import android.os.Bundle;
 import android.widget.TabHost;
 
+import androidx.fragment.app.FragmentActivity;
+
 import java.lang.reflect.Field;
 
 import org.junit.Test;
@@ -50,19 +52,18 @@ public class CommentFragmentTeardownTest {
     private static Bundle pinnedBundle() {
         Bundle args = new Bundle();
         args.putInt(UserCommentFragment.ARG_SESSION, 1);
-        args.putString(AbstractCommentFragment.ARG_COMMENT, "<p>x</p>");
         args.putBoolean(AbstractCommentFragment.ARG_EDITING, false);
         return args;
     }
 
     /** Shows the fragment as a dialog on a themed stub host. */
     private static final class ShownDialog {
-        private final CommentDialogStubHost host;
+        private final FragmentActivity host;
         private final UserCommentFragment fragment;
 
         ShownDialog() {
-            ActivityController<CommentDialogStubHost> controller =
-                    Robolectric.buildActivity(CommentDialogStubHost.class);
+            ActivityController<FragmentActivity> controller =
+                    Robolectric.buildActivity(FragmentActivity.class);
             host = controller.get();
             host.setTheme(R.style.Theme_Mumla);
             controller.setup();

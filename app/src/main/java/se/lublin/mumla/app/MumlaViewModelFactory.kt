@@ -25,6 +25,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
 import se.lublin.mumla.channel.AccessTokenViewModel
 import se.lublin.mumla.channel.ServerInfoViewModel
+import se.lublin.mumla.channel.comment.ChannelDescriptionFragment
+import se.lublin.mumla.channel.comment.CommentViewModel
+import se.lublin.mumla.channel.comment.UserCommentFragment
 import se.lublin.mumla.container
 
 /**
@@ -66,6 +69,36 @@ class MumlaViewModelFactory private constructor(
                 },
                 sendTokens = { tokens -> client.currentSession.value?.sendAccessTokens(tokens) },
             )
+            modelClass.isAssignableFrom(CommentViewModel::class.java) -> {
+                val target = if (args.containsKey(UserCommentFragment.ARG_SESSION)) {
+                    CommentViewModel.Target.User(args.getInt(UserCommentFragment.ARG_SESSION))
+                } else {
+                    CommentViewModel.Target.Channel(
+                        args.getInt(ChannelDescriptionFragment.ARG_CHANNEL),
+                    )
+                }
+                CommentViewModel(
+                    target = target,
+                    sessionState = container.runtime.sessionState,
+                    requestBlob = {
+                        when (target) {
+                            is CommentViewModel.Target.User ->
+                                client.currentSession.value?.requestComment(target.session)
+                            is CommentViewModel.Target.Channel ->
+                                client.currentSession.value?.requestDescription(target.channelId)
+                        }
+                    },
+                    setComment = { comment ->
+                        when (target) {
+                            is CommentViewModel.Target.User ->
+                                client.currentSession.value?.setComment(target.session, comment)
+                            is CommentViewModel.Target.Channel -> throw UnsupportedOperationException(
+                                "Channel description editing is not supported",
+                            )
+                        }
+                    },
+                )
+            }
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }
         @Suppress("UNCHECKED_CAST")

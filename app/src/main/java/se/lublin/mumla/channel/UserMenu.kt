@@ -177,7 +177,6 @@ class UserMenu(
     private fun showUserComment(edit: Boolean) {
         val args = Bundle()
         args.putInt(UserCommentFragment.ARG_SESSION, mUser.session)
-        args.putString(AbstractCommentFragment.ARG_COMMENT, mUser.comment)
         args.putBoolean(AbstractCommentFragment.ARG_EDITING, edit)
         val fragment = UserCommentFragment()
         fragment.arguments = args

@@ -112,7 +112,6 @@ class ChannelMenu(
         } else if (itemId == R.id.context_channel_view_description) {
             val commentArgs = Bundle()
             commentArgs.putInt(ChannelDescriptionFragment.ARG_CHANNEL, mChannel.id)
-            commentArgs.putString(AbstractCommentFragment.ARG_COMMENT, mChannel.description)
             commentArgs.putBoolean(AbstractCommentFragment.ARG_EDITING, false)
             val commentFragment = ChannelDescriptionFragment()
             commentFragment.arguments = commentArgs

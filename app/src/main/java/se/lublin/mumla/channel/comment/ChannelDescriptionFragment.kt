@@ -18,40 +18,16 @@
 package se.lublin.mumla.channel.comment
 
 import android.os.Bundle
-import se.lublin.humla.IHumlaService
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.util.HumlaObserver
+import androidx.fragment.app.viewModels
+import se.lublin.mumla.app.MumlaViewModelFactory
 
 /**
  * Created by andrew on 03/03/14.
  */
 class ChannelDescriptionFragment : AbstractCommentFragment() {
 
-    override fun requestComment(service: IHumlaService) {
-        if (!service.isConnected()) {
-            return
-        }
-        val observer = object : HumlaObserver() {
-            override fun onChannelStateUpdated(channel: IChannel?) {
-                // NPE-exact: the original dereferenced channel unconditionally.
-                val updated = channel ?: throw NullPointerException("channel")
-                if (updated.id == getChannelId() && updated.description != null) {
-                    loadComment(updated.description)
-                    service.unregisterObserver(this)
-                }
-            }
-        }
-        trackCommentObserver(service, observer)
-        service.registerObserver(observer)
-        service.HumlaSession().requestChannelDescription(getChannelId())
-    }
-
-    override fun editComment(service: IHumlaService, comment: String) {
-        throw UnsupportedOperationException("Channel description editing is not supported")
-    }
-
-    private fun getChannelId(): Int {
-        return requireIntArgument(requireArguments(), ARG_CHANNEL)
+    override val viewModel: CommentViewModel by viewModels {
+        MumlaViewModelFactory(this)
     }
 
     override fun validateArguments(args: Bundle) {
