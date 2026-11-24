@@ -68,6 +68,12 @@ public class MumlaServiceTalkKeyTest extends TestCase {
             mSetTalkingStateCalls++;
         }
 
+        @Override
+        public void toggleTalkingState() {
+            mTalking = !mTalking;
+            mSetTalkingStateCalls++;
+        }
+
         private int mSessionId = 42;
         private int mTransmitMode = Constants.TRANSMIT_PUSH_TO_TALK;
         private int mPttOnCueCalls = 0;

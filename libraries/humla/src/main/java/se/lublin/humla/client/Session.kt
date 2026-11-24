@@ -68,6 +68,7 @@ import se.lublin.humla.state.applyLocalMuteIntent
 import se.lublin.humla.state.applyPermissionDenied
 import se.lublin.humla.state.applyPermissionQuery
 import se.lublin.humla.state.applyPttIntent
+import se.lublin.humla.state.applyTogglePttIntent
 import se.lublin.humla.state.applyRegisterWhisperIntent
 import se.lublin.humla.state.applySelfMuteDeafIntent
 import se.lublin.humla.state.applyServerConfig
@@ -785,6 +786,11 @@ class Session internal constructor(
 
     fun setPtt(pressed: Boolean) {
         _state.update { current -> applyPttIntent(current, pressed).state }
+    }
+
+    /** Toggle-mode talk keys: flip the press state inside one atomic update. */
+    fun togglePtt() {
+        _state.update { current -> applyTogglePttIntent(current).state }
     }
 
     fun setLocalMute(session: Int, muted: Boolean) {

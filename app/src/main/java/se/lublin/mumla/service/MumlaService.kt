@@ -1293,7 +1293,7 @@ open class MumlaService : HumlaService(),
         val settings = mSettings ?: throw NullPointerException("mSettings")
         if (isConnectionEstablished() && Settings.ARRAY_INPUT_METHOD_PTT == settings.inputMethod) {
             if (settings.isPushToTalkToggle) {
-                setTalkingState(!isTalking()) // Toggle talk state
+                toggleTalkingState() // Toggle inside the session's state update
             } else if (isTalking()) {
                 setTalkingState(false) // Stop talking
             }

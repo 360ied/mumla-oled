@@ -83,9 +83,7 @@ import se.lublin.humla.model.WhisperTargetChannel
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.HumlaUDPMessageType
 import se.lublin.humla.voice.VoiceEngine
-import se.lublin.humla.protocol.InputModes
 import se.lublin.humla.protocol.StateEventLogger
-import se.lublin.humla.protocol.validateAudioDelta
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.state.UserHandle
@@ -189,7 +187,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             ReconnectPolicy.delayForAttempts(attempts)
     }
 
-    private val inputModes = InputModes()
     private lateinit var routeControl: RouteControl
     private lateinit var policyCollector: PolicyCollector
     // Service-lifetime talk levels (step 5a.3a; VoiceEngine owns them from
@@ -1015,7 +1012,20 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
     open fun apply(delta: ConfigDelta): Boolean {
         check(Looper.getMainLooper() == Looper.myLooper()) { "apply must be called on main" }
-        inputModes.validateAudioDelta(delta)
+        // Validate and map the whole settings delta before anything else is
+        // committed: a rejected knob leaves the pending connect target and
+        // the published VoiceSettings exactly as they were.
+        val currentSettings = voiceSettingsFlow.value
+        val nextSettings = VoiceSettingsMapper.update(
+            currentSettings,
+            transmitMode = delta.transmitMode,
+            detectionThreshold = delta.detectionThreshold,
+            amplitudeBoost = delta.amplitudeBoost,
+            inputQuality = delta.inputQuality,
+            framesPerPacket = delta.framesPerPacket,
+            halfDuplex = delta.halfDuplex,
+            adaptiveLeveler = delta.adaptiveLeveler,
+        )
         var reconnectNeeded = false
         // 1. Merge pending connection parts (lock-free AtomicReference;
         // main-confined writes, atomic reads for connect). Presence-based
@@ -1116,19 +1126,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             }
         }
         // 3. Audio settings (VoiceSettings flow plus interim voice-link targets).
-        // Fail-fast like the legacy holder: validation errors propagate to
-        // the caller instead of landing a half-applied delta.
-        val currentSettings = voiceSettingsFlow.value
-        val nextSettings = VoiceSettingsMapper.update(
-            currentSettings,
-            transmitMode = delta.transmitMode,
-            detectionThreshold = delta.detectionThreshold,
-            amplitudeBoost = delta.amplitudeBoost,
-            inputQuality = delta.inputQuality,
-            framesPerPacket = delta.framesPerPacket,
-            halfDuplex = delta.halfDuplex,
-            adaptiveLeveler = delta.adaptiveLeveler,
-        )
         if (nextSettings != currentSettings) {
             voiceSettingsFlow.value = nextSettings
         }
@@ -1330,7 +1327,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun getTransmitMode(): Int {
-        return inputModes.transmitMode
+        return VoiceSettingsMapper.transmitModeFor(voiceSettingsFlow.value.inputMode)
     }
 
     open override fun getCodec(): HumlaUDPMessageType? {
@@ -1343,15 +1340,22 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun isTalking(): Boolean {
-        return inputModes.toggle.isTalkingOn
+        // SessionState.local.pttPressed is the only record of talk state.
+        return currentSession()?.state?.value?.local?.pttPressed ?: false
     }
 
     open override fun setTalkingState(talking: Boolean) {
-        // Step 5a.4: PTT reaches native through SessionState -> VoicePolicy;
-        // no handler to seed. The toggle stays for UI state.
-        inputModes.toggle.isTalkingOn = talking
+        // PTT reaches native through SessionState -> VoicePolicy.
         try {
             currentSession()?.setPtt(talking)
+        } catch (ignored: Exception) {
+        }
+    }
+
+    /** Toggle mode decides inside the session's atomic state update. */
+    open fun toggleTalkingState() {
+        try {
+            currentSession()?.togglePtt()
         } catch (ignored: Exception) {
         }
     }
