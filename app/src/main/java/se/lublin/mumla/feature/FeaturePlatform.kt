@@ -108,9 +108,20 @@ interface HotCornerView {
     fun refreshGestureExclusionDeferred()
 }
 
-/** The overlay HUD's view over the container's session-state mirror. */
+/** Immutable overlay layout triple, kept out of the Settings facade. */
+data class OverlayLayout(val pinned: Boolean, val gravity: Int, val placement: String)
+
+/**
+ * The overlay HUD's narrow view over the container's session-state mirror.
+ * Features never receive the whole mutable Settings facade: only the
+ * overlay's own state is readable and writable through this seam.
+ */
 interface OverlayHost {
-    val settings: se.lublin.mumla.Settings
+    fun overlayPinned(): Boolean
+    fun overlayLayout(): OverlayLayout
+    fun overlayPosX(defaultX: Int): Int
+    fun overlayPosY(defaultY: Int): Int
+    fun setOverlayPosition(x: Int, y: Int)
     fun sessionChannel(): IChannel?
     fun selfSession(): Int?
     fun registerObserver(observer: IHumlaObserver)

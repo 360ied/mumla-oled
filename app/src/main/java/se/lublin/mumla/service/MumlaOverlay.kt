@@ -50,7 +50,18 @@ class MumlaOverlay(private val mContext: Context, private val mHost: OverlayHost
 
     /** Interim bridge: the bound service still owns the live session. */
     constructor(service: MumlaService) : this(service, object : OverlayHost {
-        override val settings: Settings = service.container.settings
+        private val settings get() = service.container.settings
+        override fun overlayPinned() = settings.isOverlayPinned
+        override fun overlayLayout(): se.lublin.mumla.feature.OverlayLayout {
+            val layout = settings.overlayLayout()
+            return se.lublin.mumla.feature.OverlayLayout(
+                layout.pinned, layout.gravity, layout.placement,
+            )
+        }
+        override fun overlayPosX(defaultX: Int) = settings.getOverlayPosX(defaultX)
+        override fun overlayPosY(defaultY: Int) = settings.getOverlayPosY(defaultY)
+        override fun setOverlayPosition(x: Int, y: Int) =
+            settings.setOverlayPosition(x, y)
         override fun sessionChannel(): IChannel? = try {
             service.getSessionChannel()
         } catch (e: IllegalStateException) {
@@ -138,8 +149,6 @@ class MumlaOverlay(private val mContext: Context, private val mHost: OverlayHost
         }
     }
 
-    private val mSettings: Settings = mHost.settings
-
     // Fail-soft snapshot: getSessionChannel() throws IllegalStateException when
     // unsynchronized or teardown-racing (cf. MumlaService's own try/catch
     // around the same call). Observers must never throw out of fan-out.
@@ -173,7 +182,7 @@ class MumlaOverlay(private val mContext: Context, private val mHost: OverlayHost
         mOverlayList.itemAnimator = null
 
         mOverlayView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            if (!mShown || mSettings.isOverlayPinned) {
+            if (!mShown || mHost.overlayPinned()) {
                 return@addOnLayoutChangeListener
             }
             val dm = mContext.resources.displayMetrics
@@ -208,7 +217,7 @@ class MumlaOverlay(private val mContext: Context, private val mHost: OverlayHost
             private var mIsDragging = false
 
             override fun onDispatchTouchEvent(event: MotionEvent): Boolean {
-                if (mSettings.isOverlayPinned) {
+                if (mHost.overlayPinned()) {
                     return false
                 }
                 when (event.actionMasked) {
@@ -285,7 +294,7 @@ class MumlaOverlay(private val mContext: Context, private val mHost: OverlayHost
         val dm = mContext.resources.displayMetrics
         // Single-snapshot triple: pin, gravity and placement must agree
         // under a concurrent settings write.
-        val layout = mSettings.overlayLayout()
+        val layout = mHost.overlayLayout()
         if (layout.pinned) {
             mOverlayParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
@@ -356,8 +365,8 @@ class MumlaOverlay(private val mContext: Context, private val mHost: OverlayHost
         val defaultX = (DEFAULT_POS_X_DP * dm.density).toInt()
         val defaultY = (DEFAULT_POS_Y_DP * dm.density).toInt()
 
-        val savedX = mSettings.getOverlayPosX(defaultX)
-        val savedY = mSettings.getOverlayPosY(defaultY)
+        val savedX = mHost.overlayPosX(defaultX)
+        val savedY = mHost.overlayPosY(defaultY)
 
         val maxX = maxOf(0, dm.widthPixels - (ESTIMATED_WIDTH_DP * dm.density).toInt())
         val maxY = maxOf(0, dm.heightPixels - (ESTIMATED_HEIGHT_DP * dm.density).toInt())
@@ -367,10 +376,10 @@ class MumlaOverlay(private val mContext: Context, private val mHost: OverlayHost
     }
 
     private fun savePosition() {
-        if (mSettings.isOverlayPinned) {
+        if (mHost.overlayPinned()) {
             return
         }
-        mSettings.setOverlayPosition(mOverlayParams.x, mOverlayParams.y)
+        mHost.setOverlayPosition(mOverlayParams.x, mOverlayParams.y)
     }
 
     fun isShown(): Boolean {

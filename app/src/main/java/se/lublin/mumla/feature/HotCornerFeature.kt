@@ -21,8 +21,6 @@ import android.content.res.Configuration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.voice.TalkActivity
@@ -81,13 +79,7 @@ class HotCornerFeature(
         child.launch {
             configuration.collect { view?.refreshGestureExclusionDeferred() }
         }
-        child.launch {
-            settings.map { it.hotCornerGravity() }.distinctUntilChanged().collect {
-                if (view != null) {
-                    gravity = it
-                    view?.setGravity(it)
-                }
-            }
-        }
+        // Gravity is already updated in the combined collector above; a
+        // second collector here only duplicated the same setGravity call.
     }
 }

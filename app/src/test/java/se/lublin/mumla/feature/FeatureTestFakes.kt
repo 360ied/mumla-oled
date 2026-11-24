@@ -237,8 +237,10 @@ class FakeWakeLock : WakeLockLike {
     var held = false
     var acquires = 0
     var releases = 0
+    var throwOnAcquire = false
     override fun isHeld(): Boolean = held
     override fun acquire() {
+        if (throwOnAcquire) throw RuntimeException("no proximity sensor")
         held = true
         acquires++
     }
@@ -260,6 +262,8 @@ class FakeFeaturePlatform : FeaturePlatform {
     val hotCorner = FakeHotCorner()
     val overlay = FakeOverlay()
     val lock = FakeWakeLock()
+    /** Null models a device without a proximity sensor. */
+    var proximityLock: WakeLockLike? = lock
     val registered = ArrayList<BroadcastReceiver>()
     val unregistered = ArrayList<BroadcastReceiver>()
     var grant = true
@@ -300,7 +304,7 @@ class FakeFeaturePlatform : FeaturePlatform {
         return hotCorner
     }
     override fun newOverlay(host: OverlayHost): OverlayView = overlay
-    override fun newProximityLock(): WakeLockLike = lock
+    override fun newProximityLock(): WakeLockLike? = proximityLock
     override fun newTalkReceiver(sink: (String?) -> Unit): BroadcastReceiver =
         TalkBroadcastReceiver { status -> sink(status) }
     override fun registerTalkReceiver(receiver: BroadcastReceiver) {

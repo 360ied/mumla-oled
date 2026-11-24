@@ -68,6 +68,7 @@ import se.lublin.mumla.feature.HotCornerFeature
 import se.lublin.mumla.feature.MessageNotificationsFeature
 import se.lublin.mumla.feature.NotificationActions
 import se.lublin.mumla.feature.OverlayHost
+import se.lublin.mumla.feature.OverlayLayout
 import se.lublin.mumla.feature.OverlayFeature
 import se.lublin.mumla.feature.PttSoundsFeature
 import se.lublin.mumla.feature.ProximityFeature
@@ -192,7 +193,16 @@ open class AppContainer(
 
     /** The overlay HUD reads the process-lifetime session-state mirror. */
     open val overlayHost: OverlayHost = object : OverlayHost {
-        override val settings: Settings get() = this@AppContainer.settings
+        private val settings get() = this@AppContainer.settings
+        override fun overlayPinned() = settings.isOverlayPinned
+        override fun overlayLayout(): OverlayLayout {
+            val layout = settings.overlayLayout()
+            return OverlayLayout(layout.pinned, layout.gravity, layout.placement)
+        }
+        override fun overlayPosX(defaultX: Int) = settings.getOverlayPosX(defaultX)
+        override fun overlayPosY(defaultY: Int) = settings.getOverlayPosY(defaultY)
+        override fun setOverlayPosition(x: Int, y: Int) =
+            settings.setOverlayPosition(x, y)
         override fun sessionChannel(): IChannel? {
             val state = runtime.sessionState.value
             val id = state.server.self?.channelId ?: return null

@@ -19,32 +19,16 @@ package se.lublin.humla.client
 
 import com.google.protobuf.ByteString
 import com.google.protobuf.MessageLite
-import java.time.Clock
-import java.time.Instant
-import java.time.ZoneOffset
 import java.util.Collections
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.TestDispatcher
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.advanceTimeBy
-import kotlinx.coroutines.test.runCurrent
-import kotlin.coroutines.ContinuationInterceptor
-import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IMessage
 import se.lublin.humla.model.IUser
@@ -61,16 +45,9 @@ import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.net.VoiceStatus
 import se.lublin.humla.protobuf.Mumble
-import se.lublin.humla.state.SessionState
-import se.lublin.humla.state.SyncPhase
-import se.lublin.humla.state.effectiveSelfMute
 import se.lublin.humla.util.HumlaException
 import se.lublin.humla.util.IHumlaObserver
 import se.lublin.humla.util.VoiceTargetMode
-import se.lublin.humla.voice.TalkActivity
-import se.lublin.humla.voice.VoicePolicy
-import se.lublin.humla.voice.VoiceSettings
-import se.lublin.humla.voice.voicePolicy
 
 /**
  * Fakes and the per-step invariant harness shared by the client and session

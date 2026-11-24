@@ -42,7 +42,11 @@ class OverlayFeatureTest {
         val feature = OverlayFeature(
             state, session, talk, configuration, settings, platform,
             object : OverlayHost {
-                override val settings: se.lublin.mumla.Settings get() = error("unused")
+                override fun overlayPinned() = error("unused")
+                override fun overlayLayout(): OverlayLayout = error("unused")
+                override fun overlayPosX(defaultX: Int) = error("unused")
+                override fun overlayPosY(defaultY: Int) = error("unused")
+                override fun setOverlayPosition(x: Int, y: Int) = error("unused")
                 override fun sessionChannel() = null
                 override fun selfSession(): Int? = null
                 override fun registerObserver(observer: se.lublin.humla.util.IHumlaObserver) = Unit

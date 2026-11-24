@@ -73,6 +73,30 @@ class SmallFeaturesTest {
         assertFalse(platform.lock.held)
     }
 
+    @Test fun missingProximitySensorHoldsNoLock() = runFeature { scope ->
+        val platform = FakeFeaturePlatform()
+        platform.proximityLock = null
+        val state = MutableStateFlow<ClientState>(ClientState.Idle)
+        val route = MutableStateFlow<RouteState>(RouteState.Idle)
+        val settings = MutableStateFlow(testSnapshot(handsetMode = true))
+        ProximityFeature(state, route, settings, platform).start(scope)
+        state.value = connectedState()
+        assertFalse(platform.lock.held)
+        assertEquals(0, platform.lock.acquires)
+    }
+
+    @Test fun throwingProximityAcquireIsDiscarded() = runFeature { scope ->
+        val platform = FakeFeaturePlatform()
+        platform.lock.throwOnAcquire = true
+        val state = MutableStateFlow<ClientState>(ClientState.Idle)
+        val route = MutableStateFlow<RouteState>(RouteState.Idle)
+        val settings = MutableStateFlow(testSnapshot(handsetMode = true))
+        ProximityFeature(state, route, settings, platform).start(scope)
+        state.value = connectedState()
+        assertFalse(platform.lock.held)
+        assertEquals(0, platform.lock.acquires)
+    }
+
     @Test fun bluetoothGuardRevertsWithoutTheGrant() = runFeature { scope ->
         val platform = FakeFeaturePlatform()
         platform.grant = false
