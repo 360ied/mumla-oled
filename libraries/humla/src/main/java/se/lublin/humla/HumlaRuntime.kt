@@ -53,6 +53,7 @@ import se.lublin.humla.route.RoutePreferences
 import se.lublin.humla.route.RouteState
 import se.lublin.humla.route.RouteThread
 import se.lublin.humla.state.SessionEvent
+import se.lublin.humla.state.SessionEventRecord
 import se.lublin.humla.state.UserHandle
 import se.lublin.humla.state.emptySessionState
 import se.lublin.humla.util.HumlaCallbacks
@@ -83,6 +84,7 @@ class HumlaRuntime private constructor(
     val routeState: StateFlow<RouteState>,
     val routeEvents: SharedFlow<RouteEvent>,
     val voiceEvents: SharedFlow<VoiceEvent>,
+    val events: SharedFlow<SessionEventRecord>,
     val talkActivity: StateFlow<TalkActivity>,
     val voiceSettings: StateFlow<VoiceSettings>,
     internal val voiceEngine: VoiceEngine,
@@ -304,6 +306,7 @@ class HumlaRuntime private constructor(
                 routeState = routeControl.state,
                 routeEvents = routeControl.events,
                 voiceEvents = voiceEngine.events,
+                events = client.events,
                 talkActivity = talkPublisher.talkActivity,
                 voiceSettings = inputs.voiceSettings,
                 voiceEngine = voiceEngine,

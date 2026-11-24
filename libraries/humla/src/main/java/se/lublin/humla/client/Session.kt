@@ -105,6 +105,7 @@ class Session internal constructor(
     private val localFactsStore: LocalFactsStore,
     private val mainPoster: (Runnable) -> Unit,
     private val denyFormatter: (SessionEvent.PermissionDenied) -> String,
+    private val eventSink: suspend (SessionEvent, SessionState) -> Unit = { _, _ -> },
     private val workDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: Clock = Clock.systemUTC(),
@@ -169,11 +170,9 @@ class Session internal constructor(
     private val _state = MutableStateFlow(initialState)
     val state: StateFlow<SessionState> = _state.asStateFlow()
 
-    private val _events = MutableSharedFlow<SessionEvent>(extraBufferCapacity = 256)
     // Ordering: inbound events emit in message order, but intent events
     // (self-mute, sent text) emit from session-scope launches and may
     // overtake them. Consumers order by sentAt/receivedAtMillis.
-    val events: SharedFlow<SessionEvent> = _events.asSharedFlow()
 
     // usingUdp comes only from the transport, which owns the decision
     // (client.md § Statistics).
@@ -225,7 +224,7 @@ class Session internal constructor(
                             }
                         }
                         is se.lublin.humla.net.VoiceEvent.UdpUnavailable -> {
-                            _events.emit(SessionEvent.ConnectionWarning("UDP unavailable, switched to TCP"))
+                            eventSink(SessionEvent.ConnectionWarning("UDP unavailable, switched to TCP"), _state.value)
                         }
                         else -> Unit
                     }
@@ -352,7 +351,7 @@ class Session internal constructor(
 
     private suspend fun emitAll(events: List<SessionEvent>) {
         for (event in events) {
-            _events.emit(event)
+            eventSink(event, _state.value)
         }
     }
 
@@ -1058,7 +1057,7 @@ class Session internal constructor(
             return
         }
         scope.launch {
-            _events.emit(
+            eventSink(
                 SessionEvent.TextMessageSent(
                     channels = channels,
                     trees = trees,
@@ -1066,6 +1065,7 @@ class Session internal constructor(
                     message = message,
                     sentAtMillis = clock.millis(),
                 ),
+                _state.value,
             )
         }
     }

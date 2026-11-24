@@ -41,7 +41,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
@@ -452,23 +451,14 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             }
         }
 
-        // Chat-log adapter: semantic events to today's logger strings.
-        // collectLatest for the same reason: each session's event stream
-        // ends with its scope, and the next session must be observed.
+        // Chat-log adapter: one application-lifetime event stream, so no
+        // session can emit before this collector exists.
         lifecycleScope.launch {
             try {
-                appRuntime.client.currentSession.collectLatest { session ->
-                    if (session != null) {
-                        try {
-                            session.events.collect { event ->
-                                try {
-                                    stateLogger?.log(listOf(event), session.state.value)
-                                } catch (ignored: Exception) {
-                                }
-                            }
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                        }
+                appRuntime.client.events.collect { record ->
+                    try {
+                        stateLogger?.log(listOf(record.event), record.state)
+                    } catch (ignored: Exception) {
                     }
                 }
             } catch (e: Exception) {
