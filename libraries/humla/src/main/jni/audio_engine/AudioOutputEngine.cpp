@@ -68,7 +68,6 @@ void applyGain(float* pcm, int count, float gain) {
 } // namespace
 
 struct AudioOutputEngine::Voice {
-    static constexpr size_t kNoDebt = static_cast<size_t>(-1);
     int32_t session = 0;
     std::unique_ptr<IOutputDecoder> decoder;
     JitterBuffer* jitter = nullptr;
@@ -104,27 +103,9 @@ struct AudioOutputEngine::Voice {
     size_t carrySize = 0;
     size_t carryPos = 0;
     // Gain applied to this voice's decoded audio: the last packet's server
-    // volume adjustment, so concealment and FEC stand-ins keep the
-    // listener's adjustment instead of snapping back to unity.
+    // volume adjustment, so concealment keeps the listener's adjustment
+    // instead of snapping back to unity.
     float volumeFactor = 1.0f;
-    // Whether the carried-over tail is concealment (vs real decode); served
-    // chunks blend at real<->concealment boundaries like any other chunk.
-    bool carryConcealed = false;
-    // Chunk-type tracker for loss-boundary crossfades. FEC-recovered audio
-    // counts as real; the silent FEC-debt placeholder never touches this.
-    bool hasPrevChunk = false;
-    bool prevChunkConcealed = false;
-    // Last emitted samples for cross-quantum blending when a quantum starts
-    // mid-transition (scratch is zeroed per quantum, so without this the
-    // first chunk could not blend against the previous quantum's tail).
-    float xfadeTail[XFADE_SAMPLES] = {};
-    bool hasXfadeTail = false;
-    // Scratch index of a reserved silent slot for a missing frame, or kNoDebt.
-    // Concealment is deferred one frame so the next buffered packet — which
-    // on lossy-but-alive links is usually already in the jitter buffer — can
-    // reconstruct it via Opus in-band FEC. Quantum-local: always resolved or
-    // PLC-filled before the quantum ends, never carried across quanta.
-    size_t fecDebtPos = kNoDebt;
     // Arrival timestamp of the voice's first packet (monotonic ns), for the
     // one-shot queue-to-first-audio delay log below. Zero until set.
     int64_t firstPacketNs = 0;
@@ -146,11 +127,6 @@ struct AudioOutputEngine::Voice {
         carrySize = 0;
         carryPos = 0;
         volumeFactor = 1.0f;
-        carryConcealed = false;
-        hasPrevChunk = false;
-        prevChunkConcealed = false;
-        hasXfadeTail = false;
-        fecDebtPos = kNoDebt;
         firstPacketNs = 0;
         delayLogged = false;
     }
@@ -176,13 +152,6 @@ AudioOutputEngine::AudioOutputEngine(DecoderFactory decoderFactory,
         const float v = std::sin(static_cast<float>(i) * mul);
         m_fadeIn[i] = v;
         m_fadeOut[FRAME_SIZE - i - 1] = v;
-    }
-    // Equal-power crossfade: cos^2 + sin^2 == 1 holds perceived loudness
-    // flat across the blend, unlike a linear crossfade which dips mid-way.
-    const float xmul = static_cast<float>(kPi) / (2.0f * XFADE_SAMPLES);
-    for (int i = 0; i < XFADE_SAMPLES; ++i) {
-        m_xfadeIn[i] = std::sin(static_cast<float>(i) * xmul);
-        m_xfadeOut[i] = std::cos(static_cast<float>(i) * xmul);
     }
 
     // The shared packet store: one allocation for the whole engine, and the
@@ -298,43 +267,9 @@ float AudioOutputEngine::saturateSample(float m) {
            (1.0f - kSaturationKnee * std::exp(-2.0f * (abs - kSaturationKnee)));
 }
 
-// Blends a chunk head into its destination when the chunk type flips between
-// real and concealment (FEC recovery counts as real). Two-sided when the
-// destination already holds a full window: the emitted-side tail is rewoven
-// with the new head in place. One-sided from the voice tail snapshot when
-// the chunk opens a fresh quantum (the previous tail is already emitted and
-// immutable, so only the new side moves, starting from the tail's last
-// value to keep the joint C0). Short chunks (< XFADE_SAMPLES) skip blending;
-// they only occur on partial-room appends and carry splits.
-static void blendHead(float* base, size_t basePos, const float* src,
-                      const float* tail, bool hasTail, bool transition,
-                      const float* xfadeIn, const float* xfadeOut) {
-    constexpr size_t kXf =
-        static_cast<size_t>(AudioOutputEngine::XFADE_SAMPLES);
-    if (!transition) {
-        return;
-    }
-    if (basePos >= kXf) {
-        for (size_t i = 0; i < kXf; ++i) {
-            base[basePos - kXf + i] =
-                base[basePos - kXf + i] * xfadeOut[i] + src[i] * xfadeIn[i];
-        }
-    } else if (basePos == 0 && hasTail) {
-        // The tail is already emitted and immutable: the new side starts
-        // from the tail's last value so the joint stays C0, then ramps to
-        // the new chunk. (Pointwise tail[i] would step back 2 ms in time.)
-        const float last = tail[kXf - 1];
-        for (size_t i = 0; i < kXf; ++i) {
-            base[i] = last * xfadeOut[i] + src[i] * xfadeIn[i];
-        }
-    }
-}
-
 void AudioOutputEngine::appendVoiceChunk(Voice* voice, const float* src,
                                          int count, float* scratch,
-                                         size_t numSamples, size_t& filled,
-                                         bool concealed, const float* xfadeIn,
-                                         const float* xfadeOut) {
+                                         size_t numSamples, size_t& filled) {
     if (count <= 0 || src == nullptr) {
         return;
     }
@@ -342,16 +277,7 @@ void AudioOutputEngine::appendVoiceChunk(Voice* voice, const float* src,
     const size_t copy = std::min<size_t>(static_cast<size_t>(count), room);
     if (copy > 0) {
         std::memcpy(scratch + filled, src, copy * sizeof(float));
-        if (static_cast<int>(copy) >= XFADE_SAMPLES) {
-            blendHead(scratch, filled, src, voice->xfadeTail,
-                      voice->hasXfadeTail,
-                      voice->hasPrevChunk &&
-                          (concealed != voice->prevChunkConcealed),
-                      xfadeIn, xfadeOut);
-        }
         filled += copy;
-        voice->hasPrevChunk = true;
-        voice->prevChunkConcealed = concealed;
     }
     if (static_cast<size_t>(count) > copy) {
         // Retain the unconsumed tail for the next quantum. Carry is always
@@ -361,51 +287,6 @@ void AudioOutputEngine::appendVoiceChunk(Voice* voice, const float* src,
         std::memcpy(voice->carry, src + copy, tail * sizeof(float));
         voice->carrySize = tail;
         voice->carryPos = 0;
-        voice->carryConcealed = concealed;
-    }
-}
-
-void AudioOutputEngine::writeChunkAt(Voice* voice, float* scratch, size_t pos,
-                                     const float* src, int count,
-                                     bool concealed, const float* xfadeIn,
-                                     const float* xfadeOut) {
-    if (src == nullptr || count <= 0) {
-        return;
-    }
-    std::memcpy(scratch + pos, src, count * sizeof(float));
-    if (count >= XFADE_SAMPLES) {
-        blendHead(scratch, pos, src, voice->xfadeTail, voice->hasXfadeTail,
-                  voice->hasPrevChunk &&
-                      (concealed != voice->prevChunkConcealed),
-                  xfadeIn, xfadeOut);
-    }
-    voice->hasPrevChunk = true;
-    voice->prevChunkConcealed = concealed;
-}
-
-void AudioOutputEngine::snapshotTail(Voice* voice, const float* scratch,
-                                     size_t filled) {
-    constexpr size_t kXf =
-        static_cast<size_t>(AudioOutputEngine::XFADE_SAMPLES);
-    if (filled >= kXf) {
-        std::memcpy(voice->xfadeTail, scratch + filled - kXf,
-                    kXf * sizeof(float));
-        voice->hasXfadeTail = true;
-    } else if (filled > 0) {
-        if (voice->hasXfadeTail) {
-            const size_t keep = kXf - filled;
-            std::memmove(voice->xfadeTail, voice->xfadeTail + filled,
-                         keep * sizeof(float));
-            std::memcpy(voice->xfadeTail + keep, scratch,
-                        filled * sizeof(float));
-        } else {
-            // No history yet: oldest samples are zeros, newest is the scratch
-            // head at the window end.
-            std::memset(voice->xfadeTail, 0, kXf * sizeof(float));
-            std::memcpy(voice->xfadeTail + kXf - filled, scratch,
-                        filled * sizeof(float));
-        }
-        voice->hasXfadeTail = true;
     }
 }
 
@@ -742,14 +623,12 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
                 const size_t count = std::min(avail, samples - filled);
                 appendVoiceChunk(voice, voice->carry + voice->carryPos,
                                  static_cast<int>(count), m_voiceScratch,
-                                 samples, filled, voice->carryConcealed,
-                                 m_xfadeIn, m_xfadeOut);
+                                 samples, filled);
                 voice->carryPos += count;
                 producedAudio = true;
                 if (voice->carryPos >= voice->carrySize) {
                     voice->carrySize = 0;
                     voice->carryPos = 0;
-                    voice->carryConcealed = false;
                 }
                 continue;
             }
@@ -773,47 +652,9 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
                 }
                 voice->started = true;
                 producedAudio = true;
-                // A deferred miss may be recoverable: when this packet starts
-                // exactly at the pointer (the common single-loss case) its
-                // in-band FEC data reconstructs the missing frame — our
-                // encoder always sends LBRR, as do modern desktop clients.
-                // Anything else (jitter jump, FEC miss) falls back to
-                // concealment for the debt slot below.
-                if (voice->fecDebtPos != Voice::kNoDebt) {
-                    const size_t debtPos = voice->fecDebtPos;
-                    voice->fecDebtPos = Voice::kNoDebt;
-                    bool recovered = false;
-                    if (startOffset == 0) {
-                        const int fec = voice->decoder->decodeFloat(
-                            reinterpret_cast<uint8_t*>(packet.data),
-                            packet.len, m_frameScratch, FRAME_SIZE, 1);
-                        if (fec == FRAME_SIZE) {
-                            applyGain(m_frameScratch, fec,
-                                      voice->volumeFactor);
-                            writeChunkAt(voice, m_voiceScratch, debtPos,
-                                         m_frameScratch, fec, false, m_xfadeIn,
-                                         m_xfadeOut);
-                            recovered = true;
-                        }
-                    }
-                    if (!recovered) {
-                        const int debtPlc =
-                            voice->decoder->decodeConcealment(m_frameScratch,
-                                                              FRAME_SIZE);
-                        if (debtPlc > 0) {
-                            applyGain(m_frameScratch, debtPlc,
-                                      voice->volumeFactor);
-                            writeChunkAt(voice, m_voiceScratch, debtPos,
-                                         m_frameScratch, debtPlc, true,
-                                         m_xfadeIn, m_xfadeOut);
-                        }
-                        // debtPlc <= 0: wedged decoder; the slot stays the
-                        // reserved silence and expiry advances regardless.
-                    }
-                }
                 const int decoded = voice->decoder->decodeFloat(
                     reinterpret_cast<uint8_t*>(packet.data), packet.len,
-                    m_frameScratch, MAX_DECODE_SAMPLES, 0);
+                    m_frameScratch, MAX_DECODE_SAMPLES);
                 if (decoded > 0) {
                     voice->consecutiveErrors = 0;
                     float peak = 0.0f;
@@ -826,8 +667,7 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
                     }
                     applyGain(m_frameScratch, decoded, voice->volumeFactor);
                     appendVoiceChunk(voice, m_frameScratch, decoded,
-                                     m_voiceScratch, samples, filled, false,
-                                     m_xfadeIn, m_xfadeOut);
+                                     m_voiceScratch, samples, filled);
                     // Round ticks up: a bundle covering a partial frame still
                     // advances past the whole frame.
                     const int ticks = (decoded + FRAME_SIZE - 1) / FRAME_SIZE;
@@ -850,8 +690,7 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
                         applyGain(m_frameScratch, concealed,
                                   voice->volumeFactor);
                         appendVoiceChunk(voice, m_frameScratch, concealed,
-                                         m_voiceScratch, samples, filled, true,
-                                         m_xfadeIn, m_xfadeOut);
+                                         m_voiceScratch, samples, filled);
                     }
                     // concealed <= 0: wedged decoder; this slot stays scratch
                     // silence and expiry still advances via the tick above.
@@ -859,43 +698,11 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
                 continue;
             }
 
-            // Missing or late packet.
-            // A miss reserves a silent slot and defers concealment one frame:
-            // the next packet is usually already jitter-buffered on a
-            // lossy-but-alive link, and the OK path above reconstructs this
-            // slot from its in-band FEC data. A nearly-full quantum with no
-            // room for a whole slot conceals immediately instead.
-            // A miss arriving with debt outstanding settles the old slot
-            // first: it is now two frames behind the pointer, beyond what the
-            // next packet's FEC can cover (LBRR reconstructs only the
-            // immediately previous frame), so the old debt is concealed now
-            // and the current miss starts a fresh debt below. Burst loss thus
-            // chains correctly instead of playing the wrong frame's audio in
-            // a stale slot.
-            if (voice->fecDebtPos != Voice::kNoDebt) {
-                const size_t debtPos = voice->fecDebtPos;
-                voice->fecDebtPos = Voice::kNoDebt;
-                const int debtPlc = voice->decoder->decodeConcealment(
-                    m_frameScratch, FRAME_SIZE);
-                if (debtPlc > 0) {
-                    applyGain(m_frameScratch, debtPlc, voice->volumeFactor);
-                    writeChunkAt(voice, m_voiceScratch, debtPos, m_frameScratch,
-                                 debtPlc, true, m_xfadeIn, m_xfadeOut);
-                }
-            }
-            if (filled + FRAME_SIZE <= samples) {
-                // Scratch is zeroed beyond filled, so the slot starts silent
-                // without a fill; a failed recovery keeps it that way.
-                voice->fecDebtPos = filled;
-                filled += FRAME_SIZE;
-                jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
-                jitter_buffer_tick(voice->jitter);
-                producedAudio = true;
-                if (++voice->missCount > DEAD_MISS_FRAMES) {
-                    break;
-                }
-                continue;
-            }
+            // Missing or late packet: conceal this frame at once, as upstream
+            // does. Opus PLC continues the waveform from the decoder state and
+            // the next real decode resumes from the concealed output, so the
+            // joints need no blending. (Upstream peers send no in-band FEC,
+            // so deferring for a recovery would only delay the same PLC.)
             const int concealed = voice->decoder->decodeConcealment(
                 m_frameScratch, FRAME_SIZE);
             jitter_buffer_update_delay(voice->jitter, nullptr, nullptr);
@@ -903,31 +710,18 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
             if (concealed > 0) {
                 applyGain(m_frameScratch, concealed, voice->volumeFactor);
                 appendVoiceChunk(voice, m_frameScratch, concealed,
-                                 m_voiceScratch, samples, filled, true,
-                                 m_xfadeIn, m_xfadeOut);
+                                 m_voiceScratch, samples, filled);
+            } else {
+                // Wedged decoder: keep this slot silent so the loop still
+                // advances; missCount below expires the voice.
+                filled = std::min(samples, filled + FRAME_SIZE);
             }
-            // concealed <= 0: keep this slot silent; missCount below still
-            // expires the voice so a wedged decoder cannot spin forever.
             producedAudio = true;
             if (++voice->missCount > DEAD_MISS_FRAMES) {
                 break;
             }
         }
 
-        // FEC debt never crosses quanta: an unrecovered slot is concealed now
-        // so the decoder's PLC state advances exactly as if concealment had
-        // run inline, and the next quantum starts from a clean tracker.
-        if (voice->fecDebtPos != Voice::kNoDebt) {
-            const size_t debtPos = voice->fecDebtPos;
-            voice->fecDebtPos = Voice::kNoDebt;
-            const int debtPlc =
-                voice->decoder->decodeConcealment(m_frameScratch, FRAME_SIZE);
-            if (debtPlc > 0) {
-                applyGain(m_frameScratch, debtPlc, voice->volumeFactor);
-                writeChunkAt(voice, m_voiceScratch, debtPos, m_frameScratch,
-                             debtPlc, true, m_xfadeIn, m_xfadeOut);
-            }
-        }
         // A terminator drains instead of cutting: the voice lives until its
         // buffered packets (peeked via the available count) and any decoded
         // carryover are played out. Only then does this quantum carry the
@@ -954,9 +748,6 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
             for (size_t i = 0; i < filled; ++i) {
                 m_mix[i] += m_voiceScratch[i];
             }
-            // Snapshot the emitted (post-fade) tail so the next quantum can
-            // blend a boundary chunk against it.
-            snapshotTail(voice, m_voiceScratch, filled);
             // One-shot queue-to-first-audio diagnostic: arrival-to-mix delay
             // for the voice lifetime (jitter fill + pre-roll + batching; the
             // AudioTrack sink depth adds on top). Host builds skip the sink.

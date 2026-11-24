@@ -21,11 +21,26 @@
 namespace mumla {
 namespace audio {
 
+namespace {
+
+// Upstream parity (AudioInput::initializeMixer): general-audio mode from
+// 32 kbit/s, VoIP mode below. Upstream's restricted-low-delay branch needs
+// its "allow low delay" setting, which Mumla OLED does not have.
+constexpr int kAudioApplicationMinBitrate = 32000;
+
+int applicationForBitrate(int bitrate) {
+    return bitrate >= kAudioApplicationMinBitrate ? OPUS_APPLICATION_AUDIO
+                                                  : OPUS_APPLICATION_VOIP;
+}
+
+} // namespace
+
 OpusVoiceEncoder::OpusVoiceEncoder(int bitrate)
     : m_encoder(nullptr),
-      m_bitrate(bitrate > 0 ? bitrate : DEFAULT_BITRATE) {
+      m_bitrate(bitrate > 0 ? bitrate : DEFAULT_BITRATE),
+      m_application(applicationForBitrate(m_bitrate)) {
     int error = OPUS_OK;
-    m_encoder = opus_encoder_create(SAMPLE_RATE, CHANNELS, OPUS_APPLICATION_VOIP, &error);
+    m_encoder = opus_encoder_create(SAMPLE_RATE, CHANNELS, m_application, &error);
     if (error != OPUS_OK || m_encoder == nullptr) {
         m_encoder = nullptr;
         return;
@@ -39,14 +54,18 @@ OpusVoiceEncoder::OpusVoiceEncoder(int bitrate)
     // Complexity 6 is the optimal sweet spot for mobile VoIP (WebRTC default).
     // It reduces encoder CPU consumption by ~65% compared to complexity 10 with
     // virtually zero perceptual difference (< 0.15 dB PESQ) in speech mode.
+    // It also diverges from upstream's default 10 on purpose: encoding runs
+    // inside the AAudio input callback, so its CPU cost counts against the
+    // callback deadline.
     opus_encoder_ctl(m_encoder, OPUS_SET_COMPLEXITY(6));
-    opus_encoder_ctl(m_encoder, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
-    opus_encoder_ctl(m_encoder, OPUS_SET_BANDWIDTH(OPUS_BANDWIDTH_FULLBAND));
 
-    // Error resilience: In-band FEC + packet loss adaptation
-    opus_encoder_ctl(m_encoder, OPUS_SET_INBAND_FEC(1));
-    opus_encoder_ctl(m_encoder, OPUS_SET_PACKET_LOSS_PERC(10));
-    opus_encoder_ctl(m_encoder, OPUS_SET_DTX(0));
+    // Cap, not force: Opus narrows the coded band itself at low bitrates.
+    // Signal type stays automatic, as upstream.
+    opus_encoder_ctl(m_encoder, OPUS_SET_MAX_BANDWIDTH(OPUS_BANDWIDTH_FULLBAND));
+
+    // In-band FEC and DTX stay at libopus's default (off), as upstream:
+    // desktop clients never decode FEC, and under CBR its redundancy would
+    // take bits from every packet.
 
     // Set target bitrate
     opus_encoder_ctl(m_encoder, OPUS_SET_BITRATE(m_bitrate));
@@ -74,9 +93,22 @@ void OpusVoiceEncoder::setBitrate(int bitrate) {
         return;
     }
     m_bitrate = bitrate;
-    if (m_encoder != nullptr) {
-        opus_encoder_ctl(m_encoder, OPUS_SET_BITRATE(m_bitrate));
+    if (m_encoder == nullptr) {
+        return;
     }
+    // Opus accepts an application change only before the first encode or
+    // after a reset. Crossing the 32 kbit/s line is a user setting change,
+    // so the reset's brief discontinuity is acceptable (upstream recreates
+    // its encoder on any audio setting change).
+    const int application = applicationForBitrate(m_bitrate);
+    if (application != m_application) {
+        opus_encoder_ctl(m_encoder, OPUS_RESET_STATE);
+        if (opus_encoder_ctl(m_encoder, OPUS_SET_APPLICATION(application)) ==
+            OPUS_OK) {
+            m_application = application;
+        }
+    }
+    opus_encoder_ctl(m_encoder, OPUS_SET_BITRATE(m_bitrate));
 }
 
 int OpusVoiceEncoder::getBitrate() const {

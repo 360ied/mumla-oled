@@ -269,9 +269,14 @@ public:
   production margin peak at 140 of 1024 slots with zero drops.
 - **Volume adjustment.** `InboundPacket.volumeAdjustment` rides the packet
   into the jitter buffer and is applied when that packet's decoded samples
-  are written into the voice scratch, before the mix. FEC and concealment
-  chunks stand in for a lost packet and use the voice's last seen factor,
-  so a loss never snaps a listener's adjustment back to unity.
+  are written into the voice scratch, before the mix. Concealment chunks
+  stand in for a lost packet and use the voice's last seen factor, so a
+  loss never snaps a listener's adjustment back to unity.
+- **Loss handling.** A missing frame is concealed at once with Opus PLC,
+  as upstream does, and no in-band FEC decode is attempted (upstream
+  clients never send FEC, and neither does Mumla OLED). Chunks join
+  without blending: Opus keeps its output continuous across concealment
+  and the next real decode itself.
 - **Render quantum.** The I/O layer never calls `render` with more than
   `MAX_QUANTUM_SAMPLES` (60 ms), so the scratch buffers' slow-path resize
   never runs. The engine asserts this in debug builds.
@@ -377,14 +382,14 @@ a protobuf server); the field's own contract makes `0` mean unset. The
 parser carries it in `InboundPacket.volumeAdjustment`, `1.0` when unset or
 when a peer sends a non-positive or non-finite value; the jitter buffer
 keeps it with the packet; render multiplies that packet's decoded samples
-by it as they are written into the voice scratch. Concealment and FEC
-chunks stand in for a lost packet and use the voice's last seen factor.
+by it as they are written into the voice scratch. Concealment chunks
+stand in for a lost packet and use the voice's last seen factor.
 Legacy packets carry no factor.
 
 Two deliberate divergences from upstream's client, both recorded in [open
 items](open-items.md): upstream applies the last dequeued packet's factor
 to the whole mixed quantum, after its own fades, while here each packet
-carries its own factor and is scaled before the crossfades (a mid-quantum
+carries its own factor and is scaled before the fades (a mid-quantum
 change therefore steps at a packet boundary); and upstream multiplies
 whatever factor arrives, while here anything that is not positive and
 finite falls back to unity. With a constant, valid factor the two agree.
@@ -453,7 +458,7 @@ flowchart LR
 | Thread | Realtime | Loop |
 |---|---|---|
 | Capture | Yes | Read 10 ms of PCM (in 5b, take whatever burst the callback delivers and feed it in 10 ms frames); read config and policy; `processFrame`; frame each packet; push to the outbound queue; post the send semaphore; store the self-talking flag |
-| Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms; in 5b, 20 ms chunks through the carry buffer); fold the result's talk events into the level table and publish the talk snapshot; write PCM to the device (zeros when silent in 5b); in 5a, after a quantum with no audio, wait on the render wake (see [render idle](#render-idle-and-wake)) |
+| Render | Yes | Drain both inbound queues into `queuePacket`; `render` one quantum (at most 60 ms; in 5b, one 10 ms frame per call through the carry buffer); fold the result's talk events into the level table and publish the talk snapshot; write PCM to the device (zeros when silent in 5b); in 5a, after a quantum with no audio, wait on the render wake (see [render idle](#render-idle-and-wake)) |
 | Send | No | Wait on the send semaphore; pop packets; UDP: OCB2 encrypt and `sendto`; tunnel: hand the framed packet to Kotlin |
 | Receive | No | Blocking `recvfrom`; OCB2 decrypt; `parseDatagram`; voice: drop locally muted and unknown senders (see [sender filter](#sender-filter)), push to the inbound queue; ping: report to Kotlin; decrypt failure: request a crypt resync when due (see [transport](transport.md#crypt-setup)) |
 | Notifier | No | Every 20 ms while running, read the latest talk snapshot and the self-talking flag and deliver them to Kotlin in one call. From 5b it also reads the stream-disconnect atomic on every tick and, when it changed, calls `onStreamDisconnect(generation)`, a separate Kotlin call |
@@ -462,8 +467,8 @@ flowchart LR
   today's Kotlin `AudioRecord` and `AudioTrack` threads
   (`nativeCaptureFrame(pcm)`, `nativeRender(out)`). In **step 5b**, the
   AAudio data callbacks call the C++ functions behind them directly
-  (`VoiceSend::captureFrame`, and `VoiceIo::render` in 20 ms chunks
-  through a carry buffer), the JNI entry points stay for host tests only,
+  (`VoiceSend::captureFrame`, and `VoiceIo::render` one 10 ms frame at a
+  time through a carry buffer), the JNI entry points stay for host tests only,
   and the render wake is deleted (see [render idle](#render-idle-and-wake)).
   Apart from the stream code and the disconnect flag, nothing else changes
   between 5a and 5b. The callbacks run on AAudio's threads, never attach
@@ -725,8 +730,9 @@ Performed by the Kotlin **voice control thread**, in command order:
   the engines keep their state (voices and jitter buffers survive). In 5b
   both streams are stopped and closed as at Stop, then reopened with the
   route's [stream parameters](route.md#stream-parameters), and the capture
-  effects (echo canceller, noise suppressor, gain control) are attached to
-  the new input session before the streams start.
+  echo canceller is attached to the new input session before the streams
+  start (no platform noise suppressor or gain control: native capture runs
+  RNNoise and the adaptive leveler).
 
 The control thread is the only caller of start and stop, so they never race
 each other, and it is never the main thread.

@@ -58,8 +58,8 @@ class SettingsCell;
  *
  * In step 5b AAudio calls render once per burst, so there is no idle state,
  * no render wake, and no producer posts: the callback writes zeros through
- * silence and the engine is fed 20 ms chunks (two whole 10 ms frames) by
- * the stream layer, so a first-frame loss can use in-band FEC.
+ * silence and the engine is fed one whole 10 ms frame per call by the
+ * stream layer.
  */
 class VoiceIo {
 public:
@@ -89,7 +89,8 @@ public:
         size_t samples = 0; // mixed PCM samples written to out (0 when silent)
         // Bit i is set when frame i * AudioOutputEngine::FRAME_SIZE must be
         // reported as non-silent. The AAudio callback uses it to answer for
-        // the exact carried range it copies, not for the whole 20 ms chunk.
+        // the exact carried range it copies; multi-frame calls (the JNI
+        // render entry) get one bit per frame.
         // Gated or half-duplex zero-PCM quanta set every frame they cover,
         // preserving 5a's pacing contract.
         uint64_t nonSilentFrames = 0;

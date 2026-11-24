@@ -83,7 +83,7 @@ void testEncodeDecodeRoundTrip() {
 
     std::vector<float> out(kMaxDecoded, 0.0f);
     const int decoded = decoder.decodeFloat(packet.data(), static_cast<size_t>(encoded),
-                                            out.data(), kMaxDecoded, 0);
+                                            out.data(), kMaxDecoded);
     TEST_ASSERT_EQ(decoded, kFrame);
     // Decoded output must be finite audio with real energy: the 440 Hz
     // source at amplitude 20000/32768 has mean-abs ~0.39 (2/pi of peak),
@@ -119,7 +119,7 @@ void testSilenceRoundTrip() {
     TEST_ASSERT_TRUE(encoded > 0);
     std::vector<float> out(kMaxDecoded, 1.0f);
     const int decoded = decoder.decodeFloat(packet.data(), static_cast<size_t>(encoded),
-                                            out.data(), kMaxDecoded, 0);
+                                            out.data(), kMaxDecoded);
     TEST_ASSERT_EQ(decoded, static_cast<int>(pcm.size()));
     // Silence in must stay near silence out: mean-abs must be tiny, not
     // just finite, so a decoder echoing the 1.0f prefill (or loud garbage)
@@ -146,10 +146,10 @@ void testDecodeEmptyPacketIsSane() {
     // contract (decodeConcealment routes through here). Anything else —
     // error or overrun — fails.
     std::vector<float> out(kFrame, 0.0f);
-    const int r1 = decoder.decodeFloat(nullptr, 0, out.data(), kFrame, 0);
+    const int r1 = decoder.decodeFloat(nullptr, 0, out.data(), kFrame);
     TEST_ASSERT_EQ(r1, kFrame);
     const uint8_t oneByte[1] = {0x00};
-    const int r2 = decoder.decodeFloat(oneByte, 0, out.data(), kFrame, 0);
+    const int r2 = decoder.decodeFloat(oneByte, 0, out.data(), kFrame);
     TEST_ASSERT_EQ(r2, kFrame);
     for (int i = 0; i < kFrame; ++i) {
         TEST_ASSERT_TRUE(std::isfinite(out[i]));
@@ -184,7 +184,7 @@ void testDecodeTruncatedPacketNoCrash() {
     std::vector<float> out(kMaxDecoded, 0.0f);
     for (int len = 1; len < encoded; ++len) {
         const int r = decoder.decodeFloat(packet.data(), static_cast<size_t>(len),
-                                          out.data(), kMaxDecoded, 0);
+                                          out.data(), kMaxDecoded);
         TEST_ASSERT_TRUE(r <= kMaxDecoded);
         const int span = OpusVoiceDecoder::packetSampleCount(
             packet.data(), static_cast<size_t>(len));
@@ -193,60 +193,62 @@ void testDecodeTruncatedPacketNoCrash() {
     std::cout << "  [PASS] testDecodeTruncatedPacketNoCrash" << std::endl;
 }
 
-void testDecodeFecRecovery() {
+void testEncoderSendsNoInbandFec() {
     g_testCount++;
     OpusVoiceEncoder encoder;
+    if (!encoder.isValid()) {
+        TEST_ASSERT_TRUE(false);
+        return;
+    }
+    // Upstream parity: the encoder leaves in-band FEC off, since desktop
+    // clients never decode it and under CBR the LBRR copy would take bits
+    // from every packet. A frame chain is where LBRR would appear (it codes
+    // the previous frame), so no packet in it may carry any.
+    constexpr int kChain = 4;
+    std::vector<uint8_t> packet(kMaxPacketBytes);
+    for (int f = 0; f < kChain; ++f) {
+        std::vector<int16_t> pcm(kFrame);
+        fillSine(pcm.data(), kFrame);
+        const int len =
+            encoder.encode(pcm.data(), kFrame, packet.data(), packet.size());
+        TEST_ASSERT_TRUE(len > 0);
+        TEST_ASSERT_TRUE(opus_packet_has_lbrr(packet.data(),
+                                              static_cast<opus_int32>(len)) == 0);
+    }
+    std::cout << "  [PASS] testEncoderSendsNoInbandFec" << std::endl;
+}
+
+void testEncoderBitrateCrossesApplicationSwitch() {
+    g_testCount++;
+    OpusVoiceEncoder encoder(40000);
     OpusVoiceDecoder decoder;
     if (!encoder.isValid() || !decoder.isValid()) {
         TEST_ASSERT_TRUE(false);
         return;
     }
-    // Frame chain so later packets carry in-band LBRR for the previous
-    // frame (encoder sets INBAND_FEC + PACKET_LOSS_PERC 10). The loss
-    // sequence mirrors AudioOutputEngine exactly: decode packets 0..1 to
-    // build decoder state, drop packet 2, then decode packet 3 twice —
-    // first with decodeFec=1 (recovers frame 2 from packet 3's LBRR, the
-    // AudioOutputEngine.cpp debt-recovery call), then with decodeFec=0
-    // (current frame, the normal path). The LBRR assert below is what
-    // distinguishes true FEC recovery from the PLC fallback: the
-    // decode_fec path returns kFrame either way (opus_decoder.c runs
-    // concealment when no FEC is present), so without it the EQ would
-    // pass on PLC alone. The follow-up normal decode must still yield
-    // the full current frame.
-    constexpr int kChain = 4;
-    std::vector<std::vector<uint8_t>> packets(kChain,
-                                              std::vector<uint8_t>(kMaxPacketBytes));
-    std::vector<int> lens(kChain, 0);
-    for (int f = 0; f < kChain; ++f) {
-        std::vector<int16_t> pcm(kFrame);
-        fillSine(pcm.data(), kFrame);
-        lens[f] = encoder.encode(pcm.data(), kFrame, packets[f].data(),
-                                 packets[f].size());
-        TEST_ASSERT_TRUE(lens[f] > 0);
-    }
+    // 40 kbit/s opens in general-audio mode; dropping below 32 kbit/s after
+    // encoding switches to VoIP mode through a reset, and back again. Every
+    // step must keep producing decodable packets at the requested bitrate.
+    const int bitrates[] = {40000, 24000, 64000};
+    std::vector<int16_t> pcm(kFrame);
+    std::vector<uint8_t> packet(kMaxPacketBytes);
     std::vector<float> out(kMaxDecoded, 0.0f);
-    for (int f = 0; f < 2; ++f) {
-        const int decoded = decoder.decodeFloat(packets[f].data(),
-                                                static_cast<size_t>(lens[f]),
-                                                out.data(), kMaxDecoded, 0);
-        TEST_ASSERT_EQ(decoded, kFrame);
+    for (int bitrate : bitrates) {
+        encoder.setBitrate(bitrate);
+        TEST_ASSERT_EQ(encoder.getBitrate(), bitrate);
+        for (int f = 0; f < 3; ++f) {
+            fillSine(pcm.data(), kFrame);
+            const int len =
+                encoder.encode(pcm.data(), kFrame, packet.data(), packet.size());
+            TEST_ASSERT_TRUE(len > 0);
+            TEST_ASSERT_EQ(decoder.decodeFloat(packet.data(),
+                                               static_cast<size_t>(len),
+                                               out.data(), kMaxDecoded),
+                           kFrame);
+        }
     }
-    // Packet 2 is "lost": never decoded. Packet 3 must carry its LBRR —
-    // otherwise the FEC decode below would exercise PLC, not recovery.
-    TEST_ASSERT_TRUE(opus_packet_has_lbrr(packets[3].data(),
-                                          static_cast<opus_int32>(lens[3])) == 1);
-    const int fec = decoder.decodeFloat(packets[3].data(),
-                                        static_cast<size_t>(lens[3]),
-                                        out.data(), kFrame, 1);
-    TEST_ASSERT_EQ(fec, kFrame);
-    for (int i = 0; i < fec; ++i) {
-        TEST_ASSERT_TRUE(std::isfinite(out[i]));
-    }
-    const int decoded = decoder.decodeFloat(packets[3].data(),
-                                            static_cast<size_t>(lens[3]),
-                                            out.data(), kMaxDecoded, 0);
-    TEST_ASSERT_EQ(decoded, kFrame);
-    std::cout << "  [PASS] testDecodeFecRecovery" << std::endl;
+    std::cout << "  [PASS] testEncoderBitrateCrossesApplicationSwitch"
+              << std::endl;
 }
 
 void testDecodeOversizedPacketNoCrash() {
@@ -260,7 +262,7 @@ void testDecodeOversizedPacketNoCrash() {
     // must return an error, never a positive count, never crash.
     std::vector<uint8_t> big(4096, 0xFF);
     std::vector<float> out(kMaxDecoded, 0.0f);
-    const int r = decoder.decodeFloat(big.data(), big.size(), out.data(), kMaxDecoded, 0);
+    const int r = decoder.decodeFloat(big.data(), big.size(), out.data(), kMaxDecoded);
     TEST_ASSERT_TRUE(r <= 0);
     const int span = OpusVoiceDecoder::packetSampleCount(big.data(), big.size());
     TEST_ASSERT_TRUE(span <= 0);
@@ -317,7 +319,7 @@ void testDecodeFuzzFixedSeed() {
             }
         }
         const uint8_t* data = len > 0 ? buf.data() : nullptr;
-        const int r = decoder.decodeFloat(data, len, out.data(), kMaxDecoded, 0);
+        const int r = decoder.decodeFloat(data, len, out.data(), kMaxDecoded);
         TEST_ASSERT_TRUE(r <= kMaxDecoded);
         if (data != nullptr && len > 0) {
             const int span = OpusVoiceDecoder::packetSampleCount(data, len);
@@ -338,7 +340,8 @@ void run_opus_interop_tests() {
     testSilenceRoundTrip();
     testDecodeEmptyPacketIsSane();
     testDecodeTruncatedPacketNoCrash();
-    testDecodeFecRecovery();
+    testEncoderSendsNoInbandFec();
+    testEncoderBitrateCrossesApplicationSwitch();
     testDecodeOversizedPacketNoCrash();
     testDecodeFuzzFixedSeed();
 }

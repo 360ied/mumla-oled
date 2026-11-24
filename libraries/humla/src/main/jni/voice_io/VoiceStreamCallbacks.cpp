@@ -57,9 +57,8 @@ bool renderStreamFrames(VoiceStreamContext* ctx, int16_t* out, size_t samples) {
     while (written < samples) {
         if (ctx->renderCarryRemaining == 0) {
             VoiceIo::RenderOut result;
-            // Two whole 10 ms frames per call (5a's quantum): the startup
-            // gate counts samples / FRAME_SIZE and a first-frame loss can be
-            // recovered from the successor's in-band FEC in the same call.
+            // One whole 10 ms frame per call: the startup gate counts
+            // samples / FRAME_SIZE.
             ctx->io->render(ctx->renderCarry, kStreamChunkSamples, &result);
             ctx->lastDroppedInbound.store(result.droppedInbound,
                                           std::memory_order_relaxed);

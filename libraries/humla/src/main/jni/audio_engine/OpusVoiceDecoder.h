@@ -33,8 +33,8 @@ class IOutputDecoder;
  * Native Opus Voice Decoder for the output pipeline.
  *
  * Mono fullband decoder at 48 kHz mirroring OpusVoiceEncoder's configuration.
- * Supports in-band forward error correction decode and standalone
- * packet-loss concealment for missing frames.
+ * Runs standalone packet-loss concealment for missing frames; in-band FEC
+ * is never decoded.
  */
 class OpusVoiceDecoder {
 public:
@@ -55,11 +55,11 @@ public:
      * @param len Number of encoded bytes (0 with null data runs concealment).
      * @param out Output float PCM buffer.
      * @param maxSamples Maximum samples that fit in out.
-     * @param decodeFec Non-zero to decode in-band FEC from a redundant frame.
      * @return Decoded sample count, or negative on error.
+     *
+     * In-band FEC is never decoded (upstream parity: no peer sends it).
      */
-    int decodeFloat(const uint8_t* data, size_t len, float* out, int maxSamples,
-                    int decodeFec);
+    int decodeFloat(const uint8_t* data, size_t len, float* out, int maxSamples);
 
     /**
      * Generates one concealment frame for a missing packet.

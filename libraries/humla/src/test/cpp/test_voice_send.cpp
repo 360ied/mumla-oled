@@ -112,6 +112,7 @@ using mumla::voice_io::VoiceSend;
 using mumla::voice_io::VoiceStreamContext;
 using mumla::voice_io::kOutboundRingCapacity;
 using mumla::voice_io::kStreamChunkSamples;
+using mumla::voice_io::kStreamFrameSamples;
 using mumla::voice_io::renderStreamFrames;
 
 /** Deterministic fake encoder: 32 bytes per encode, no allocation. */
@@ -379,8 +380,8 @@ void testHalfDuplexRenderSilences() {
     // exceed 100 peak; the muted render must be all zeros.
     auto fakeFactory = [] {
         struct FakeDecoder : public mumla::audio::IOutputDecoder {
-            int decodeFloat(const uint8_t*, size_t, float* out, int maxSamples,
-                            int) override {
+            int decodeFloat(const uint8_t*, size_t, float* out,
+                            int maxSamples) override {
                 const int n = std::min<int>(480, maxSamples);
                 for (int i = 0; i < n; ++i) out[i] = 0.5f;
                 return n;
@@ -500,21 +501,17 @@ void testSendStartStopIdempotent() {
     std::cout << "  [PASS] testSendStartStopIdempotent" << std::endl;
 }
 
-/** Constant-level decoder; counts FEC attempts and concealment frames. */
+/** Constant-level decoder; counts concealment frames. */
 class CallbackDecoder : public IOutputDecoder {
 public:
-    CallbackDecoder(int* fecAttempts, int* concealedFrames, bool payloadLevel)
-        : m_fecAttempts(fecAttempts),
-          m_concealedFrames(concealedFrames),
+    CallbackDecoder(int* concealedFrames, bool payloadLevel)
+        : m_concealedFrames(concealedFrames),
           m_payloadLevel(payloadLevel) {}
 
     int decodeFloat(const uint8_t* data, size_t length, float* out,
-                    int maxSamples, int decodeFec) override {
+                    int maxSamples) override {
         const int n = std::min<int>(480, maxSamples);
-        if (decodeFec != 0 && m_fecAttempts != nullptr) {
-            ++(*m_fecAttempts);
-        }
-        float level = decodeFec != 0 ? 0.3f : 0.2f;
+        float level = 0.2f;
         if (m_payloadLevel && data != nullptr && length > 0 && data[0] == 0) {
             level = 0.0f;
         }
@@ -535,17 +532,15 @@ public:
     void reset() override {}
 
 private:
-    int* m_fecAttempts;
     int* m_concealedFrames;
     bool m_payloadLevel;
 };
 
 AudioOutputEngine::DecoderFactory callbackDecoderFactory(
-    int* fecAttempts = nullptr, int* concealedFrames = nullptr,
-    bool payloadLevel = false) {
-    return [fecAttempts, concealedFrames, payloadLevel] {
-        return std::make_unique<CallbackDecoder>(fecAttempts,
-                                                concealedFrames, payloadLevel);
+    int* concealedFrames = nullptr, bool payloadLevel = false) {
+    return [concealedFrames, payloadLevel] {
+        return std::make_unique<CallbackDecoder>(concealedFrames,
+                                                payloadLevel);
     };
 }
 
@@ -569,11 +564,9 @@ InboundPacket makeSilentInboundPacket(int32_t session, uint32_t sequence) {
 
 /** The real objects behind one VoiceStreamContext, as in JNI. */
 struct StreamFixture {
-    explicit StreamFixture(int* fecAttempts = nullptr,
-                           int* concealedFrames = nullptr,
+    explicit StreamFixture(int* concealedFrames = nullptr,
                            bool payloadLevel = false)
-        : io(callbackDecoderFactory(fecAttempts, concealedFrames,
-                                    payloadLevel)),
+        : io(callbackDecoderFactory(concealedFrames, payloadLevel)),
           send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr),
           streams(&io, &send) {}
 
@@ -587,7 +580,7 @@ struct StreamFixture {
 void testRenderCallbackBurstsWriteExactly() {
     g_testCount++;
     // AAudio hands the render callback whatever burst size the device picks.
-    // The body renders one 20 ms chunk at a time and copies out exactly the
+    // The body renders one 10 ms chunk at a time and copies out exactly the
     // requested number of samples, keeping the remainder for the next call.
     StreamFixture fixture;
     std::vector<int16_t> out(960, 0x1234);
@@ -606,10 +599,11 @@ void testRenderCallbackBurstsWriteExactly() {
         }
     }
     TEST_ASSERT_EQ(g_allocations, before);
-    // 96 samples ten times consumes exactly one 960-sample carry chunk; one
-    // more 96 leaves 864 samples of the next chunk for later calls.
+    // 96 samples five times consumes exactly one 480-sample carry chunk; one
+    // more 96 leaves 384 samples of the next chunk for later calls.
+    static_assert(kStreamChunkSamples == 480, "one 10 ms frame per chunk");
     mumla::voice_io::resetRenderCarry(&fixture.streams);
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < 5; ++i) {
         renderStreamFrames(&fixture.streams, out.data(), 96);
     }
     TEST_ASSERT_EQ(fixture.streams.renderCarryRemaining, 0u);
@@ -619,19 +613,19 @@ void testRenderCallbackBurstsWriteExactly() {
     std::cout << "  [PASS] testRenderCallbackBurstsWriteExactly" << std::endl;
 }
 
-void testRenderCallbackChunksGateAndFec() {
+void testRenderCallbackChunksGateAndConceal() {
     g_testCount++;
-    // A 20 ms chunk is two whole 10 ms frames: the startup gate counts
-    // samples / FRAME_SIZE (so two per chunk), and a first-frame loss can be
-    // recovered from the successor's in-band FEC in the same render call.
+    // A chunk is one whole 10 ms frame: the startup gate counts
+    // samples / FRAME_SIZE (so one per chunk) and times out after
+    // GATE_TIMEOUT_FRAMES chunks for a lone packet.
+    constexpr int kCallsPerChunk =
+        static_cast<int>(kStreamChunkSamples) / 96;
     {
         StreamFixture fixture;
         TEST_ASSERT_TRUE(fixture.io.pushInbound(makeInboundPacket(9, 0)));
         std::vector<int16_t> out(96);
         int audioChunk = -1;
-        constexpr int kCallsPerChunk =
-            static_cast<int>(kStreamChunkSamples) / 96;
-        constexpr int kChunks = AudioOutputEngine::GATE_TIMEOUT_FRAMES / 2 + 2;
+        constexpr int kChunks = AudioOutputEngine::GATE_TIMEOUT_FRAMES + 2;
         for (int i = 0; i < kCallsPerChunk * kChunks; ++i) {
             (void)renderStreamFrames(&fixture.streams, out.data(), 96);
             // Gated quanta are reported as non-silent (they keep a sink fed
@@ -644,54 +638,28 @@ void testRenderCallbackChunksGateAndFec() {
                 audioChunk = i / kCallsPerChunk + 1;
             }
         }
-        TEST_ASSERT_EQ(audioChunk,
-                       AudioOutputEngine::GATE_TIMEOUT_FRAMES / 2);
+        TEST_ASSERT_EQ(audioChunk, AudioOutputEngine::GATE_TIMEOUT_FRAMES);
     }
-    // A gap in a chunk's first frame is recovered by an FEC decode; a gap in
-    // its second frame is concealed, because the unrecovered debt slot is
-    // settled at the end of the call and the successor arrives in the next
-    // chunk. Playback starts at seq 0, so chunks are [0,1], [2,3], [4,5],
-    // [6,7], ...: even gaps land in the first frame, odd in the second.
-    struct FecOutcome {
-        int fec;
-        int concealed;
-    };
-    constexpr int kCallsPerChunk =
-        static_cast<int>(kStreamChunkSamples) / 96;
-    auto runGap = [kCallsPerChunk](uint32_t gap) {
-        int fecAttempts = 0;
+    // Every single loss is concealed in place, wherever it falls (upstream
+    // parity), rather than stalling.
+    auto runGap = [](uint32_t gap) {
         int concealedFrames = 0;
-        StreamFixture fixture(&fecAttempts, &concealedFrames);
+        StreamFixture fixture(&concealedFrames);
         for (uint32_t seq = 0; seq <= 12; ++seq) {
             if (seq == gap) continue;
             TEST_ASSERT_TRUE(
                 fixture.io.pushInbound(makeInboundPacket(11, seq)));
         }
         std::vector<int16_t> out(96);
-        for (int i = 0; i < kCallsPerChunk * 12; ++i) {
+        for (int i = 0; i < kCallsPerChunk * 24; ++i) {
             (void)renderStreamFrames(&fixture.streams, out.data(), 96);
         }
-        return FecOutcome{fecAttempts, concealedFrames};
+        TEST_ASSERT_TRUE(concealedFrames > 0);
     };
-    // First-frame loss (gap 6, successor 7 in the same chunk): an FEC decode.
-    const FecOutcome firstFrameLoss = runGap(6);
-    TEST_ASSERT_EQ(firstFrameLoss.fec, 1);
-    // Second-frame loss (gap 7, successor 8 in the next chunk): concealment,
-    // no FEC decode.
-    const FecOutcome secondFrameLoss = runGap(7);
-    TEST_ASSERT_EQ(secondFrameLoss.fec, 0);
-    TEST_ASSERT_TRUE(secondFrameLoss.concealed > 0);
-    // The split alternates with chunk parity across several gaps, so the pin
-    // is about the two-frame chunk structure, not one lucky packet pattern.
     for (uint32_t gap = 2; gap <= 11; ++gap) {
-        const FecOutcome outcome = runGap(gap);
-        if (gap % 2u == 0u) {
-            TEST_ASSERT_TRUE(outcome.fec > 0);
-        } else {
-            TEST_ASSERT_EQ(outcome.fec, 0);
-        }
+        runGap(gap);
     }
-    std::cout << "  [PASS] testRenderCallbackChunksGateAndFec" << std::endl;
+    std::cout << "  [PASS] testRenderCallbackChunksGateAndConceal" << std::endl;
 }
 
 void testRenderCallbackSilenceReportCoversCarry() {
@@ -721,57 +689,46 @@ void testRenderCallbackSilenceReportCoversCarry() {
     std::cout << "  [PASS] testRenderCallbackSilenceReportCoversCarry" << std::endl;
 }
 
-void testRenderCallbackSilenceReportUsesCopiedFrames() {
+void testRenderNonSilentFramesTrackEachFrame() {
     g_testCount++;
     // Even packets decode to one silent 10 ms frame, odd packets to an
-    // audible frame. A 20 ms chunk therefore has one silent and one audible
-    // frame: 96-sample bursts align with frame boundaries, so a burst from
-    // the silent half must report silence even though the chunk has audio.
-    StreamFixture fixture(nullptr, nullptr, true);
+    // audible frame. A multi-frame VoiceIo::render call (the JNI render
+    // entry's shape) therefore covers silent and audible frames together,
+    // and nonSilentFrames must flag only the audible ones. (The AAudio
+    // callback now renders one frame per call, so this per-frame mask is
+    // pinned at the VoiceIo level.)
+    StreamFixture fixture(nullptr, true);
     for (uint32_t seq = 0; seq <= 11; ++seq) {
         TEST_ASSERT_TRUE(fixture.io.pushInbound(
             seq % 2u == 0u ? makeSilentInboundPacket(23, seq)
                            : makeInboundPacket(23, seq)));
     }
-    constexpr int kBurstsPerChunk =
-        static_cast<int>(kStreamChunkSamples) / 96;
-    std::vector<int16_t> out(96);
-    bool foundMixedChunk = false;
-    for (int chunk = 0; chunk < 12 && !foundMixedChunk; ++chunk) {
-        std::vector<int> peaks(kBurstsPerChunk, 0);
-        std::vector<bool> silent(kBurstsPerChunk, true);
-        for (int burst = 0; burst < kBurstsPerChunk; ++burst) {
-            std::fill(out.begin(), out.end(), 0x1234);
-            silent[burst] =
-                renderStreamFrames(&fixture.streams, out.data(), 96);
-            for (int16_t sample : out) {
-                peaks[burst] = std::max<int>(
-                    peaks[burst], std::abs(static_cast<int>(sample)));
+    std::vector<int16_t> out(2 * kStreamFrameSamples);
+    bool foundMixedWindow = false;
+    for (int window = 0; window < 12 && !foundMixedWindow; ++window) {
+        std::fill(out.begin(), out.end(), 0x1234);
+        VoiceIo::RenderOut result;
+        fixture.io.render(out.data(), out.size(), &result);
+        int peaks[2] = {0, 0};
+        for (size_t frame = 0; frame < 2; ++frame) {
+            for (size_t i = 0; i < kStreamFrameSamples; ++i) {
+                peaks[frame] = std::max<int>(
+                    peaks[frame],
+                    std::abs(static_cast<int>(
+                        out[frame * kStreamFrameSamples + i])));
             }
         }
-        bool hasSilentBurst = false;
-        bool hasAudibleBurst = false;
-        for (int burst = 0; burst < kBurstsPerChunk; ++burst) {
-            if (peaks[burst] > 100) {
-                hasAudibleBurst = true;
-            } else {
-                hasSilentBurst = true;
-            }
-        }
-        if (!hasSilentBurst || !hasAudibleBurst) {
+        const bool audible0 = peaks[0] > 100;
+        const bool audible1 = peaks[1] > 100;
+        if (audible0 == audible1) {
             continue;
         }
-        foundMixedChunk = true;
-        for (int burst = 0; burst < kBurstsPerChunk; ++burst) {
-            if (peaks[burst] > 100) {
-                TEST_ASSERT_FALSE(silent[burst]);
-            } else {
-                TEST_ASSERT_TRUE(silent[burst]);
-            }
-        }
+        foundMixedWindow = true;
+        TEST_ASSERT_EQ((result.nonSilentFrames & 1ULL) != 0, audible0);
+        TEST_ASSERT_EQ((result.nonSilentFrames & 2ULL) != 0, audible1);
     }
-    TEST_ASSERT_TRUE(foundMixedChunk);
-    std::cout << "  [PASS] testRenderCallbackSilenceReportUsesCopiedFrames"
+    TEST_ASSERT_TRUE(foundMixedWindow);
+    std::cout << "  [PASS] testRenderNonSilentFramesTrackEachFrame"
               << std::endl;
 }
 
@@ -856,9 +813,9 @@ void run_voice_send_tests() {
     testAllocationFreeSteadyState();
     testSendStartStopIdempotent();
     testRenderCallbackBurstsWriteExactly();
-    testRenderCallbackChunksGateAndFec();
+    testRenderCallbackChunksGateAndConceal();
     testRenderCallbackSilenceReportCoversCarry();
-    testRenderCallbackSilenceReportUsesCopiedFrames();
+    testRenderNonSilentFramesTrackEachFrame();
     testRenderCallbackGatingStillReportsNonSilent();
     testCaptureCallbackForwardsAnyBlock();
     testNotifierDeliversDisconnectWithoutTalkChange();
