@@ -65,9 +65,6 @@ BOUNDARY_FILES = (
     # Step 6: the one blocking settings startup read (theme/locale before
     # the first activity draws) and its import.
     "app/src/main/java/se/lublin/mumla/AppContainer.kt",
-    # Step 6 review: the library assembly point owns the single main-thread
-    # poster for observer callbacks (Handler.createAsync).
-    "libraries/humla/src/main/java/se/lublin/humla/HumlaRuntime.kt",
 )
 
 CONCURRENCY_PATTERNS = (

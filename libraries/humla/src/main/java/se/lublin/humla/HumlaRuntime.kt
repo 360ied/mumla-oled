@@ -19,8 +19,6 @@ package se.lublin.humla
 
 import android.content.Context
 import android.media.AudioManager
-import android.os.Handler
-import android.os.Looper
 import android.net.ConnectivityManager
 import android.net.Network
 import android.util.Log
@@ -192,7 +190,11 @@ class HumlaRuntime private constructor(
                 override val available = networkFlow.asSharedFlow()
             }
 
-            val mainHandler = Handler.createAsync(Looper.getMainLooper())
+            // Every IHumlaObserver callback runs on the main thread: Session
+            // posts through this, and so do the bridge collectors below,
+            // which collect on scope's Dispatchers.Default.
+            val mainExecutor = appContext.mainExecutor
+            fun postMain(r: Runnable) = mainExecutor.execute(r)
             client = HumlaClient(
                 parentScope = scope,
                 transports = edges.transports,
@@ -204,7 +206,7 @@ class HumlaRuntime private constructor(
                 talkActivity = talkPublisher.talkActivity,
                 clock = inputs.clock,
                 observer = callbacks,
-                mainPoster = { r -> mainHandler.post(r) },
+                mainPoster = ::postMain,
                 denyFormatter = inputs.denyFormatter,
             )
 
@@ -256,11 +258,11 @@ class HumlaRuntime private constructor(
                         val scoActive = rs is RouteState.Ready && rs.route == AppliedRoute.VOICE_SCO
                         when (rs) {
                             is RouteState.Ready, is RouteState.Fallback, is RouteState.Idle ->
-                                callbacks.onAudioRouteChanged()
+                                postMain { callbacks.onAudioRouteChanged() }
                             is RouteState.Settling -> Unit
                         }
                         if (lastScoActive != null && lastScoActive != scoActive) {
-                            callbacks.onBluetoothScoChanged(scoActive)
+                            postMain { callbacks.onBluetoothScoChanged(scoActive) }
                         }
                         lastScoActive = scoActive
                     }
@@ -313,7 +315,7 @@ class HumlaRuntime private constructor(
                             } else {
                                 UserHandle(session, mirror.asStateFlow(), talkPublisher.talkActivity)
                             }
-                            callbacks.onUserTalkStateUpdated(hint)
+                            postMain { callbacks.onUserTalkStateUpdated(hint) }
                             }
                         }
                     }
@@ -324,7 +326,7 @@ class HumlaRuntime private constructor(
             scope.launch {
                 try {
                     routeControl.events.collect { ev ->
-                        if (ev is RouteEvent.ScoFailed) callbacks.onBluetoothScoFailed(ev.reason)
+                        if (ev is RouteEvent.ScoFailed) postMain { callbacks.onBluetoothScoFailed(ev.reason) }
                     }
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
