@@ -212,6 +212,7 @@ dependencies {
     kapt libs.kotlin.metadata.jvm
 
     testImplementation libs.junit
+    testImplementation project(":libraries:humla-testing")
     // Robolectric pilot for the comment-dialog fragment tests; pinned: verify @Config(sdk) support before bumping.
     testImplementation libs.robolectric
     // Migration Slice 2: MigrationTestHelper for the v9 -> v10 DB migration test.

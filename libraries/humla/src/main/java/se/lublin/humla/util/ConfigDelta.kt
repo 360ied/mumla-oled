@@ -72,17 +72,8 @@ data class ConfigDelta(
     val certificate: CertRef? = null,
     val forceTcp: Boolean? = null,
     val trustStore: TrustStoreRef? = null,
-    val transmitMode: Int? = null,
-    val detectionThreshold: Float? = null,
-    val amplitudeBoost: Float? = null,
-    val inputQuality: Int? = null,
-    val framesPerPacket: Int? = null,
-    val halfDuplex: Boolean? = null,
-    val bluetoothSco: Boolean? = null,
-    val adaptiveLeveler: Boolean? = null,
     val accessTokens: List<String>? = null,
     val clientName: String? = null,
-    val audioStream: Int? = null,
     val theme: String? = null,
     val overlayShown: Boolean? = null,
     val overlayPlacement: String? = null,
@@ -91,33 +82,16 @@ data class ConfigDelta(
     /** Whether any core (service-applied) field is set. */
     fun hasCore(): Boolean =
         server != null || certificate != null || forceTcp != null || trustStore != null ||
-            transmitMode != null || detectionThreshold != null || amplitudeBoost != null ||
-            inputQuality != null || framesPerPacket != null || halfDuplex != null ||
-            bluetoothSco != null || adaptiveLeveler != null || accessTokens != null ||
-            clientName != null || audioStream != null
-
-    /**
-     * Whether any audio-affecting field besides the SCO request is set.
-     * Detection threshold is excluded: it applies directly to the input mode
-     * plus a live handler call, so it needs no pipeline reload.
-     */
-    fun hasOtherAudioKeys(): Boolean =
-        amplitudeBoost != null || transmitMode != null || inputQuality != null ||
-            audioStream != null || framesPerPacket != null || halfDuplex != null ||
-            adaptiveLeveler != null
+            accessTokens != null || clientName != null
 
     // Redacted: accessTokens are bearer secrets and certificate/trustStore
     // carry passwords (their own toStrings above are redacted too) — an
     // accidental log of this one-shot command must not leak them.
     override fun toString(): String =
         "ConfigDelta(server=$server, certificate=$certificate, forceTcp=$forceTcp, " +
-            "trustStore=$trustStore, transmitMode=$transmitMode, " +
-            "detectionThreshold=$detectionThreshold, amplitudeBoost=$amplitudeBoost, " +
-            "inputQuality=$inputQuality, framesPerPacket=$framesPerPacket, " +
-            "halfDuplex=$halfDuplex, bluetoothSco=$bluetoothSco, " +
-            "adaptiveLeveler=$adaptiveLeveler, " +
+            "trustStore=$trustStore, " +
             "accessTokens=<${accessTokens?.size ?: 0} tokens>, " +
-            "clientName=$clientName, audioStream=$audioStream, theme=$theme, " +
+            "clientName=$clientName, theme=$theme, " +
             "overlayShown=$overlayShown, overlayPlacement=$overlayPlacement, " +
             "ttsEngine=$ttsEngine)"
 
@@ -125,25 +99,15 @@ data class ConfigDelta(
      * Java-friendly incremental builder (data-class `copy()` has no Java
      * defaults). Sets one field per preference branch, then [build].
      * Keep [hasCore] in sync when adding fields: every core field below
-     * must also appear in [hasCore] (and in [hasOtherAudioKeys] when it
-     * affects the audio pipeline).
+     * must also appear in [hasCore].
      */
     class Builder {
         var server: Server? = null
         var certificate: CertRef? = null
         var forceTcp: Boolean? = null
         var trustStore: TrustStoreRef? = null
-        var transmitMode: Int? = null
-        var detectionThreshold: Float? = null
-        var amplitudeBoost: Float? = null
-        var inputQuality: Int? = null
-        var framesPerPacket: Int? = null
-        var halfDuplex: Boolean? = null
-        var bluetoothSco: Boolean? = null
-        var adaptiveLeveler: Boolean? = null
         var accessTokens: List<String>? = null
         var clientName: String? = null
-        var audioStream: Int? = null
         var theme: String? = null
         var overlayShown: Boolean? = null
         var overlayPlacement: String? = null
@@ -154,7 +118,7 @@ data class ConfigDelta(
             // model (@JvmField name/host/port) with no copy(). Do not
             // mutate the Builder's server (or the Server's fields) after
             // build — HumlaService.apply stores the reference. CertRef and
-            // the token/mute lists need copyOf/toList for the same reason;
+            // the token list needs copyOf/toList for the same reason;
             // TrustStoreRef's fields are immutable Strings, so aliasing it
             // is safe.
             server = server,
@@ -164,17 +128,8 @@ data class ConfigDelta(
             certificate = certificate?.let { CertRef(it.data.copyOf(), it.password) },
             forceTcp = forceTcp,
             trustStore = trustStore,
-            transmitMode = transmitMode,
-            detectionThreshold = detectionThreshold,
-            amplitudeBoost = amplitudeBoost,
-            inputQuality = inputQuality,
-            framesPerPacket = framesPerPacket,
-            halfDuplex = halfDuplex,
-            bluetoothSco = bluetoothSco,
-            adaptiveLeveler = adaptiveLeveler,
             accessTokens = accessTokens?.toList(),
             clientName = clientName,
-            audioStream = audioStream,
             theme = theme,
             overlayShown = overlayShown,
             overlayPlacement = overlayPlacement,

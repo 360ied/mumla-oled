@@ -17,62 +17,46 @@
 
 package se.lublin.humla
 
-import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertThrows
 import org.junit.Test
 import se.lublin.humla.model.Server
 import se.lublin.humla.util.ConfigDelta
-import se.lublin.humla.voice.VoiceSettings
 
 /**
- * Pins the two step-6 commit-2 rules: the interim transmit-mode read follows
- * the applied VoiceSettings, and a rejected settings delta commits no part of
- * the delta (neither the pending connect target nor the settings flow).
+ * Step 6 leaves only the connect-target half in `HumlaService.apply`; voice
+ * and route settings come from the container, and local facts from the
+ * session's store. These tests pin what remains.
  */
 class HumlaServiceApplyTest {
 
     @Test
-    fun transmitModeFollowsAppliedSettings() {
+    fun connectTargetMergesWithoutTouchingOtherOwners() {
         val service = HumlaService()
-        assertEquals(Constants.TRANSMIT_VOICE_ACTIVITY, service.getTransmitMode())
+        val server = Server(1L, "name", "example.org", 64738, "user", null)
 
-        service.apply(ConfigDelta(transmitMode = Constants.TRANSMIT_PUSH_TO_TALK))
-        assertEquals(Constants.TRANSMIT_PUSH_TO_TALK, service.getTransmitMode())
+        val reconnectNeeded = service.apply(ConfigDelta(server = server, clientName = "Mumla OLED"))
 
-        service.apply(ConfigDelta(transmitMode = Constants.TRANSMIT_CONTINUOUS))
-        assertEquals(Constants.TRANSMIT_CONTINUOUS, service.getTransmitMode())
+        assertEquals(true, reconnectNeeded)
+        assertEquals("example.org", service.getTargetServer()?.host)
+        assertEquals("example.org", pendingServer(service)?.host)
     }
 
     @Test
-    fun rejectedDeltaLeavesPendingTargetAndSettingsUnchanged() {
+    fun emptyDeltaCommitsNothing() {
         val service = HumlaService()
-        val before = settingsOf(service)
-        val server = Server(1L, "name", "example.org", 64738, "user", null)
 
-        assertThrows(IllegalArgumentException::class.java) {
-            service.apply(ConfigDelta(server = server, transmitMode = 999))
-        }
-
-        assertEquals(before, settingsOf(service))
+        assertEquals(false, service.apply(ConfigDelta()))
         assertNull(service.getTargetServer())
-        assertNull(pendingServerOf(service))
     }
 
-    @Suppress("UNCHECKED_CAST")
-    private fun settingsOf(service: HumlaService): VoiceSettings {
-        val field = HumlaService::class.java.getDeclaredField("voiceSettingsFlow")
-        field.isAccessible = true
-        return (field.get(service) as MutableStateFlow<VoiceSettings>).value
-    }
-
-    private fun pendingServerOf(service: HumlaService): Any? {
+    private fun pendingServer(service: HumlaService): Server? {
         val field = HumlaService::class.java.getDeclaredField("pendingConnection")
         field.isAccessible = true
         val pending = (field.get(service) as java.util.concurrent.atomic.AtomicReference<*>).get()
         val server = pending.javaClass.getDeclaredField("server")
         server.isAccessible = true
-        return server.get(pending)
+        @Suppress("UNCHECKED_CAST")
+        return server.get(pending) as Server?
     }
 }

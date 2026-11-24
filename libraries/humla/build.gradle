@@ -56,6 +56,7 @@ dependencies {
     implementation libs.room.runtime
     testImplementation libs.coroutines.test
     testImplementation libs.junit
+    testImplementation project(":libraries:humla-testing")
     testImplementation libs.kotlin.reflect
     // AudioDeviceInfo/Builder doubles for the route + input-modes JVM tests.
     testImplementation libs.mockito.core

@@ -17,7 +17,7 @@
 
 package se.lublin.mumla.service
 
-import se.lublin.humla.client.LocalFactsStore
+import se.lublin.humla.HumlaRuntime
 import se.lublin.mumla.container
 import android.Manifest
 import android.annotation.SuppressLint
@@ -844,7 +844,6 @@ open class MumlaService : HumlaService(),
             Settings.PREF_INPUT_METHOD -> {
                 /* Convert input method defined in settings to an integer format used by Humla. */
                 val inputMethod = settings.humlaInputMethod
-                builder.transmitMode = inputMethod
                 val overlay = mChannelOverlay
                 if (overlay != null) {
                     overlay.setPushToTalkShown(inputMethod == Constants.TRANSMIT_PUSH_TO_TALK)
@@ -853,15 +852,7 @@ open class MumlaService : HumlaService(),
             }
             Settings.PREF_HANDSET_MODE -> {
                 setProximitySensorOn(shouldUseProximitySensor(settings))
-                builder.audioStream = if (settings.isHandsetMode) {
-                    AudioManager.STREAM_VOICE_CALL
-                } else {
-                    AudioManager.STREAM_MUSIC
-                }
                 initSoundPool()
-            }
-            Settings.PREF_THRESHOLD -> {
-                builder.detectionThreshold = settings.detectionThreshold
             }
             Settings.PREF_HOT_CORNER_KEY -> {
                 val hotCorner = mHotCorner
@@ -896,12 +887,6 @@ open class MumlaService : HumlaService(),
                     }
                 }
             }
-            Settings.PREF_AMPLITUDE_BOOST -> {
-                builder.amplitudeBoost = settings.amplitudeBoostMultiplier
-            }
-            Settings.PREF_HALF_DUPLEX -> {
-                builder.halfDuplex = settings.isHalfDuplex
-            }
             Settings.PREF_BLUETOOTH_HEADSET -> {
                 if (settings.isBluetoothHeadset && !hasBluetoothConnectGrant()) {
                     // Either toggle flips without the runtime grant: revert
@@ -913,21 +898,11 @@ open class MumlaService : HumlaService(),
                     Toast.makeText(this, R.string.grant_perm_bluetooth, Toast.LENGTH_LONG).show()
                     return
                 }
-                builder.bluetoothSco = settings.isBluetoothHeadset
                 setProximitySensorOn(shouldUseProximitySensor(settings))
                 initSoundPool()
             }
-            Settings.PREF_ADAPTIVE_LEVELER_ENABLED -> {
-                builder.adaptiveLeveler = settings.isAdaptiveLevelerEnabled
-            }
             Settings.PREF_PTT_SOUND -> {
                 mPTTSoundEnabled = settings.isPttSoundEnabled
-            }
-            Settings.PREF_INPUT_QUALITY -> {
-                builder.inputQuality = settings.inputQuality
-            }
-            Settings.PREF_FRAMES_PER_PACKET -> {
-                builder.framesPerPacket = settings.framesPerPacket
             }
             Settings.PREF_CERT_ID, Settings.PREF_FORCE_TCP -> {
                 // These are settings we flag as 'requiring reconnect'.
@@ -993,7 +968,7 @@ open class MumlaService : HumlaService(),
         return true
     }
 
-    override fun localFactsStore(): LocalFactsStore = container.localFactsStore
+    override fun runtime(): HumlaRuntime = container.runtime
 
     override fun buildConnectDelta(intent: Intent?): ConfigDelta? {
         // NPE-exact: the original dereferenced intent unconditionally.
@@ -1018,26 +993,13 @@ open class MumlaService : HumlaService(),
         val builder = ConfigDelta.Builder()
         builder.server = connected
         builder.clientName = getString(R.string.app_name) + " " + BuildConfig.VERSION_NAME
-        builder.transmitMode = settings.humlaInputMethod
-        builder.detectionThreshold = settings.detectionThreshold
-        builder.amplitudeBoost = settings.amplitudeBoostMultiplier
-        builder.inputQuality = settings.inputQuality
         builder.forceTcp = settings.isTcpForced
         builder.accessTokens = database.getAccessTokens(connected.id)
-        builder.audioStream = if (settings.isHandsetMode) {
-            AudioManager.STREAM_VOICE_CALL
-        } else {
-            AudioManager.STREAM_MUSIC
-        }
-        builder.framesPerPacket = settings.framesPerPacket
         builder.trustStore = TrustStoreRef(
             MumlaTrustStore.getTrustStorePath(this),
             MumlaTrustStore.getTrustStorePassword(),
             MumlaTrustStore.getTrustStoreFormat()
         )
-        builder.halfDuplex = settings.isHalfDuplex
-        builder.bluetoothSco = settings.isBluetoothHeadset
-        builder.adaptiveLeveler = settings.isAdaptiveLevelerEnabled
         if (settings.isUsingCertificate) {
             val certificateId = settings.defaultCertificate
             val certificate = database.getCertificateData(certificateId)

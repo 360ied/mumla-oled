@@ -35,6 +35,8 @@
 - **Modules** (Java 21 / AGP 9 built-in Kotlin; `foss` flavor only):
   - `app/` (`:app`): Android UI, activities, fragments, overlay,
     preferences.
+  - `libraries/humla-testing/` (`:libraries:humla-testing`): shared public test fakes for the
+    JVM suites in both modules.
   - `libraries/humla/` (`:libraries:humla`): Mumble protocol engine,
     background service, codec bindings, and native JNI audio pipeline
     over AAudio callback streams (no Oboe), organized under
