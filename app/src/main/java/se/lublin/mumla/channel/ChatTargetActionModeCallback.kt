@@ -28,15 +28,16 @@ import se.lublin.mumla.R
  * Created by andrew on 26/06/14.
  */
 // Open: ChannelListFragment mounts an anonymous subclass clearing mActionMode.
-open class ChatTargetActionModeCallback(provider: ChatTargetProvider, target: ChatTargetProvider.ChatTarget) :
-    ActionMode.Callback {
-    private val mProvider: ChatTargetProvider = provider
-    private val mChatTarget: ChatTargetProvider.ChatTarget = target
+open class ChatTargetActionModeCallback(
+    private val chatTarget: ChatTarget,
+    private val targetName: String?,
+    private val setChatTarget: (ChatTarget?) -> Unit,
+) : ActionMode.Callback {
 
     override fun onCreateActionMode(actionMode: ActionMode, menu: Menu): Boolean {
-        actionMode.title = mChatTarget.getName()
+        actionMode.title = targetName ?: "Unknown"
         actionMode.setSubtitle(R.string.current_chat_target)
-        mProvider.setChatTarget(getChatTarget())
+        setChatTarget(chatTarget)
         return true
     }
 
@@ -49,10 +50,6 @@ open class ChatTargetActionModeCallback(provider: ChatTargetProvider, target: Ch
     }
 
     override fun onDestroyActionMode(actionMode: ActionMode) {
-        mProvider.setChatTarget(null)
-    }
-
-    fun getChatTarget(): ChatTargetProvider.ChatTarget {
-        return mChatTarget
+        setChatTarget(null)
     }
 }

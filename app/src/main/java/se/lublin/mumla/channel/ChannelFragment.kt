@@ -17,10 +17,8 @@
 
 package se.lublin.mumla.channel
 
-import se.lublin.mumla.container
 import android.content.res.TypedArray
 import android.os.Bundle
-import android.util.Log
 import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.Menu
@@ -35,30 +33,30 @@ import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentManager
 import androidx.fragment.app.FragmentPagerAdapter
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.viewpager.widget.PagerTabStrip
 import androidx.viewpager.widget.ViewPager
 import kotlin.math.roundToInt
-import se.lublin.humla.HumlaService
-import se.lublin.humla.IHumlaService
-import se.lublin.humla.IHumlaSession
-import se.lublin.humla.model.IUser
+import kotlinx.coroutines.launch
 import se.lublin.humla.model.TalkState
-import se.lublin.humla.model.WhisperTarget
-import se.lublin.humla.util.HumlaDisconnectedException
-import se.lublin.humla.util.HumlaObserver
-import se.lublin.humla.util.IHumlaObserver
-import se.lublin.humla.util.VoiceTargetMode
 import se.lublin.mumla.R
 import se.lublin.mumla.Settings
+import se.lublin.mumla.container
 import se.lublin.mumla.app.MumlaActivity
-import se.lublin.mumla.util.HumlaServiceFragment
+import se.lublin.mumla.app.MumlaViewModelFactory
 
 /**
  * Class to encapsulate both a ChannelListFragment and ChannelChatFragment.
  * Created by andrew on 02/08/13.
  */
-class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListener, ChatTargetProvider {
-    private var mSettings: Settings? = null
+class ChannelFragment : Fragment() {
+
+    private val viewModel: ChannelViewModel by viewModels {
+        MumlaViewModelFactory(this)
+    }
 
     private var mViewPager: ViewPager? = null
     private var mTabStrip: PagerTabStrip? = null
@@ -66,61 +64,10 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
     private var mTalkView: View? = null
 
     private var mTargetPanel: View? = null
-    private var mTargetPanelCancel: ImageView? = null
     private var mTargetPanelText: TextView? = null
 
-    private var mChatTarget: ChatTargetProvider.ChatTarget? = null
-    /** Chat target listeners, notified when the chat target is changed. */
-    private val mChatTargetListeners = ArrayList<ChatTargetProvider.OnChatTargetSelectedListener>()
-
-    private val mObserver: HumlaObserver = object : HumlaObserver() {
-        override fun onUserTalkStateUpdated(user: IUser?) {
-            val service = getService()
-            if (service == null || !service.isConnected()) {
-                return
-            }
-            val selfSession: Int
-            try {
-                selfSession = service.HumlaSession().getSessionId()
-            } catch (e: HumlaDisconnectedException) {
-                Log.d(TAG, "exception in onUserTalkStateUpdated: $e")
-                return
-            } catch (e: IllegalStateException) {
-                Log.d(TAG, "exception in onUserTalkStateUpdated: $e")
-                return
-            }
-            val talkButton = mTalkButton
-            if (user != null && user.session == selfSession && talkButton != null) {
-                // Manually set button activation state when we receive a talk state update.
-                // This allows representation of talk state when using hot corners and PTT toggle.
-                talkButton.isActivated = isTalkingState(user.talkState)
-            }
-        }
-
-        override fun onUserStateUpdated(user: IUser?) {
-            val service = getService()
-            if (service == null || !service.isConnected()) {
-                return
-            }
-            val selfSession: Int
-            try {
-                selfSession = service.HumlaSession().getSessionId()
-            } catch (e: HumlaDisconnectedException) {
-                Log.d(TAG, "exception in onUserStateUpdated: $e")
-                return
-            } catch (e: IllegalStateException) {
-                Log.d(TAG, "exception in onUserStateUpdated: $e")
-                return
-            }
-            if (user != null && user.session == selfSession) {
-                configureInput()
-            }
-        }
-
-        override fun onVoiceTargetChanged(mode: VoiceTargetMode?) {
-            configureTargetPanel()
-        }
-    }
+    /** Menu-relevant state; invalidates the overflow menu only on change. */
+    private var mMenuKey: Pair<Boolean, Boolean>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -165,24 +112,15 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     v.isPressed = true
-                    val service = getService()
-                    if (service != null) {
-                        service.onTalkKeyDown()
-                    }
+                    viewModel.talkDown()
                 }
                 MotionEvent.ACTION_UP -> {
                     v.isPressed = false
-                    val service = getService()
-                    if (service != null) {
-                        service.onTalkKeyUp()
-                    }
+                    viewModel.talkUp()
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     v.isPressed = false
-                    val service = getService()
-                    if (service != null) {
-                        service.onTalkKeyCancel()
-                    }
+                    viewModel.talkCancel()
                 }
             }
             true
@@ -191,41 +129,22 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
         // NPE-exact: the original dereferenced the cancel view unconditionally.
         val targetPanelCancel = view.findViewById(R.id.target_panel_cancel) as ImageView?
             ?: throw NullPointerException("target_panel_cancel")
-        mTargetPanelCancel = targetPanelCancel
-        targetPanelCancel.setOnClickListener {
-            val service = getService()
-            if (service == null || !service.isConnected()) {
-                return@setOnClickListener
-            }
+        targetPanelCancel.setOnClickListener { viewModel.clearVoiceTarget() }
+        mTargetPanelText = view.findViewById(R.id.target_panel_warning) as TextView?
+        return view
+    }
 
-            val session: IHumlaSession
-            try {
-                session = service.HumlaSession()
-            } catch (e: HumlaDisconnectedException) {
-                return@setOnClickListener
-            } catch (e: IllegalStateException) {
-                return@setOnClickListener
-            }
-            if (session.getVoiceTargetMode() == VoiceTargetMode.WHISPER) {
-                val target = session.getVoiceTargetId()
-                session.setVoiceTargetId(0.toByte())
-                session.unregisterWhisperTarget(target)
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.state.collect { render(it) }
             }
         }
-        mTargetPanelText = view.findViewById(R.id.target_panel_warning) as TextView?
-        configureInput()
-        return view
     }
 
     override fun onActivityCreated(savedInstanceState: Bundle?) {
         super.onActivityCreated(savedInstanceState)
-
-        // NPE-exact: the original passed getActivity() straight through.
-        val host = activity ?: throw NullPointerException("activity")
-        val settings = host.container.settings
-        mSettings = settings
-        settings.registerListener(this)
-
         if (mViewPager != null) { // Phone
             val pagerAdapter = ChannelFragmentPagerAdapter(childFragmentManager)
             val pager = mViewPager ?: throw NullPointerException("mViewPager")
@@ -253,16 +172,9 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
         super.onPrepareOptionsMenu(menu)
         val bluetoothItem = menu.findItem(R.id.menu_bluetooth_headset)
         if (bluetoothItem != null && activity != null) {
-            // Checked reflects the requested toggle, mirroring Settings >
-            // Audio: a failed or in-flight bring-up still reads checked
-            // until the user flips it off. Link state is signaled by
-            // toasts, never by this checkmark.
-            // NPE-exact: the original dereferenced getActivity() unconditionally.
-            val host = activity ?: throw NullPointerException("activity")
-            val requested = host.container.settings.isBluetoothHeadset
-            val service = getService()
-            bluetoothItem.setVisible(service != null && service.isConnected())
-            bluetoothItem.setChecked(requested)
+            val state = viewModel.state.value
+            bluetoothItem.setVisible(state.bluetoothMenuVisible)
+            bluetoothItem.setChecked(state.bluetoothHeadset)
         }
     }
 
@@ -302,10 +214,9 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
         if (talkButton != null) {
             talkButton.isPressed = false
         }
-        val service = getService()
-        if (service != null) {
-            service.onTalkKeyCancel()
-        }
+        // A cancel always ends a held press, so leaving or rotating mid-press
+        // never leaves transmit on. Toggle mode ignores it, as before.
+        viewModel.talkCancel()
     }
 
     override fun onDestroyView() {
@@ -315,125 +226,49 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
             talkButton.isActivated = false
             talkButton.isPressed = false
         }
-        // NPE-exact: the original dereferenced mSettings unconditionally.
-        val settings = mSettings ?: throw NullPointerException("mSettings")
-        settings.unregisterListener(this)
-        // Release the detached hierarchy: super.onDestroyView() (first call
-        // above) already detached the service observer and cleared mBound,
-        // so no callback can touch these fields after they are nulled here.
         mViewPager = null
         mTabStrip = null
         mTalkButton = null
         mTalkView = null
         mTargetPanel = null
-        mTargetPanelCancel = null
         mTargetPanelText = null
+        mMenuKey = null
     }
 
-    override fun getServiceObserver(): IHumlaObserver {
-        return mObserver
-    }
-
-    override fun onServiceBound(service: IHumlaService) {
-        super.onServiceBound(service)
-        if (service.getConnectionState() == HumlaService.ConnectionState.CONNECTED) {
-            configureTargetPanel()
-            configureInput()
+    private fun render(state: ChannelUiState) {
+        // The overflow checkmark mirrors the requested toggle and is gated on
+        // the connection, so only those two need an invalidation.
+        val menuKey = state.bluetoothMenuVisible to state.bluetoothHeadset
+        if (menuKey != mMenuKey) {
+            mMenuKey = menuKey
+            activity?.supportInvalidateOptionsMenu()
         }
-    }
+        val talkButton = mTalkButton
+        if (talkButton != null) {
+            talkButton.isActivated = state.connected && state.selfTalking
+            val heightPx = calculateButtonHeightPx(
+                state.pttButtonHeight,
+                resources?.displayMetrics
+            )
+            val params = talkButton.layoutParams
+            if (params != null && params.height != heightPx) {
+                params.height = heightPx
+                talkButton.layoutParams = params
+            }
+        }
+        setTalkButtonHidden(!state.showPttButton)
 
-    private fun configureTargetPanel() {
         val targetPanel = mTargetPanel
         val targetPanelText = mTargetPanelText
-        if (!isAdded || activity == null || targetPanel == null || targetPanelText == null) {
-            return
-        }
-        val service = getService()
-        if (service == null || !service.isConnected()) {
-            return
-        }
-
-        val session: IHumlaSession
-        try {
-            session = service.HumlaSession()
-        } catch (e: HumlaDisconnectedException) {
-            return
-        } catch (e: IllegalStateException) {
-            return
-        }
-        val mode = session.getVoiceTargetMode()
-        // Null when WHISPER points at an unregistered id: hide rather than
-        // dereference (pedantic review).
-        val target: WhisperTarget? =
-            if (mode == VoiceTargetMode.WHISPER) session.getWhisperTarget() else null
-        if (target != null) {
-            targetPanel.visibility = View.VISIBLE
-            targetPanelText.text = getString(R.string.shout_target, target.name)
-        } else {
-            targetPanel.visibility = View.GONE
-        }
-    }
-
-    /**
-     * @return true if the channel fragment is set to display only the user's pinned channels.
-     */
-    private fun isShowingPinnedChannels(): Boolean {
-        val args = arguments
-        return args != null && args.getBoolean("pinned")
-    }
-
-    /**
-     * Configures the fragment in accordance with the user's interface preferences.
-     */
-    private fun configureInput() {
-        val talkButton = mTalkButton
-        if (!isAdded || activity == null || talkButton == null) {
-            return
-        }
-        // NPE-exact: the original passed getActivity() straight through.
-        val host = activity ?: throw NullPointerException("activity")
-        val settings = host.container.settings
-
-        val heightDp = settings.pttButtonHeight
-        val heightPx = calculateButtonHeightPx(
-            heightDp,
-            resources?.displayMetrics
-        )
-
-        val params = talkButton.layoutParams
-        if (params != null) {
-            params.height = heightPx
-            talkButton.layoutParams = params
-        }
-
-        var muted = false
-        val service = getService()
-        if (service != null && service.isConnected()) {
-            var self: IUser? = null
-            try {
-                val session = service.HumlaSession()
-                self = session.getSessionUser()
-                // Initial sync from the live self talk level (matches the
-                // onUserTalkStateUpdated observer below), so a button
-                // created mid-talk shows talking without waiting for the
-                // next hint.
-                talkButton.isActivated = self?.let { isTalkingState(it.talkState) } ?: false
-            } catch (e: HumlaDisconnectedException) {
-                Log.d(TAG, "exception in configureInput: $e")
-                talkButton.isActivated = false
-            } catch (e: IllegalStateException) {
-                Log.d(TAG, "exception in configureInput: $e")
-                talkButton.isActivated = false
+        if (targetPanel != null && targetPanelText != null) {
+            val targetName = state.whisperTargetName
+            if (targetName != null) {
+                targetPanel.visibility = View.VISIBLE
+                targetPanelText.text = getString(R.string.shout_target, targetName)
+            } else {
+                targetPanel.visibility = View.GONE
             }
-            muted = self == null || self.isMuted || self.isSuppressed || self.isSelfMuted
-        } else {
-            talkButton.isActivated = false
         }
-        val showPttButton =
-            !muted &&
-            settings.isPushToTalkButtonShown &&
-            settings.inputMethod == Settings.ARRAY_INPUT_METHOD_PTT
-        setTalkButtonHidden(!showPttButton)
     }
 
     private fun setTalkButtonHidden(hidden: Boolean) {
@@ -449,37 +284,12 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
         }
     }
 
-    override fun onSettingChanged(key: String?) {
-        if (Settings.PREF_INPUT_METHOD == key ||
-            Settings.PREF_PUSH_BUTTON_HIDE_KEY == key ||
-            Settings.PREF_PTT_BUTTON_HEIGHT == key
-        ) {
-            configureInput()
-        }
-        if (Settings.PREF_BLUETOOTH_HEADSET == key && isAdded && activity is MumlaActivity) {
-            // Requested-state alias: a Settings flip must refresh the
-            // overflow checkmark without waiting for an SCO callback.
-            (activity as MumlaActivity).supportInvalidateOptionsMenu()
-        }
-    }
-
-    override fun getChatTarget(): ChatTargetProvider.ChatTarget? {
-        return mChatTarget
-    }
-
-    override fun setChatTarget(target: ChatTargetProvider.ChatTarget?) {
-        mChatTarget = target
-        for (listener in mChatTargetListeners) {
-            listener.onChatTargetSelected(target)
-        }
-    }
-
-    override fun registerChatTargetListener(listener: ChatTargetProvider.OnChatTargetSelectedListener) {
-        mChatTargetListeners.add(listener)
-    }
-
-    override fun unregisterChatTargetListener(listener: ChatTargetProvider.OnChatTargetSelectedListener) {
-        mChatTargetListeners.remove(listener)
+    /**
+     * @return true if the channel fragment is set to display only the user's pinned channels.
+     */
+    private fun isShowingPinnedChannels(): Boolean {
+        val args = arguments
+        return args != null && args.getBoolean("pinned")
     }
 
     private inner class ChannelFragmentPagerAdapter(fm: FragmentManager) : FragmentPagerAdapter(fm) {
@@ -511,8 +321,6 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
     }
 
     companion object {
-        private val TAG: String = ChannelFragment::class.java.name
-
         /**
          * Converts the configured PTT button height (in dp) to physical pixels using display metrics.
          *

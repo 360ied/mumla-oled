@@ -31,6 +31,7 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.view.ActionMode
+import androidx.fragment.app.viewModels
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import se.lublin.humla.IHumlaService
@@ -42,12 +43,20 @@ import se.lublin.humla.util.HumlaObserver
 import se.lublin.humla.util.IHumlaObserver
 import se.lublin.mumla.R
 import se.lublin.mumla.Settings
+import se.lublin.mumla.app.MumlaViewModelFactory
 import se.lublin.mumla.db.MumlaDatabase
 import se.lublin.mumla.db.MumlaRoomDatabase
 import se.lublin.mumla.util.HumlaServiceFragment
 
 class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUserClickListener,
     Settings.OnSettingChangedListener {
+
+    /** The shared chat target owner; the parent screen builds it once. */
+    private val channelViewModel: ChannelViewModel by viewModels(
+        ownerProducer = { requireParentFragment() },
+    ) {
+        MumlaViewModelFactory(requireParentFragment())
+    }
 
     private val mServiceObserver: IHumlaObserver = object : HumlaObserver() {
         override fun onDisconnected(e: HumlaException?) {
@@ -153,7 +162,6 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
 
     private var mChannelView: RecyclerView? = null
     private var mChannelListAdapter: ChannelListAdapter? = null
-    private var mTargetProvider: ChatTargetProvider? = null
     private var mDatabase: MumlaDatabase? = null
     private var mActionMode: ActionMode? = null
     private var mSettings: Settings? = null
@@ -165,11 +173,6 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
 
     override fun onAttach(context: Context) {
         super.onAttach(context)
-        try {
-            mTargetProvider = parentFragment as ChatTargetProvider
-        } catch (e: ClassCastException) {
-            throw ClassCastException(parentFragment.toString() + " must implement ChatTargetProvider")
-        }
         mDatabase = context.container.database
         val settings = context.container.settings
         mSettings = settings
@@ -368,17 +371,13 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
     }
 
     override fun onChannelClick(channel: IChannel) {
-        // NPE-exact: the original dereferenced the provider unconditionally.
-        val provider = mTargetProvider ?: throw NullPointerException("mTargetProvider")
-        if (provider.getChatTarget() != null &&
-            channel == provider.getChatTarget()?.getChannel() &&
-            mActionMode != null
-        ) {
+        val target = ChatTarget.channel(channel.id)
+        if (channelViewModel.chatTarget.value == target && mActionMode != null) {
             // Dismiss action mode if double pressed. FIXME: use list view selection instead?
             val mode = mActionMode ?: throw NullPointerException("mActionMode")
             mode.finish()
         } else {
-            val cb = object : ChatTargetActionModeCallback(provider, ChatTargetProvider.ChatTarget(channel)) {
+            val cb = object : ChatTargetActionModeCallback(target, channel.name, channelViewModel::setChatTarget) {
                 override fun onDestroyActionMode(actionMode: ActionMode) {
                     super.onDestroyActionMode(actionMode)
                     mActionMode = null
@@ -391,17 +390,13 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
     }
 
     override fun onUserClick(user: IUser) {
-        // NPE-exact: the original dereferenced the provider unconditionally.
-        val provider = mTargetProvider ?: throw NullPointerException("mTargetProvider")
-        if (provider.getChatTarget() != null &&
-            user == provider.getChatTarget()?.getUser() &&
-            mActionMode != null
-        ) {
+        val target = ChatTarget.user(user.session)
+        if (channelViewModel.chatTarget.value == target && mActionMode != null) {
             // Dismiss action mode if double pressed. FIXME: use list view selection instead?
             val mode = mActionMode ?: throw NullPointerException("mActionMode")
             mode.finish()
         } else {
-            val cb = object : ChatTargetActionModeCallback(provider, ChatTargetProvider.ChatTarget(user)) {
+            val cb = object : ChatTargetActionModeCallback(target, user.name, channelViewModel::setChatTarget) {
                 override fun onDestroyActionMode(actionMode: ActionMode) {
                     super.onDestroyActionMode(actionMode)
                     mActionMode = null

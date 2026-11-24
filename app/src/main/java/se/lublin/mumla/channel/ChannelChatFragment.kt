@@ -54,8 +54,13 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts.GetContent
 import androidx.appcompat.app.AlertDialog
+import androidx.fragment.app.viewModels
 import androidx.core.text.HtmlCompat
 import androidx.exifinterface.media.ExifInterface
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -68,21 +73,29 @@ import java.util.ArrayList
 import java.util.Date
 import java.util.regex.Pattern
 import se.lublin.humla.IHumlaService
-import se.lublin.humla.IHumlaSession
-import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IMessage
-import se.lublin.humla.model.IUser
 import se.lublin.humla.util.HumlaDisconnectedException
 import se.lublin.humla.util.HumlaObserver
 import se.lublin.humla.util.IHumlaObserver
 import se.lublin.mumla.R
+import se.lublin.mumla.app.MumlaViewModelFactory
 import se.lublin.mumla.service.IChatMessage
 import se.lublin.mumla.util.BitmapUtils
 import se.lublin.mumla.util.ChatLinkPolicy
 import se.lublin.mumla.util.HumlaServiceFragment
 import se.lublin.mumla.util.MumbleImageGetter
 
-class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTargetSelectedListener {
+class ChannelChatFragment : HumlaServiceFragment() {
+
+    /**
+     * The shared chat target lives in the parent screen's ViewModel, so the
+     * list and the chat read one value and no listener list is needed.
+     */
+    private val channelViewModel: ChannelViewModel by viewModels(
+        ownerProducer = { requireParentFragment() },
+    ) {
+        MumlaViewModelFactory(requireParentFragment())
+    }
 
     private val mServiceObserver: IHumlaObserver = object : HumlaObserver() {
 
@@ -102,39 +115,12 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
             addChatMessage(IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.ERROR, message), true)
         }
 
-        override fun onUserJoinedChannel(user: IUser?, newChannel: IChannel?, oldChannel: IChannel?) {
-            val service = getService()
-            if (service != null && service.isConnected()) {
-                // Same TOCTOU as updateChatTargetText: channel-switch while
-                // tearing down must not escape to the Looper.
-                val session = try {
-                    service.HumlaSession()
-                } catch (e: HumlaDisconnectedException) {
-                    Log.d(TAG, "onUserJoinedChannel with torn-down session: $e")
-                    return
-                } catch (e: IllegalStateException) {
-                    Log.d(TAG, "onUserJoinedChannel with torn-down session: $e")
-                    return
-                }
-                if (user != null && session.getSessionUser() != null &&
-                    user == session.getSessionUser()
-                ) {
-                    // NPE-exact: the original dereferenced mTargetProvider unconditionally.
-                    val provider = mTargetProvider ?: throw NullPointerException("mTargetProvider")
-                    if (provider.getChatTarget() == null) {
-                        // Update chat target when user changes channels without a target.
-                        updateChatTargetText(null)
-                    }
-                }
-            }
-        }
     }
 
     private var mChatList: ListView? = null
     private var mChatAdapter: ChannelChatAdapter? = null
     private var mChatTextEdit: EditText? = null
     private var mSendButton: ImageButton? = null
-    private var mTargetProvider: ChatTargetProvider? = null
     // Tracked for pause-dismissal and rapid-tap dismiss-before-assign, like
     // the MumlaActivity dialogs: rotation/background with the preview up must
     // not leak the window.
@@ -145,30 +131,16 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setHasOptionsMenu(true)
-    }
-
-    override fun onAttach(context: Context) {
-        super.onAttach(context)
-        try {
-            mTargetProvider = parentFragment as ChatTargetProvider
-        } catch (e: ClassCastException) {
-            throw ClassCastException(parentFragment.toString() + " must implement ChatTargetProvider")
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                channelViewModel.chatTargetDisplay.collect { updateChatTargetText(it) }
+            }
         }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // NPE-exact: the original dereferenced mTargetProvider unconditionally.
-        val provider = mTargetProvider ?: throw NullPointerException("mTargetProvider")
-        provider.registerChatTargetListener(this)
     }
 
     override fun onPause() {
         super.onPause()
         dismissImageConfirmDialog()
-        // NPE-exact: the original dereferenced mTargetProvider unconditionally.
-        val provider = mTargetProvider ?: throw NullPointerException("mTargetProvider")
-        provider.unregisterChatTargetListener(this)
     }
 
     override fun onCreateView(
@@ -216,9 +188,7 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
             }
         })
 
-        // NPE-exact: the original dereferenced mTargetProvider unconditionally.
-        val provider = mTargetProvider ?: throw NullPointerException("mTargetProvider")
-        updateChatTargetText(provider.getChatTarget())
+        updateChatTargetText(channelViewModel.chatTargetDisplay.value)
         return view
     }
 
@@ -495,21 +465,16 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
         val session = service.HumlaSession()
 
         val formattedMessage = markupOutgoingMessage(message)
-        // NPE-exact: the original dereferenced mTargetProvider unconditionally.
-        val provider = mTargetProvider ?: throw NullPointerException("mTargetProvider")
-        val target = provider.getChatTarget()
+        val target = channelViewModel.chatTargetDisplay.value.target
         val responseMessage = if (target == null) {
             // NPE-exact: the original dereferenced getSessionChannel() unconditionally.
             val sessionChannel = session.getSessionChannel() ?: throw NullPointerException("sessionChannel")
             session.sendChannelTextMessage(sessionChannel.id, formattedMessage, false)
-        } else if (target.getUser() != null) {
-            val targetUser = target.getUser() ?: throw NullPointerException("targetUser")
-            session.sendUserTextMessage(targetUser.session, formattedMessage)
-        } else if (target.getChannel() != null) {
-            val targetChannel = target.getChannel() ?: throw NullPointerException("targetChannel")
-            session.sendChannelTextMessage(targetChannel.id, formattedMessage, false)
+        } else if (target.session != null) {
+            session.sendUserTextMessage(target.session, formattedMessage)
         } else {
-            null
+            val channelId = target.channelId ?: throw NullPointerException("channelId")
+            session.sendChannelTextMessage(channelId, formattedMessage, false)
         }
         addChatMessage(IChatMessage.TextMessage(responseMessage, true), true)
     }
@@ -538,39 +503,18 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
     }
 
     /**
-     * Updates hint displaying chat target.
+     * Updates hint displaying chat target, from the parent screen's resolved
+     * target: a channel or user id plus its name in the latest state.
      */
-    fun updateChatTargetText(target: ChatTargetProvider.ChatTarget?) {
-        val service = getService()
-        if (service == null || !service.isConnected()) {
-            return
+    private fun updateChatTargetText(display: ChatTargetDisplay) {
+        val name = display.name
+        val hint = when {
+            name == null -> null
+            display.target == null -> getString(R.string.messageToChannel, name)
+            display.target.session != null -> getString(R.string.messageToUser, name)
+            else -> getString(R.string.messageToChannel, name)
         }
-
-        // TOCTOU: disconnect between the check and the fetch throws — fail
-        // soft like configureInput/configureTargetPanel.
-        val session = try {
-            service.HumlaSession()
-        } catch (e: HumlaDisconnectedException) {
-            Log.d(TAG, "updateChatTargetText with torn-down session: $e")
-            return
-        } catch (e: IllegalStateException) {
-            Log.d(TAG, "updateChatTargetText with torn-down session: $e")
-            return
-        }
-        val hint = if (target == null && session.getSessionChannel() != null) {
-            val sessionChannel = session.getSessionChannel() ?: throw NullPointerException("sessionChannel")
-            getString(R.string.messageToChannel, sessionChannel.name)
-        } else if (target != null && target.getUser() != null) {
-            val targetUser = target.getUser() ?: throw NullPointerException("targetUser")
-            getString(R.string.messageToUser, targetUser.name)
-        } else if (target != null && target.getChannel() != null) {
-            val targetChannel = target.getChannel() ?: throw NullPointerException("targetChannel")
-            getString(R.string.messageToChannel, targetChannel.name)
-        } else {
-            null
-        }
-        // NPE-exact: the original dereferenced mChatTextEdit unconditionally.
-        val chatTextEdit = mChatTextEdit ?: throw NullPointerException("mChatTextEdit")
+        val chatTextEdit = mChatTextEdit ?: return
         chatTextEdit.hint = hint
         chatTextEdit.requestLayout() // Needed to update bounds after hint change.
     }
@@ -598,10 +542,6 @@ class ChannelChatFragment : HumlaServiceFragment(), ChatTargetProvider.OnChatTar
 
     override fun getServiceObserver(): IHumlaObserver {
         return mServiceObserver
-    }
-
-    override fun onChatTargetSelected(target: ChatTargetProvider.ChatTarget?) {
-        updateChatTargetText(target)
     }
 
     private class ChannelChatAdapter(context: Context, service: IHumlaService, messages: List<IChatMessage>) :

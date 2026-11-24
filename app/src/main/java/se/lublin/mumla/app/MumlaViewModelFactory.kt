@@ -24,6 +24,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
 import se.lublin.mumla.channel.AccessTokenViewModel
+import se.lublin.mumla.channel.ChannelViewModel
 import se.lublin.mumla.channel.ServerInfoViewModel
 import se.lublin.mumla.channel.comment.ChannelDescriptionFragment
 import se.lublin.mumla.channel.comment.CommentViewModel
@@ -59,6 +60,17 @@ class MumlaViewModelFactory private constructor(
             modelClass.isAssignableFrom(ServerInfoViewModel::class.java) -> ServerInfoViewModel(
                 clientState = client.state,
                 sessionState = container.runtime.sessionState,
+            )
+            modelClass.isAssignableFrom(ChannelViewModel::class.java) -> ChannelViewModel(
+                clientState = client.state,
+                sessionState = container.runtime.sessionState,
+                talkActivity = container.runtime.talkActivity,
+                settings = container.settingsRepository.snapshot,
+                emitTalkKey = container::emitTalkKey,
+                setVoiceTargetId = { id -> client.currentSession.value?.setVoiceTarget(id) },
+                unregisterVoiceTarget = { id ->
+                    client.currentSession.value?.unregisterWhisperTarget(id)
+                },
             )
             modelClass.isAssignableFrom(AccessTokenViewModel::class.java) -> AccessTokenViewModel(
                 serverId = args.getLong(ARG_SERVER),
