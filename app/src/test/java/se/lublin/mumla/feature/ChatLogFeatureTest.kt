@@ -41,8 +41,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import se.lublin.humla.Constants
+import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.testTarget
+import se.lublin.humla.client.trustError
 import se.lublin.humla.model.Message
 import se.lublin.humla.model.Server
 import se.lublin.humla.net.VoiceEvent
@@ -198,6 +200,63 @@ class ChatLogFeatureTest {
         f.feature.addSentText(Message("msg-2"))
         assertEquals(1, snapshot.size)
         assertEquals(2, f.feature.currentMessages().size)
+        f.close()
+    }
+
+    @Test fun reconnectingThenConnectedLogsDisconnectAndReconnect() {
+        val f = Fixture()
+        f.start()
+        f.clientState.value = ClientState.Connecting(target(1), 0)
+        f.clientState.value = ClientState.Reconnecting(
+            target(1), 2, 0L, ClientError.Connection("boom", null), null,
+        )
+        assertEquals(1, f.feature.currentMessages().size)
+        assertTrue(f.feature.currentMessages().last().body!!.contains("boom"))
+        f.clientState.value = connectedState().copy(target = target(1))
+        assertEquals(2, f.feature.currentMessages().size)
+        assertEquals("Reconnected", f.feature.currentMessages().last().body)
+        f.close()
+    }
+
+    @Test fun failedTrustAddsNoLineAndClearsTheReconnectLatch() {
+        val f = Fixture()
+        f.start()
+        f.clientState.value = ClientState.Connecting(target(1), 0)
+        f.clientState.value = ClientState.Reconnecting(
+            target(1), 1, 0L, ClientError.Connection("boom", null), null,
+        )
+        val afterReconnecting = f.feature.currentMessages().size
+        // Trust is a dialog, not a chat line: displayMessage() returns null.
+        f.clientState.value = ClientState.Failed(target(1), trustError())
+        assertEquals(afterReconnecting, f.feature.currentMessages().size)
+        f.clientState.value = connectedState().copy(target = target(1))
+        assertEquals(afterReconnecting, f.feature.currentMessages().size)
+        f.close()
+    }
+
+    @Test fun idleResetsTheReconnectLatch() {
+        val f = Fixture()
+        f.start()
+        f.clientState.value = ClientState.Connecting(target(1), 0)
+        f.clientState.value = ClientState.Reconnecting(
+            target(1), 1, 0L, ClientError.Connection("boom", null), null,
+        )
+        val count = f.feature.currentMessages().size
+        f.clientState.value = ClientState.Idle
+        f.clientState.value = connectedState().copy(target = target(1))
+        assertEquals(count, f.feature.currentMessages().size)
+        f.close()
+    }
+
+    @Test fun voiceEventsReachTheChatLog() {
+        val f = Fixture()
+        f.start()
+        f.clientState.value = ClientState.Connecting(target(1), 0)
+        kotlinx.coroutines.runBlocking {
+            f.voiceEvents.emit(VoiceEvent.EncoderLimited(72000, 40000, 2))
+        }
+        assertEquals(1, f.feature.currentMessages().size)
+        assertTrue(f.feature.currentMessages().last().body!!.contains("72"))
         f.close()
     }
 

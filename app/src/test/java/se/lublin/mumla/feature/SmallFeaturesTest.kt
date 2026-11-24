@@ -32,6 +32,7 @@ import se.lublin.humla.route.AppliedRoute
 import se.lublin.humla.route.RouteEvent
 import se.lublin.humla.route.RouteState
 import se.lublin.humla.route.StreamProfile
+import se.lublin.humla.state.UserInfo
 import se.lublin.humla.state.emptySessionState
 import se.lublin.humla.voice.TalkActivity
 import se.lublin.mumla.R
@@ -111,6 +112,57 @@ class SmallFeaturesTest {
         assertEquals(listOf(2), requested)
         session.value = emptySessionState()
         session.value = withHash
+        assertEquals(listOf(2, 2), requested)
+    }
+
+    @Test fun avatarRequestsForgetUsersWhoLeaveTheLiveSession() = runFeature { scope ->
+        val requested = ArrayList<Int>()
+        val session = MutableStateFlow(emptySessionState())
+        AvatarRequestsFeature(session) { requested.add(it) }.start(scope)
+        val base = goldenState()
+        val withHash = base.copy(
+            server = base.server.copy(
+                users = base.server.users.put(
+                    2,
+                    base.server.users.getValue(2).copy(
+                        textureHash = ByteString.copyFromUtf8("h1"),
+                    ),
+                ),
+            ),
+        )
+        session.value = withHash
+        assertEquals(listOf(2), requested)
+        // User 2 leaves while the session is still live (selfSession stays 1):
+        // retainAll must evict it, not the session-ended clear() path.
+        session.value = withHash.copy(
+            server = withHash.server.copy(users = withHash.server.users.remove(2)),
+        )
+        session.value = withHash
+        assertEquals(listOf(2, 2), requested)
+    }
+
+    @Test fun avatarRequestsSkipHashlessAndTexturedUsers() = runFeature { scope ->
+        val requested = ArrayList<Int>()
+        val session = MutableStateFlow(emptySessionState())
+        AvatarRequestsFeature(session) { requested.add(it) }.start(scope)
+        val base = goldenState()
+        val user = base.server.users.getValue(2)
+        fun stateFor(u: UserInfo) = base.copy(
+            server = base.server.copy(users = base.server.users.put(2, u)),
+        )
+
+        session.value = stateFor(user.copy(textureHash = ByteString.copyFromUtf8("h1")))
+        assertEquals(listOf(2), requested)
+        // A user with no hash, or with the texture already downloaded, must
+        // be skipped and evicted so a later hash still re-requests.
+        session.value = stateFor(user.copy(textureHash = null))
+        session.value = stateFor(
+            user.copy(
+                texture = ByteString.copyFromUtf8("tex"),
+                textureHash = ByteString.copyFromUtf8("h1"),
+            ),
+        )
+        session.value = stateFor(user.copy(textureHash = ByteString.copyFromUtf8("h2")))
         assertEquals(listOf(2, 2), requested)
     }
 

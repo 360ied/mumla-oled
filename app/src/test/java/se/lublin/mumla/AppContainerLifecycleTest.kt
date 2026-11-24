@@ -17,10 +17,14 @@
 
 package se.lublin.mumla
 
+import android.content.Context
+import android.content.Intent
 import org.robolectric.RuntimeEnvironment
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -39,12 +43,14 @@ import se.lublin.humla.client.FakeTransport
 import se.lublin.humla.client.syncSequence
 import se.lublin.humla.client.testTarget
 import se.lublin.humla.client.userState
+import se.lublin.humla.model.Server
 import se.lublin.humla.net.HumlaTCPMessageType
 import se.lublin.humla.net.Inbound
 import se.lublin.humla.route.RouteState
 import se.lublin.humla.util.HumlaObserver
 import se.lublin.humla.voice.EngineNative
 import se.lublin.mumla.app.MumlaApplication
+import se.lublin.mumla.db.MumlaRoomDatabase
 import se.lublin.mumla.service.MumlaService
 
 /**
@@ -116,6 +122,60 @@ class AppContainerLifecycleTest {
         assertFalse(runtime.networkCallbackRegistered)
         runtime.close()
         assertFalse(runtime.networkCallbackRegistered)
+    }
+
+    @Test fun processSingletonsAreShared() {
+        val app = RuntimeEnvironment.getApplication() as TestApplication
+        val companion = AppContainer.Companion
+        val create = AppContainer.Companion::class.java.getDeclaredMethod(
+            "createSettingsStore", Context::class.java,
+        )
+        create.isAccessible = true
+        val first = create.invoke(companion, app)
+        assertSame(first, create.invoke(companion, app))
+        assertSame(first, app.container.settingsStore)
+        assertSame(MumlaRoomDatabase.create(app), MumlaRoomDatabase.create(app))
+    }
+
+    @Test fun newConnectDeltaResetsTheErrorShownFlag() {
+        val controller = Robolectric.buildService(MumlaService::class.java).create()
+        val service = controller.get()
+        service.markErrorShown()
+        assertTrue(service.isErrorShown())
+        val intent = Intent(RuntimeEnvironment.getApplication(), MumlaService::class.java)
+        intent.putExtra(
+            MumlaService.EXTRA_SERVER,
+            Server(-1L, "name", "example.org", 64738, "user", null),
+        )
+        val build = MumlaService::class.java.getDeclaredMethod(
+            "buildConnectDelta", Intent::class.java,
+        )
+        build.isAccessible = true
+        assertNotNull(build.invoke(service, intent))
+        assertFalse(service.isErrorShown())
+        controller.destroy()
+    }
+
+    @Test fun rejectedVoiceSettingsKeepThePreviousValueAndTheFlowAlive() = runBlocking {
+        val container = (RuntimeEnvironment.getApplication() as TestApplication).container
+        val before = container.voiceSettings.value
+        container.settingsRepository.updateTyped { it.inputBitrate = 0 }
+        withTimeout(5_000) {
+            while (container.settingsRepository.state.value.snapshot.inputBitrate != 0) {
+                kotlinx.coroutines.delay(10)
+            }
+        }
+        kotlinx.coroutines.delay(50)
+        assertEquals(before, container.voiceSettings.value)
+        // A rejected snapshot must not kill the flow: a later valid write
+        // still reaches voiceSettings without another container rebuild.
+        container.settingsRepository.updateTyped { it.inputBitrate = 48000 }
+        withTimeout(5_000) {
+            while (container.voiceSettings.value.targetBitrate != 48000) {
+                kotlinx.coroutines.delay(10)
+            }
+        }
+        assertEquals(48000, container.voiceSettings.value.targetBitrate)
     }
 
     @Test fun idleServiceDoesNotPostAConnectingPlaceholder() {

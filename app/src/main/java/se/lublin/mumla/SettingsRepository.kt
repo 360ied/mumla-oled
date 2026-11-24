@@ -221,11 +221,24 @@ class SettingsRepository(
 
     init {
         scope.launch {
+            var retries = 0
             for (signal in writes) {
                 try {
                     store.updateData { _state.value.preferences }
+                    retries = 0
                 } catch (e: Exception) {
-                    Log.w(TAG, "Settings write failed; the next update retries", e)
+                    // The conflated signal is already consumed. Re-arm a
+                    // bounded retry so a transient disk failure does not
+                    // leave memory and disk apart until the next unrelated
+                    // setting change.
+                    if (retries < MAX_WRITE_RETRIES) {
+                        retries++
+                        Log.w(TAG, "Settings write failed; retry $retries", e)
+                        writes.trySend(Unit)
+                    } else {
+                        retries = 0
+                        Log.w(TAG, "Settings write failed; waiting for the next update", e)
+                    }
                 }
             }
         }
@@ -360,6 +373,7 @@ class SettingsRepository(
 
     companion object {
         private const val TAG = "SettingsRepository"
+        private const val MAX_WRITE_RETRIES = 3
 
         internal fun Preferences.toSnapshot(): PrefSnapshot = PrefSnapshot(
             audioInputMethod = this[Keys.AUDIO_INPUT_METHOD] ?: Settings.ARRAY_INPUT_METHOD_VOICE,

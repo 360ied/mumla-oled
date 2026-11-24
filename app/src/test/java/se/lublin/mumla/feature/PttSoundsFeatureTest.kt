@@ -19,6 +19,7 @@ package se.lublin.mumla.feature
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import se.lublin.humla.client.ClientState
@@ -72,6 +73,18 @@ class PttSoundsFeatureTest {
         f.connect()
         f.setTalking(true)
         assertTrue(f.platform.soundBanks.last().plays.isEmpty())
+    }
+
+    @Test fun idleResetsTheLastTalkingLatch() = runFeature { scope ->
+        val f = Fixture()
+        f.feature.start(scope)
+        val latch = PttSoundsFeature::class.java.getDeclaredField("lastTalking")
+        latch.isAccessible = true
+        f.connect()
+        f.setTalking(true)
+        assertTrue(latch.getBoolean(f.feature))
+        f.state.value = ClientState.Idle
+        assertFalse(latch.getBoolean(f.feature))
     }
 
     @Test fun routeChangeReloadsTheSoundBank() = runFeature { scope ->

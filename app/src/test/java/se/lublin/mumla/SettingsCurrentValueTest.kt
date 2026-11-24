@@ -17,8 +17,12 @@
 
 package se.lublin.mumla
 
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -67,6 +71,44 @@ class SettingsCurrentValueTest {
         }
         assertEquals(expected, stored)
     }
+
+    /** Fails exactly one write, then delegates; pins the bounded retry. */
+    private class FailOnceStore(
+        private val delegate: DataStore<Preferences>,
+    ) : DataStore<Preferences> {
+        var failures = 0
+        override val data: Flow<Preferences> get() = delegate.data
+
+        override suspend fun updateData(
+            transform: suspend (Preferences) -> Preferences,
+        ): Preferences {
+            if (failures == 0) {
+                failures++
+                throw IOException("transient disk failure")
+            }
+            return delegate.updateData(transform)
+        }
+    }
+
+    @Test
+    fun writerRetriesAFailedWriteWithoutANewSettingChange() =
+        runBlocking(Dispatchers.IO) {
+            val store = FailOnceStore(TestDataStores.create())
+            val settings = TestSettings.create(store)
+            val key = booleanPreferencesKey(Settings.PREF_CHAT_NOTIFY)
+
+            settings.repository.update { it[key] = false }
+            val expected = settings.repository.state.value.preferences
+
+            val deadline = System.currentTimeMillis() + 5_000
+            var stored = store.data.first()
+            while (stored != expected && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10)
+                stored = store.data.first()
+            }
+            assertEquals(expected, stored)
+            assertEquals(1, store.failures)
+        }
 
     @Test
     fun startupReadLoadsValuesWrittenBeforeConstruction() = runBlocking(Dispatchers.IO) {

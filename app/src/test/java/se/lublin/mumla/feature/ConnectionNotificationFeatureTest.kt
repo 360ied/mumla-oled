@@ -85,6 +85,18 @@ class ConnectionNotificationFeatureTest {
         assertTrue(f.platform.notification.hidden > 0)
     }
 
+    @Test fun failedStateHidesTheConnectionNotification() = runFeature { scope ->
+        val f = Fixture()
+        f.feature.start(scope)
+        f.state.value = ClientState.Connecting(emptyConnectTarget(), 0)
+        assertTrue(f.feature.visible.value)
+        f.state.value = ClientState.Failed(
+            emptyConnectTarget(), ClientError.Connection("boom", null),
+        )
+        assertFalse(f.feature.visible.value)
+        assertTrue(f.platform.notification.hidden > 0)
+    }
+
     @Test fun permissionDeniedReshowsUnlessSuppressed() = runFeature { scope ->
         val f = Fixture()
         f.feature.start(scope)

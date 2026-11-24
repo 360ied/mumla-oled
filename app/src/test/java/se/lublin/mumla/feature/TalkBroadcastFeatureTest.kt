@@ -74,6 +74,15 @@ class TalkBroadcastFeatureTest {
         assertEquals(0, f.toggles)
     }
 
+    @Test fun nullIntentAndNullActionAreIgnored() = runFeature { scope ->
+        val f = Fixture()
+        f.start(scope)
+        f.receive(null)
+        f.receive(Intent())
+        assertTrue(f.setPtt.isEmpty())
+        assertEquals(0, f.toggles)
+    }
+
     @Test fun onOffAndMissingStatusToggle() = runFeature { scope ->
         val f = Fixture()
         f.start(scope)

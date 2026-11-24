@@ -64,6 +64,16 @@ class MessageNotificationsFeatureTest {
         assertEquals(2, f.platform.messages.dismissed)
     }
 
+    @Test fun failedStateDismissesTheMessageNotification() = runFeature { scope ->
+        val f = Fixture()
+        f.feature.start(scope)
+        val before = f.platform.messages.dismissed
+        f.state.value = ClientState.Failed(
+            emptyConnectTarget(), ClientError.Connection("boom", null),
+        )
+        assertEquals(before + 1, f.platform.messages.dismissed)
+    }
+
     @Test fun masterSwitchSuppressesPosts() = runFeature { scope ->
         val f = Fixture()
         f.feature.start(scope)
