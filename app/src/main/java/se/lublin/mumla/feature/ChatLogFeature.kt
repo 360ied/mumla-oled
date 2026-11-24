@@ -75,15 +75,30 @@ class ChatLogFeature(
     private var currentTarget: ConnectTarget? = null
     private var wasReconnecting = false
 
+    /**
+     * The feature's Main child scope. Every mutation of serverLogs, activeKey
+     * and _messages runs here: the collectors already do, and the interim
+     * binder/observer entry points post through [onMain].
+     */
+    private var mainScope: CoroutineScope? = null
+
     /** Registered by the container for onMessageLogged only (interim bridge). */
     val receivedTextObserver: IHumlaObserver = object : HumlaObserver() {
         override fun onMessageLogged(message: IMessage?) {
-            addText(message, selfAuthored = false)
+            onMain { addText(message, selfAuthored = false) }
         }
+    }
+
+    private fun onMain(block: () -> Unit) {
+        val child = checkNotNull(mainScope) {
+            "ChatLogFeature.start() must run before any log entry point"
+        }
+        child.launch { block() }
     }
 
     fun start(scope: CoroutineScope) {
         val child = scope.featureChild()
+        mainScope = child
         val sink = lineSink ?: { line: ChatLine -> append(line) }
         // Single ChatLine queue: session and voice lines share one drain so
         // ordering and backpressure tests cover both, and a slow sink never
@@ -161,13 +176,17 @@ class ChatLogFeature(
     fun currentMessages(): List<IChatMessage> = _messages.value
 
     fun clear() {
-        if (activeKey.isNotEmpty()) serverLogs.remove(activeKey)
-        activeKey = ""
-        _messages.value = emptyList()
+        onMain {
+            if (activeKey.isNotEmpty()) serverLogs.remove(activeKey)
+            activeKey = ""
+            _messages.value = emptyList()
+        }
     }
 
     /** Sent text from MumlaService's binder delegations (interim). */
-    fun addSentText(message: IMessage?) = addText(message, selfAuthored = true)
+    fun addSentText(message: IMessage?) {
+        onMain { addText(message, selfAuthored = true) }
+    }
 
     private fun addText(message: IMessage?, selfAuthored: Boolean) {
         val text = IChatMessage.TextMessage(message, selfAuthored)

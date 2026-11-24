@@ -371,8 +371,10 @@ open class AppContainer(
 
     init {
         // Interim: received text still arrives through the observer bridge.
-        runtime.callbacks.registerObserver(chatLog.receivedTextObserver)
+        // Start the feature first so its Main child scope exists before any
+        // observer callback can reach receivedTextObserver.
         chatLog.start(appScope)
+        runtime.callbacks.registerObserver(chatLog.receivedTextObserver)
         connectionNotification.start(appScope)
         messageNotifications.start(appScope)
         tts.start(appScope)

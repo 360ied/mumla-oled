@@ -36,6 +36,8 @@ interface LocalFactsDao {
  *
  * An unsaved server (id -1) has no rows to key lists to, so both loads and
  * writes skip it, as the channel adapter's `Server.isSaved()` guard did.
+ * The same guard rejects negative user ids, which the deleted adapter also
+ * refused before writing a local mute or ignore row.
  */
 class AppLocalFactsStore(
     private val dao: LocalFactsDao,
@@ -54,12 +56,12 @@ class AppLocalFactsStore(
     }
 
     override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) {
-        if (serverId < 0) return
+        if (serverId < 0 || userId < 0) return
         dao.setLocalMute(serverId, userId, muted)
     }
 
     override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) {
-        if (serverId < 0) return
+        if (serverId < 0 || userId < 0) return
         dao.setLocalIgnore(serverId, userId, ignored)
     }
 

@@ -32,6 +32,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -122,6 +123,7 @@ class ChatLogFeatureTest {
 
     @Test fun messageLogCapacityEviction() {
         val f = Fixture()
+        f.start()
         repeat(550) { i -> f.feature.addSentText(Message("msg-$i")) }
         val log = f.feature.currentMessages()
         assertEquals(500, log.size)
@@ -184,6 +186,7 @@ class ChatLogFeatureTest {
 
     @Test fun readIsADefensiveSnapshot() {
         val f = Fixture()
+        f.start()
         f.feature.addSentText(Message("msg-1"))
         val snapshot = f.feature.currentMessages()
         try {
@@ -195,6 +198,26 @@ class ChatLogFeatureTest {
         f.feature.addSentText(Message("msg-2"))
         assertEquals(1, snapshot.size)
         assertEquals(2, f.feature.currentMessages().size)
+        f.close()
+    }
+
+    @Test fun entryPointsRequireAStartedMainScope() {
+        val f = Fixture()
+        assertThrows(IllegalStateException::class.java) { f.feature.clear() }
+        assertThrows(IllegalStateException::class.java) {
+            f.feature.addSentText(Message("before-start"))
+        }
+        f.close()
+    }
+
+    @Test fun entryPointsWorkWhenCalledOffTheMainThread() {
+        val f = Fixture()
+        f.start()
+        kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+            f.feature.addSentText(Message("from-worker"))
+            f.feature.clear()
+        }
+        assertTrue(f.feature.currentMessages().isEmpty())
         f.close()
     }
 

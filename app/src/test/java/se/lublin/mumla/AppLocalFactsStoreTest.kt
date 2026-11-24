@@ -93,6 +93,21 @@ class AppLocalFactsStoreTest {
     }
 
     @Test
+    fun negativeUserIdsSkipWrites() = runTest {
+        val dao = FakeDao()
+        val store = AppLocalFactsStore(dao, TestSettings.create(TestDataStores.create()))
+
+        store.setLocalMute(1, -1, true)
+        store.setLocalIgnore(1, -1, true)
+        store.setLocalMute(-1, -2, true)
+        store.setLocalIgnore(-1, -2, true)
+
+        assertEquals(0, dao.writes)
+        assertTrue(dao.muted.isEmpty())
+        assertTrue(dao.ignored.isEmpty())
+    }
+
+    @Test
     fun selfMuteIntentWritesSettingsOnce() = runTest(UnconfinedTestDispatcher()) {
         val settings = TestSettings.create(TestDataStores.create())
         val store = AppLocalFactsStore(FakeDao(), settings)
