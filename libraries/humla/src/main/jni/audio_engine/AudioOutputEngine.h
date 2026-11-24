@@ -50,7 +50,7 @@ class IOutputDecoder {
 public:
     virtual ~IOutputDecoder() = default;
     virtual int decodeFloat(const uint8_t* data, size_t len, float* out,
-                            int maxSamples, int decodeFec) = 0;
+                            int maxSamples) = 0;
     virtual int decodeConcealment(float* out, int frameSize) = 0;
     virtual int packetSampleCount(const uint8_t* data, size_t len) const = 0;
     virtual bool isValid() const = 0;

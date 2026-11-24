@@ -26,8 +26,8 @@ namespace {
 class OpusOutputDecoderAdapter : public IOutputDecoder {
 public:
     int decodeFloat(const uint8_t* data, size_t len, float* out,
-                    int maxSamples, int decodeFec) override {
-        return m_decoder.decodeFloat(data, len, out, maxSamples, decodeFec);
+                    int maxSamples) override {
+        return m_decoder.decodeFloat(data, len, out, maxSamples);
     }
     int decodeConcealment(float* out, int frameSize) override {
         return m_decoder.decodeConcealment(out, frameSize);
@@ -66,16 +66,16 @@ OpusVoiceDecoder::~OpusVoiceDecoder() {
 }
 
 int OpusVoiceDecoder::decodeFloat(const uint8_t* data, size_t len, float* out,
-                                  int maxSamples, int decodeFec) {
+                                  int maxSamples) {
     if (m_decoder == nullptr || out == nullptr || maxSamples <= 0) {
         return OPUS_BAD_ARG;
     }
     return opus_decode_float(m_decoder, data, static_cast<opus_int32>(len),
-                             out, maxSamples, decodeFec);
+                             out, maxSamples, 0);
 }
 
 int OpusVoiceDecoder::decodeConcealment(float* out, int frameSize) {
-    return decodeFloat(nullptr, 0, out, frameSize, 0);
+    return decodeFloat(nullptr, 0, out, frameSize);
 }
 
 int OpusVoiceDecoder::packetSampleCount(const uint8_t* data, size_t len) {

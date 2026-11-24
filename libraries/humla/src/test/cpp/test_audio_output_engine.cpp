@@ -50,7 +50,7 @@ public:
     explicit FakeDecoder(float level = 0.5f) : m_level(level) {}
 
     int decodeFloat(const uint8_t* /*data*/, size_t /*len*/, float* out,
-                    int maxSamples, int /*decodeFec*/) override {
+                    int maxSamples) override {
         const int n = std::min<int>(kFrame, maxSamples);
         for (int i = 0; i < n; ++i) {
             out[i] = m_level;
@@ -89,12 +89,7 @@ public:
         : m_span(spanSamples), m_level(level) {}
 
     int decodeFloat(const uint8_t* /*data*/, size_t /*len*/, float* out,
-                    int maxSamples, int decodeFec) override {
-        if (decodeFec != 0) {
-            // No LBRR payload exists in this fake: FEC is unavailable, so the
-            // engine must fall back to concealment for the debt slot.
-            return -1;
-        }
+                    int maxSamples) override {
         const int n = std::min(m_span, maxSamples);
         for (int i = 0; i < n; ++i) {
             out[i] = m_level;
@@ -123,36 +118,16 @@ private:
 };
 
 /**
- * FEC-aware fake decoder: real decodes, FEC recoveries, and concealment each
- * produce a distinct constant level, so tests can tell which path filled a
- * gap slot. fecFails simulates a packet without LBRR data. Every packet
- * spans exactly one 10 ms frame.
+ * Two-level fake decoder: real decodes and concealment each produce a
+ * distinct constant level, so tests can tell which path filled a slot.
+ * Every packet spans exactly one 10 ms frame.
  */
-class FecAwareDecoder : public IOutputDecoder {
+class LevelDecoder : public IOutputDecoder {
 public:
-    FecAwareDecoder(float real, float fec, float plc, bool fecFails,
-                    int* fecAttempts)
-        : m_real(real),
-          m_fec(fec),
-          m_plc(plc),
-          m_fecFails(fecFails),
-          m_fecAttempts(fecAttempts) {}
+    LevelDecoder(float real, float plc) : m_real(real), m_plc(plc) {}
 
     int decodeFloat(const uint8_t* /*data*/, size_t /*len*/, float* out,
-                    int maxSamples, int decodeFec) override {
-        if (decodeFec != 0) {
-            if (m_fecAttempts != nullptr) {
-                ++(*m_fecAttempts);
-            }
-            if (m_fecFails) {
-                return -1;
-            }
-            const int n = std::min<int>(kFrame, maxSamples);
-            for (int i = 0; i < n; ++i) {
-                out[i] = m_fec;
-            }
-            return n;
-        }
+                    int maxSamples) override {
         const int n = std::min<int>(kFrame, maxSamples);
         for (int i = 0; i < n; ++i) {
             out[i] = m_real;
@@ -177,10 +152,7 @@ public:
 
 private:
     float m_real;
-    float m_fec;
     float m_plc;
-    bool m_fecFails;
-    int* m_fecAttempts;
 };
 
 
@@ -290,14 +262,11 @@ std::unique_ptr<TestEngine> makeSpanEngine(int spanSamples, float level,
     return engine;
 }
 
-std::unique_ptr<TestEngine> makeFecEngine(float real, float fec, float plc,
-                                          bool fecFails, int* fecAttempts,
-                                          std::vector<TalkEvent>* events) {
-    auto engine = std::make_unique<TestEngine>(
-        [real, fec, plc, fecFails, fecAttempts] {
-            return std::make_unique<FecAwareDecoder>(real, fec, plc, fecFails,
-                                                     fecAttempts);
-        });
+std::unique_ptr<TestEngine> makeLevelEngine(float real, float plc,
+                                            std::vector<TalkEvent>* events) {
+    auto engine = std::make_unique<TestEngine>([real, plc] {
+        return std::make_unique<LevelDecoder>(real, plc);
+    });
     engine->setTalkCallback([events](int32_t session, int state) {
         if (events != nullptr) {
             events->push_back({session, state});
@@ -746,26 +715,22 @@ void testEvictionEmitsPassiveForTalker() {
     std::cout << "  [PASS] testEvictionEmitsPassiveForTalker" << std::endl;
 }
 
-void testLossConcealsInlineWithoutFec() {
+void testLossConcealsInline() {
     g_testCount++;
     // Gap at seq 1 with seq 2 already buffered: the gap is concealed at once
-    // (no FEC decode is attempted, upstream parity) and the successor still
-    // decodes normally. Levels below the saturation knee are linear, so real
+    // (upstream parity) and the successor still decodes normally. Levels below the saturation knee are linear, so real
     // 0.2 -> 6553 and PLC 0.1 -> 3277 exactly.
     std::vector<TalkEvent> events;
-    int fecAttempts = 0;
-    auto engine = makeFecEngine(0.2f, 0.3f, 0.1f, false, &fecAttempts,
-                                &events);
+    auto engine = makeLevelEngine(0.2f, 0.1f, &events);
     openGateOnFirstFrame(*engine);
     queueOne(*engine, 101, 0);
     queueOne(*engine, 101, 2);
     std::vector<int16_t> out(3 * kFrame, 0);
     TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
                    static_cast<size_t>(3 * kFrame));
-    TEST_ASSERT_EQ(fecAttempts, 0);
     TEST_ASSERT_EQ(out[3 * kFrame / 2], 3277);
     TEST_ASSERT_EQ(out[5 * kFrame / 2], 6553);
-    std::cout << "  [PASS] testLossConcealsInlineWithoutFec" << std::endl;
+    std::cout << "  [PASS] testLossConcealsInline" << std::endl;
 }
 
 void testBurstLossConcealsEachFrame() {
@@ -773,16 +738,13 @@ void testBurstLossConcealsEachFrame() {
     // Two consecutive gaps are each concealed in place; the successor after
     // the burst decodes normally.
     std::vector<TalkEvent> events;
-    int fecAttempts = 0;
-    auto engine = makeFecEngine(0.2f, 0.3f, 0.1f, false, &fecAttempts,
-                                &events);
+    auto engine = makeLevelEngine(0.2f, 0.1f, &events);
     openGateOnFirstFrame(*engine);
     queueOne(*engine, 106, 0);
     queueOne(*engine, 106, 3);
     std::vector<int16_t> out(4 * kFrame, 0);
     TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
                    static_cast<size_t>(4 * kFrame));
-    TEST_ASSERT_EQ(fecAttempts, 0);
     TEST_ASSERT_EQ(out[3 * kFrame / 2], 3277);
     TEST_ASSERT_EQ(out[5 * kFrame / 2], 3277);
     TEST_ASSERT_EQ(out[7 * kFrame / 2], 6553);
@@ -796,9 +758,7 @@ void testLossJointsAreNotBlended() {
     // joint. (The removed crossfade replayed the next chunk's first 2 ms over
     // the previous chunk's tail.)
     std::vector<TalkEvent> events;
-    int fecAttempts = 0;
-    auto engine = makeFecEngine(0.2f, 0.3f, 0.1f, false, &fecAttempts,
-                                &events);
+    auto engine = makeLevelEngine(0.2f, 0.1f, &events);
     openGateOnFirstFrame(*engine);
     queueOne(*engine, 104, 0);
     queueOne(*engine, 104, 1);
@@ -876,9 +836,7 @@ void testLosslessMixIsBitExact() {
     g_testCount++;
     // No loss: steady-state samples are the decoded level, bit-exact.
     std::vector<TalkEvent> events;
-    int fecAttempts = 0;
-    auto engine = makeFecEngine(0.2f, 0.3f, 0.0f, false, &fecAttempts,
-                                &events);
+    auto engine = makeLevelEngine(0.2f, 0.0f, &events);
     openGateOnFirstFrame(*engine);
     queueOne(*engine, 105, 0);
     queueOne(*engine, 105, 1);
@@ -886,7 +844,6 @@ void testLosslessMixIsBitExact() {
     std::vector<int16_t> out(3 * kFrame, 0);
     TEST_ASSERT_EQ(engine->renderMix(out.data(), out.size()),
                    static_cast<size_t>(3 * kFrame));
-    TEST_ASSERT_EQ(fecAttempts, 0);
     for (int i = kFrame; i < 2 * kFrame; ++i) {
         TEST_ASSERT_EQ(out[i], 6553);
     }
@@ -1436,7 +1393,7 @@ void run_audio_output_engine_tests() {
     testEmptyTerminatorDrainsVoice();
     testEvictsNewestVoiceWhenFull();
     testEvictionEmitsPassiveForTalker();
-    testLossConcealsInlineWithoutFec();
+    testLossConcealsInline();
     testBurstLossConcealsEachFrame();
     testLossJointsAreNotBlended();
     testRealOpusLossStaysContinuous();

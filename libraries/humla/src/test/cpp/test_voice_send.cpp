@@ -380,8 +380,8 @@ void testHalfDuplexRenderSilences() {
     // exceed 100 peak; the muted render must be all zeros.
     auto fakeFactory = [] {
         struct FakeDecoder : public mumla::audio::IOutputDecoder {
-            int decodeFloat(const uint8_t*, size_t, float* out, int maxSamples,
-                            int) override {
+            int decodeFloat(const uint8_t*, size_t, float* out,
+                            int maxSamples) override {
                 const int n = std::min<int>(480, maxSamples);
                 for (int i = 0; i < n; ++i) out[i] = 0.5f;
                 return n;
@@ -501,21 +501,17 @@ void testSendStartStopIdempotent() {
     std::cout << "  [PASS] testSendStartStopIdempotent" << std::endl;
 }
 
-/** Constant-level decoder; counts FEC attempts and concealment frames. */
+/** Constant-level decoder; counts concealment frames. */
 class CallbackDecoder : public IOutputDecoder {
 public:
-    CallbackDecoder(int* fecAttempts, int* concealedFrames, bool payloadLevel)
-        : m_fecAttempts(fecAttempts),
-          m_concealedFrames(concealedFrames),
+    CallbackDecoder(int* concealedFrames, bool payloadLevel)
+        : m_concealedFrames(concealedFrames),
           m_payloadLevel(payloadLevel) {}
 
     int decodeFloat(const uint8_t* data, size_t length, float* out,
-                    int maxSamples, int decodeFec) override {
+                    int maxSamples) override {
         const int n = std::min<int>(480, maxSamples);
-        if (decodeFec != 0 && m_fecAttempts != nullptr) {
-            ++(*m_fecAttempts);
-        }
-        float level = decodeFec != 0 ? 0.3f : 0.2f;
+        float level = 0.2f;
         if (m_payloadLevel && data != nullptr && length > 0 && data[0] == 0) {
             level = 0.0f;
         }
@@ -536,17 +532,15 @@ public:
     void reset() override {}
 
 private:
-    int* m_fecAttempts;
     int* m_concealedFrames;
     bool m_payloadLevel;
 };
 
 AudioOutputEngine::DecoderFactory callbackDecoderFactory(
-    int* fecAttempts = nullptr, int* concealedFrames = nullptr,
-    bool payloadLevel = false) {
-    return [fecAttempts, concealedFrames, payloadLevel] {
-        return std::make_unique<CallbackDecoder>(fecAttempts,
-                                                concealedFrames, payloadLevel);
+    int* concealedFrames = nullptr, bool payloadLevel = false) {
+    return [concealedFrames, payloadLevel] {
+        return std::make_unique<CallbackDecoder>(concealedFrames,
+                                                payloadLevel);
     };
 }
 
@@ -570,11 +564,9 @@ InboundPacket makeSilentInboundPacket(int32_t session, uint32_t sequence) {
 
 /** The real objects behind one VoiceStreamContext, as in JNI. */
 struct StreamFixture {
-    explicit StreamFixture(int* fecAttempts = nullptr,
-                           int* concealedFrames = nullptr,
+    explicit StreamFixture(int* concealedFrames = nullptr,
                            bool payloadLevel = false)
-        : io(callbackDecoderFactory(fecAttempts, concealedFrames,
-                                    payloadLevel)),
+        : io(callbackDecoderFactory(concealedFrames, payloadLevel)),
           send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr),
           streams(&io, &send) {}
 
@@ -648,13 +640,11 @@ void testRenderCallbackChunksGateAndConceal() {
         }
         TEST_ASSERT_EQ(audioChunk, AudioOutputEngine::GATE_TIMEOUT_FRAMES);
     }
-    // Every single loss is concealed in place, wherever it falls: no FEC
-    // decode is ever attempted (upstream parity), and the gap still plays
-    // concealment rather than silence-and-stall.
+    // Every single loss is concealed in place, wherever it falls (upstream
+    // parity), rather than stalling.
     auto runGap = [](uint32_t gap) {
-        int fecAttempts = 0;
         int concealedFrames = 0;
-        StreamFixture fixture(&fecAttempts, &concealedFrames);
+        StreamFixture fixture(&concealedFrames);
         for (uint32_t seq = 0; seq <= 12; ++seq) {
             if (seq == gap) continue;
             TEST_ASSERT_TRUE(
@@ -664,7 +654,6 @@ void testRenderCallbackChunksGateAndConceal() {
         for (int i = 0; i < kCallsPerChunk * 24; ++i) {
             (void)renderStreamFrames(&fixture.streams, out.data(), 96);
         }
-        TEST_ASSERT_EQ(fecAttempts, 0);
         TEST_ASSERT_TRUE(concealedFrames > 0);
     };
     for (uint32_t gap = 2; gap <= 11; ++gap) {
@@ -708,7 +697,7 @@ void testRenderNonSilentFramesTrackEachFrame() {
     // and nonSilentFrames must flag only the audible ones. (The AAudio
     // callback now renders one frame per call, so this per-frame mask is
     // pinned at the VoiceIo level.)
-    StreamFixture fixture(nullptr, nullptr, true);
+    StreamFixture fixture(nullptr, true);
     for (uint32_t seq = 0; seq <= 11; ++seq) {
         TEST_ASSERT_TRUE(fixture.io.pushInbound(
             seq % 2u == 0u ? makeSilentInboundPacket(23, seq)

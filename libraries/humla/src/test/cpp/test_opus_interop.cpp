@@ -83,7 +83,7 @@ void testEncodeDecodeRoundTrip() {
 
     std::vector<float> out(kMaxDecoded, 0.0f);
     const int decoded = decoder.decodeFloat(packet.data(), static_cast<size_t>(encoded),
-                                            out.data(), kMaxDecoded, 0);
+                                            out.data(), kMaxDecoded);
     TEST_ASSERT_EQ(decoded, kFrame);
     // Decoded output must be finite audio with real energy: the 440 Hz
     // source at amplitude 20000/32768 has mean-abs ~0.39 (2/pi of peak),
@@ -119,7 +119,7 @@ void testSilenceRoundTrip() {
     TEST_ASSERT_TRUE(encoded > 0);
     std::vector<float> out(kMaxDecoded, 1.0f);
     const int decoded = decoder.decodeFloat(packet.data(), static_cast<size_t>(encoded),
-                                            out.data(), kMaxDecoded, 0);
+                                            out.data(), kMaxDecoded);
     TEST_ASSERT_EQ(decoded, static_cast<int>(pcm.size()));
     // Silence in must stay near silence out: mean-abs must be tiny, not
     // just finite, so a decoder echoing the 1.0f prefill (or loud garbage)
@@ -146,10 +146,10 @@ void testDecodeEmptyPacketIsSane() {
     // contract (decodeConcealment routes through here). Anything else —
     // error or overrun — fails.
     std::vector<float> out(kFrame, 0.0f);
-    const int r1 = decoder.decodeFloat(nullptr, 0, out.data(), kFrame, 0);
+    const int r1 = decoder.decodeFloat(nullptr, 0, out.data(), kFrame);
     TEST_ASSERT_EQ(r1, kFrame);
     const uint8_t oneByte[1] = {0x00};
-    const int r2 = decoder.decodeFloat(oneByte, 0, out.data(), kFrame, 0);
+    const int r2 = decoder.decodeFloat(oneByte, 0, out.data(), kFrame);
     TEST_ASSERT_EQ(r2, kFrame);
     for (int i = 0; i < kFrame; ++i) {
         TEST_ASSERT_TRUE(std::isfinite(out[i]));
@@ -184,7 +184,7 @@ void testDecodeTruncatedPacketNoCrash() {
     std::vector<float> out(kMaxDecoded, 0.0f);
     for (int len = 1; len < encoded; ++len) {
         const int r = decoder.decodeFloat(packet.data(), static_cast<size_t>(len),
-                                          out.data(), kMaxDecoded, 0);
+                                          out.data(), kMaxDecoded);
         TEST_ASSERT_TRUE(r <= kMaxDecoded);
         const int span = OpusVoiceDecoder::packetSampleCount(
             packet.data(), static_cast<size_t>(len));
@@ -243,7 +243,7 @@ void testEncoderBitrateCrossesApplicationSwitch() {
             TEST_ASSERT_TRUE(len > 0);
             TEST_ASSERT_EQ(decoder.decodeFloat(packet.data(),
                                                static_cast<size_t>(len),
-                                               out.data(), kMaxDecoded, 0),
+                                               out.data(), kMaxDecoded),
                            kFrame);
         }
     }
@@ -262,7 +262,7 @@ void testDecodeOversizedPacketNoCrash() {
     // must return an error, never a positive count, never crash.
     std::vector<uint8_t> big(4096, 0xFF);
     std::vector<float> out(kMaxDecoded, 0.0f);
-    const int r = decoder.decodeFloat(big.data(), big.size(), out.data(), kMaxDecoded, 0);
+    const int r = decoder.decodeFloat(big.data(), big.size(), out.data(), kMaxDecoded);
     TEST_ASSERT_TRUE(r <= 0);
     const int span = OpusVoiceDecoder::packetSampleCount(big.data(), big.size());
     TEST_ASSERT_TRUE(span <= 0);
@@ -319,7 +319,7 @@ void testDecodeFuzzFixedSeed() {
             }
         }
         const uint8_t* data = len > 0 ? buf.data() : nullptr;
-        const int r = decoder.decodeFloat(data, len, out.data(), kMaxDecoded, 0);
+        const int r = decoder.decodeFloat(data, len, out.data(), kMaxDecoded);
         TEST_ASSERT_TRUE(r <= kMaxDecoded);
         if (data != nullptr && len > 0) {
             const int span = OpusVoiceDecoder::packetSampleCount(data, len);

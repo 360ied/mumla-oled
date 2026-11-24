@@ -70,7 +70,7 @@ public:
     explicit FakeDecoder(float level = 0.5f) : m_level(level) {}
 
     int decodeFloat(const uint8_t* /*data*/, size_t /*len*/, float* out,
-                    int maxSamples, int /*decodeFec*/) override {
+                    int maxSamples) override {
         const int n = std::min<int>(kFrame, maxSamples);
         for (int i = 0; i < n; ++i) {
             out[i] = m_level;

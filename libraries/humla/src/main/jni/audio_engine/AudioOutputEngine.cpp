@@ -654,7 +654,7 @@ void AudioOutputEngine::render(int16_t* out, size_t samples,
                 producedAudio = true;
                 const int decoded = voice->decoder->decodeFloat(
                     reinterpret_cast<uint8_t*>(packet.data), packet.len,
-                    m_frameScratch, MAX_DECODE_SAMPLES, 0);
+                    m_frameScratch, MAX_DECODE_SAMPLES);
                 if (decoded > 0) {
                     voice->consecutiveErrors = 0;
                     float peak = 0.0f;
