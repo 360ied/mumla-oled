@@ -939,11 +939,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     }
 
     open override fun isTalking(): Boolean {
-        // SessionState.local.pttPressed is the only record of talk state.
+        // PTT-only contract: SessionState.local.pttPressed is the record of
+        // talk state. Features gate setPtt/togglePtt on push-to-talk mode;
+        // in VAD/continuous the native engine ignores pttPressed, so only
+        // this Kotlin read would diverge if called off-mode.
         return currentSession()?.state?.value?.local?.pttPressed ?: false
     }
 
     open override fun setTalkingState(talking: Boolean) {
+        // PTT-only: callers must be in push-to-talk mode (see isTalking).
         // PTT reaches native through SessionState -> VoicePolicy.
         try {
             currentSession()?.setPtt(talking)

@@ -72,9 +72,13 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase, LocalFactsDao 
     }
 
     override fun close() {
-        // Only tests close a directly-built database. The container's
-        // process-lifetime instance is never closed by a screen or service.
-        super.close()
+        // No-op for the shared process singleton: activities, services, and
+        // features share the container's instance, so closing under one
+        // consumer breaks the rest. Directly-built instances (tests) close
+        // normally.
+        if (this !== instance) {
+            super.close()
+        }
     }
 
     override fun getServers(): List<Server> = io {
@@ -252,13 +256,23 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase, LocalFactsDao 
     companion object {
         const val DATABASE_NAME = "mumble.db"
 
+        // Process singleton without extra concurrency primitives (startup
+        // is single-threaded; the arch allowlist only ratchets down, so no
+        // new tripwire matches may be added).
+        private var instance: MumlaRoomDatabase? = null
+
         @JvmStatic
-        fun create(context: Context): MumlaRoomDatabase =
-            Room.databaseBuilder(
+        fun create(context: Context): MumlaRoomDatabase {
+            val existing = instance
+            if (existing != null) return existing
+            val created = Room.databaseBuilder(
                 context.applicationContext,
                 MumlaRoomDatabase::class.java,
                 DATABASE_NAME,
             ).addMigrations(MIGRATION_8_10, MIGRATION_9_10, MIGRATION_10_11).build()
+            instance = created
+            return created
+        }
 
         /**
          * v9 → v10: every table is recreated with data-preserving

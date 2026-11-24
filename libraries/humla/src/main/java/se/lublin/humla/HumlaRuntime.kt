@@ -27,6 +27,7 @@ import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -148,6 +149,12 @@ class HumlaRuntime private constructor(
 
             lateinit var client: HumlaClient
             val voiceThread = Dispatchers.IO.limitedParallelism(1)
+            // Child of the caller's scope so test teardown cancels voice
+            // control coroutines with the container (application-lifetime in
+            // prod, per-test in Robolectric).
+            val voiceScope = CoroutineScope(
+                scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]) + voiceThread,
+            )
             val voiceEngine = VoiceEngine(
                 tunnelSink = { packet ->
                     try {
@@ -156,24 +163,27 @@ class HumlaRuntime private constructor(
                     }
                 },
                 talkPublisher = talkPublisher,
-                scope = CoroutineScope(SupervisorJob() + voiceThread),
+                scope = voiceScope,
                 engineFactory = edges.engineFactory,
                 context = appContext,
                 routeStates = routeControl.state,
                 prefs = inputs.routePreferences,
             )
 
-            // Registered once for the process; the client collects only while
-            // Reconnecting. The callback is never unregistered: this runtime
-            // lives as long as the process and the system holds binder refs.
+            // Registered once for the process in prod; the holder is kept so
+            // tests (and a future close()) can unregister. The callback
+            // lives as long as the runtime, which is process-lifetime.
+            var networkCallback: ConnectivityManager.NetworkCallback? = null
             try {
                 val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager?
                 if (cm != null) {
-                    cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                    val callback = object : ConnectivityManager.NetworkCallback() {
                         override fun onAvailable(network: Network) {
                             networkFlow.tryEmit(Unit)
                         }
-                    })
+                    }
+                    cm.registerDefaultNetworkCallback(callback)
+                    networkCallback = callback
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error registering network callback: ${e.message}")
@@ -260,14 +270,36 @@ class HumlaRuntime private constructor(
             }
             scope.launch {
                 try {
+                    // Diff per emission: StateFlow already dedups identical
+                    // snapshots, and we only fan out sessions whose hint
+                    // actually changed instead of every user on every tick.
+                    var lastUsers: Map<Int, TalkState>? = null
+                    var lastSelfTalking: Boolean? = null
                     talkPublisher.talkActivity.collect { activity ->
                         val selfSession = try {
                             client.currentSession.value?.getSessionId()
                         } catch (e: IllegalStateException) {
                             null
                         }
-                        for (session in mirror.value.server.users.keys) {
-                            val hint = if (session == selfSession) {
+                        val users = mirror.value.server.users.keys
+                        val current = HashMap<Int, TalkState>(users.size)
+                        for (session in users) {
+                            current[session] = if (session == selfSession) {
+                                if (activity.selfTalking) TalkState.TALKING else TalkState.PASSIVE
+                            } else {
+                                activity.users[session] ?: TalkState.PASSIVE
+                            }
+                        }
+                        val previous = lastUsers
+                        val selfChanged = lastSelfTalking != activity.selfTalking
+                        lastUsers = current
+                        lastSelfTalking = activity.selfTalking
+                        // First emission publishes all; later ones only deltas.
+                        // Membership changes (join/leave) surface because the
+                        // current key set differs from the previous one.
+                        for (session in users) {
+                            if (previous == null || selfChanged || previous[session] != current[session]) {
+                                val hint = if (session == selfSession) {
                                 UserHandle(
                                     session,
                                     mirror.asStateFlow(),
@@ -282,6 +314,7 @@ class HumlaRuntime private constructor(
                                 UserHandle(session, mirror.asStateFlow(), talkPublisher.talkActivity)
                             }
                             callbacks.onUserTalkStateUpdated(hint)
+                            }
                         }
                     }
                 } catch (e: Exception) {

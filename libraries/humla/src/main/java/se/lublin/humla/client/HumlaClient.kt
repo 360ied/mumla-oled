@@ -27,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -94,7 +95,13 @@ class HumlaClient(
 
     // Application-lifetime: features subscribe once, when the container
     // starts them, so a new session cannot emit before its collectors exist.
-    private val _events = MutableSharedFlow<SessionEventRecord>(extraBufferCapacity = 256)
+    // DROP_OLDEST + tryEmit: the session message loop must never suspend on
+    // a slow feature (see FeatureEventQueue); a burst drops the oldest
+    // record instead of stalling TCP inbound handling.
+    private val _events = MutableSharedFlow<SessionEventRecord>(
+        extraBufferCapacity = 256,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     val events: SharedFlow<SessionEventRecord> = _events.asSharedFlow()
 
     // All lifecycle vars below are confined to clientDispatcher; cross-thread
@@ -307,7 +314,7 @@ class HumlaClient(
             localFactsStore = localFactsStore,
             mainPoster = mainPoster,
             denyFormatter = denyFormatter,
-            eventSink = { event, state -> _events.emit(SessionEventRecord(event, state)) },
+            eventSink = { event, state -> _events.tryEmit(SessionEventRecord(event, state)); Unit },
             workDispatcher = sessionDispatcher,
             ioDispatcher = ioDispatcher,
             clock = clock,

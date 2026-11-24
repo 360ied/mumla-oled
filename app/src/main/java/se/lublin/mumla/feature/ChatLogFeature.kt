@@ -85,13 +85,18 @@ class ChatLogFeature(
     fun start(scope: CoroutineScope) {
         val child = scope.featureChild()
         val sink = lineSink ?: { line: ChatLine -> append(line) }
-        val queue = FeatureEventQueue<SessionEventRecord>(child) { record ->
-            for (line in formatter.lines(record)) sink(line)
+        // Single ChatLine queue: session and voice lines share one drain so
+        // ordering and backpressure tests cover both, and a slow sink never
+        // stalls the session emitter.
+        val lineQueue = FeatureEventQueue<ChatLine>(child) { line -> sink(line) }
+        child.launch {
+            events.collect { record ->
+                for (line in formatter.lines(record)) lineQueue.offer(line)
+            }
         }
-        child.launch { events.collect { queue.offer(it) } }
         child.launch { clientState.collect { onClientState(it) } }
         child.launch {
-            voiceEvents.collect { formatter.voiceLine(it)?.let { line -> append(line) } }
+            voiceEvents.collect { formatter.voiceLine(it)?.let { lineQueue.offer(it) } }
         }
         child.launch {
             appLog.collect { append(ChatLine(it.text, it.warning)) }

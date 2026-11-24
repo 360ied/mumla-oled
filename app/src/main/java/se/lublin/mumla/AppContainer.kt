@@ -389,7 +389,12 @@ open class AppContainer(
     }
 
     private val initialVoiceSettings: VoiceSettings
-        get() = settingsRepository.state.value.snapshot.toVoiceSettings()
+        get() = try {
+            settingsRepository.state.value.snapshot.toVoiceSettings()
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Rejecting invalid startup voice settings", e)
+            VoiceSettingsMapper.initialFromDefaults()
+        }
 
     private val initialRoutePreferences: RoutePreferences
         get() = settingsRepository.state.value.snapshot.toRoutePreferences()
@@ -429,14 +434,24 @@ open class AppContainer(
         private const val TAG = "AppContainer"
         private const val SETTINGS_FILE = "settings"
 
+        // Process singleton without concurrency primitives (startup is
+        // single-threaded; see MumlaRoomDatabase for the ratchet note).
+        private var settingsInstance: DataStore<Preferences>? = null
+
+        // Exactly one DataStore per file per process: Room and DataStore both
+        // forbid concurrent instances on one file.
         private fun createSettingsStore(context: Context): DataStore<Preferences> {
+            val existing = settingsInstance
+            if (existing != null) return existing
             val appContext = context.applicationContext
             val defaultPrefsName = appContext.packageName + "_preferences"
-            return PreferenceDataStoreFactory.create(
+            val created = PreferenceDataStoreFactory.create(
                 migrations = listOf(SharedPreferencesMigration(appContext, defaultPrefsName)),
                 scope = CoroutineScope(Dispatchers.IO + SupervisorJob()),
                 produceFile = { appContext.preferencesDataStoreFile(SETTINGS_FILE) },
             )
+            settingsInstance = created
+            return created
         }
     }
 }

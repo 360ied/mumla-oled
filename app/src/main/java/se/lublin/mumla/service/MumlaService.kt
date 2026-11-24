@@ -85,6 +85,9 @@ open class MumlaService : HumlaService(), IMumlaService {
             IntentCompat.getParcelableExtra(request, EXTRA_SERVER, Server::class.java)
         }
         if (connected == null) return null
+        // A new connect attempt clears the dismissed-error flag so a second
+        // failure shows its dialog (step 7 moves this flag to MainViewModel).
+        mErrorShown = false
 
         val builder = ConfigDelta.Builder()
         builder.server = connected

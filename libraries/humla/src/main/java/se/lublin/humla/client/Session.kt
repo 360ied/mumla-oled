@@ -105,7 +105,7 @@ class Session internal constructor(
     private val localFactsStore: LocalFactsStore,
     private val mainPoster: (Runnable) -> Unit,
     private val denyFormatter: (SessionEvent.PermissionDenied) -> String,
-    private val eventSink: suspend (SessionEvent, SessionState) -> Unit = { _, _ -> },
+    private val eventSink: (SessionEvent, SessionState) -> Unit = { _, _ -> },
     private val workDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: Clock = Clock.systemUTC(),
@@ -349,9 +349,18 @@ class Session internal constructor(
         }
     }
 
-    private suspend fun emitAll(events: List<SessionEvent>) {
+    private fun emitAll(events: List<SessionEvent>) {
+        // Snapshot once: every record from one transition carries the same
+        // post-transition state (SessionEventRecord contract).
+        val snapshot = _state.value
         for (event in events) {
-            eventSink(event, _state.value)
+            eventSink(event, snapshot)
+        }
+    }
+
+    private fun emitAll(events: List<SessionEvent>, snapshot: SessionState) {
+        for (event in events) {
+            eventSink(event, snapshot)
         }
     }
 
@@ -666,10 +675,10 @@ class Session internal constructor(
                 val msg = message as Mumble.TextMessage
                 var received: SessionEvent.TextMessageReceived? = null
                 if (!synced) {
+                    // No informational events pre-SYNCED (state.md#events):
+                    // fold the text into syncing state without emitting.
                     val result = applyTextMessage(syncingState, msg, clock.millis())
                     syncingState = result.state
-                    received = result.events.filterIsInstance<SessionEvent.TextMessageReceived>().firstOrNull()
-                    if (received != null) emitAll(listOf(received))
                 } else {
                     _state.update { current ->
                         val result = applyTextMessage(current, msg, clock.millis())
@@ -772,9 +781,13 @@ class Session internal constructor(
             transport.send(out, HumlaTCPMessageType.UserState)
         } catch (ignored: Exception) {
         }
+        // Capture the post-transition state synchronously: the emit runs in a
+        // child launch, and a racing echo or second intent must not re-pair
+        // these events with a newer state.
+        val snapshot = _state.value
         scope.launch {
-            emitAll(events)
-            val s = _state.value
+            emitAll(events, snapshot)
+            val s = snapshot
             val selfSession = s.server.selfSession
             if (selfSession != null && s.server.users.containsKey(selfSession)) {
                 val handle = UserHandle(selfSession, state, talkActivity)
@@ -1056,6 +1069,7 @@ class Session internal constructor(
         } catch (ignored: Exception) {
             return
         }
+        val snapshot = _state.value
         scope.launch {
             eventSink(
                 SessionEvent.TextMessageSent(
@@ -1065,7 +1079,7 @@ class Session internal constructor(
                     message = message,
                     sentAtMillis = clock.millis(),
                 ),
-                _state.value,
+                snapshot,
             )
         }
     }

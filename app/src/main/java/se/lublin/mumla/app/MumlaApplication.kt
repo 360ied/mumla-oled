@@ -41,12 +41,24 @@ open class MumlaApplication : Application() {
         val settings = container.settings
         applyTheme(settings)
         applyLanguage(settings)
-        // Theme and locale follow the settings flow. The legacy listener
-        // bridge stays for the screens that still register until step 7.
+        // Theme and locale follow the settings flow. Only re-apply on actual
+        // theme/language change: unrelated pref writes must not poke the
+        // night-mode delegate or locale manager. The legacy listener bridge
+        // stays for the screens that still register until step 7.
         container.appScope.launch(Dispatchers.Main.immediate) {
+            var lastTheme: String? = settings.theme
+            var lastLanguage: String? = settings.language
             container.settingsRepository.state.collect {
-                applyTheme(settings)
-                applyLanguage(settings)
+                val theme = settings.theme
+                val language = settings.language
+                if (theme != lastTheme) {
+                    lastTheme = theme
+                    applyTheme(settings)
+                }
+                if (language != lastLanguage) {
+                    lastLanguage = language
+                    applyLanguage(settings)
+                }
             }
         }
         HumlaService.init(this)
