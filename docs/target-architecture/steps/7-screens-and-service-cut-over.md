@@ -18,17 +18,18 @@ Each piece has a destination before the class is deleted:
 
 | Today (`HumlaService`, `MumlaService`) | Target | Commit |
 |---|---|---|
-| Wake lock and Wi-Fi lock, with their windows | `ConnectionService`, unchanged | 10 |
-| Posting the connection notification and removing it on `Idle` or `Failed` | `ConnectionService`, which stops itself instead | 10 |
-| `buildConnectDelta`, `apply`, and `connect`: saved-server lookup, certificate, access tokens, trust store with `isTrustStorePathAllowed`, client name | `ConnectTargets.build` in `:app` (`suspend`), called by the container's connect path | 10 |
+| Wake lock and Wi-Fi lock, with their windows | `ConnectionService`, unchanged | 11 |
+| Posting the connection notification and removing it on `Idle` or `Failed` | `ConnectionService`, which stops itself instead | 11 |
+| `buildConnectDelta`, `apply`, and `connect`: saved-server lookup, certificate, access tokens, trust store with `isTrustStorePathAllowed`, client name | `ConnectTargets.build` in `:app` (`suspend`), called by the container's connect path | 11 |
 | `HumlaService.init` (MiniDNS link properties and the 800 ms resolver timeout), called from `MumlaApplication.onCreate` | The first thing `HumlaRuntime.create` does | 10 |
 | `lastServer.setResolved` on `Connected`, whose only reader is `ServerInfoFragment` (through `getSrvHost`) | `ServerInfoViewModel` reads `session.transport.remoteHost` and `remotePort`; `Server.setResolved` is deleted | 1 |
-| `pendingVoiceTarget`: applied on `Connected`, reset to normal on every disconnect with an `onVoiceTargetChanged` callback | Deleted. The voice target lives in `SessionState.local`, and a new session starts at normal. Its only caller, `ChannelMenu`, sets a target on a synced session | 10 |
-| `ClientError.toHumlaException`, `getConnectionState`, `getConnectionError`, `isReconnecting`, `getReconnectAttempts`, `getReconnectDelay`, `getTargetServer` | Screens read `ClientState` and `ClientError` directly (see [client](../client.md#intents)); the members go with their last caller | 1–10 |
-| Connection-state fan-out into `HumlaCallbacks` (`onConnecting`, `onConnected`, `onDisconnected`, `onTLSHandshakeFailed`, `onVoiceTargetChanged`) | Nothing: by commit 10 no observer is left | 10 |
-| `setSelfMuteDeafState`'s self `onUserStateUpdated` repaint hint | Nothing: screens collect the self `UserInfo` | 10 |
+| `pendingVoiceTarget`: applied on `Connected`, reset to normal on every disconnect with an `onVoiceTargetChanged` callback | Deleted. The voice target lives in `SessionState.local`, and a new session starts at normal. Its only caller, `ChannelMenu`, sets a target on a synced session | 11 |
+| `ClientError.toHumlaException`, `getConnectionState`, `getConnectionError`, `isReconnecting`, `getReconnectAttempts`, `getReconnectDelay`, `getTargetServer` | Screens read `ClientState` and `ClientError` directly (see [client](../client.md#intents)); the members go with their last caller | 1–11 |
+| Connection-state fan-out into `HumlaCallbacks` (`onConnecting`, `onConnected`, `onDisconnected`, `onTLSHandshakeFailed`, `onVoiceTargetChanged`) | Nothing: by commit 11 no observer is left | 11 |
+| `setSelfMuteDeafState`'s self `onUserStateUpdated` repaint hint | Nothing: screens collect the self `UserInfo` | 11 |
 | The error-shown flag (`isErrorShown`, `markErrorShown`, reset when a connect starts) | `MainViewModel` | 9 |
-| `MumlaService.onStartCommand`'s notification-action branch | Deleted; the actions already go to `NotificationActionReceiver` | 10 |
+| `MumlaService.onStartCommand`'s notification-action branch | Deleted; the actions already go to `NotificationActionReceiver` | 11 |
+| `MumlaService`'s companion constants: the notification `ACTION_*` values, and `EXTRA_SERVER` and `EXTRA_SERVER_ID` for the connect intent | The `ACTION_*` values move to `NotificationActionReceiver`; the extras go with the connect intent | 10, 11 |
 
 **Rules for commits 1–9.**
 
@@ -77,10 +78,12 @@ Commits, in order:
    to 4). `getSrvHost` and `getSrvPort` stay for `ServerInfoTask`'s
    server-list pings.
 2. **`AccessTokenFragment`.** `AccessTokenViewModel` loads the server's
-   tokens through `database.query` (commit 11 turns these into direct
+   tokens through `database.query` (commit 12 turns these into direct
    `suspend` calls). It saves each added or removed token, and after each
    change it sends the full list with `session.sendAccessTokens` when a
    session exists, as the fragment does today through `HumlaSession()`.
+   The fragment's `AccessTokenListener` interface, which nothing
+   implements, is deleted.
 3. **Comment fragments.** `CommentViewModel` serves `UserCommentFragment`
    and `ChannelDescriptionFragment`. It reads the user's `comment` or the
    channel's `description` from state, and requests the blob
@@ -157,9 +160,13 @@ Commits, in order:
 8. **Settings screens.** `SettingsActivity` stops binding `MumlaService`,
    and `CrashReportsFragment` gets a small ViewModel over `client.state`.
    The crash-test buttons are enabled while the state is `Idle` or
-   `Failed`. That replaces today's "bound and not connected" condition,
-   whose "bound" half means only that a service instance happened to be
-   running. The `crash_test_unbound` string, which has no translations, is
+   `Failed`, and the click-time re-checks test the same condition. That
+   replaces today's "bound and not connected" condition. Its "bound" half
+   was fail-closed for when no service instance was running to ask;
+   `client.state` always answers. It is stricter on purpose: today
+   `isConnected()` is false while `Connecting` or `Reconnecting`, so the
+   buttons can crash the process mid-reconnect, and from this commit they
+   cannot. The `crash_test_unbound` string, which has no translations, is
    deleted.
 9. **`MumlaActivity` and `MainViewModel`.** `MainViewModel` takes over
    the activity rows of the
@@ -167,7 +174,9 @@ Commits, in order:
    - **No binding.** The activity's `ServiceConnection`,
      `mServiceFragments`, the reconnect observers, and the pending-reconnect
      server are deleted. So are `HumlaServiceProvider` and
-     `HumlaServiceFragment`, whose last users go in commits 1–8.
+     `HumlaServiceFragment`, whose last users go in commits 1–8 (with
+     `CommentDialogStubHost`, the test host that implements the provider,
+     in commit 3).
    - **Connection state.** The reconnect countdown comes from
      `Reconnecting.retryAtMillis`, and the wrong-password retry from
      `Failed(Rejected)`. The TLS trust dialogs come from `Failed(Trust)`,
@@ -201,14 +210,27 @@ Commits, in order:
      directly. This removes all five tripwire matches in the activity (two
      `Thread`s, `runBlocking`, the crash `Handler`, and the `@Volatile`
      generation), and `MumlaActivity.kt` (5) leaves the allowlist.
-   - **Connect.** Until commit 10, `MainViewModel.connect` builds today's
+   - **Connect.** Until commit 11, `MainViewModel.connect` builds today's
      `ACTION_CONNECT` intent and starts `MumlaService` with it, and
      `ServerConnectTask`, an `AsyncTask` that only built that intent, is
      deleted. Nothing binds `MumlaService` after this commit. The started
      service still posts the notification and connects, as on `master`.
 
    `MainViewModel` tests cover each row above.
-10. **`ConnectionService` and the connect path.** This is one commit,
+10. **Move what outlives the services.** Two moves with no behavior
+    change, so that commit 11 only swaps the services:
+    - The notification action constants (`ACTION_DISCONNECT`,
+      `ACTION_MUTE`, `ACTION_DEAFEN`, `ACTION_TOGGLE_OVERLAY`,
+      `ACTION_CANCEL_RECONNECT`) move from `MumlaService`'s companion to
+      `NotificationActionReceiver`, which already receives them.
+      `ConnectionNotificationFeature`, `MumlaConnectionNotification`,
+      `ConnectionNotificationFeatureTest`, `MumlaConnectionNotificationTest`,
+      and `MumlaConnectionNotificationMediaKeyTest` follow.
+    - `HumlaService.init` (the MiniDNS setup) moves into
+      `HumlaRuntime.create`, so `MumlaApplication` no longer calls it.
+
+    The notification tests and `check.sh` cover it unchanged.
+11. **`ConnectionService` and the connect path.** This is one commit,
     because the swap is atomic: two services cannot both own the
     connection notification and the locks.
     - **`ConnectTargets.build`.** A `suspend` function in `:app` builds the
@@ -248,21 +270,30 @@ Commits, in order:
     - **Deleted:** `MumlaService`, `IMumlaService`, `HumlaService`,
       `IHumlaService`, `IHumlaSession`, `HumlaDisconnectedException`,
       `ConfigDelta` (with `CertRef` and its `TrustStoreRef` twin), and the
-      `HumlaService` tests (`HumlaServiceApplyTest` and the rest). Their
-      cases that still describe behavior become `ConnectTargets` and
-      lifecycle tests. `HumlaService.init` moves into
-      `HumlaRuntime.create`, so `MumlaApplication` no longer names the
-      service.
+      `HumlaService` tests. `HumlaServiceApplyTest`'s cases that still
+      describe behavior (trust-store path validation, server snapshot,
+      certificate and token mapping) become `ConnectTargets` tests.
+      `HumlaServiceVoiceTargetTest` is deleted with `pendingVoiceTarget`,
+      whose behavior is dropped on purpose (see the table above).
+      Comments in tests that name the deleted classes
+      (`ClientTestSupport`, `ReconnectPolicyTest`, the interop clients)
+      are reworded.
+    - **Tests that name the deleted constants.** `AppContainerLifecycleTest`
+      stops using `MumlaService.EXTRA_SERVER`; the rewrite below drives
+      the container's connect path instead.
     - **Lifecycle test.** `AppContainerLifecycleTest` is rewritten for
       `ConnectionService` in this commit, because this commit makes the
       service live (see the done-when list).
-11. **Storage off the main thread.**
+    - **Interop.** The connect path changes, so `./scripts/test_interop.sh`
+      runs on this commit and must stay green.
+12. **Storage off the main thread.**
     - `MumlaDatabase`'s methods become `suspend`, each running on
       `Dispatchers.IO`. The `runBlocking` bridge (`io`) and `query` are
       deleted, along with `isCommentSeen` and `markCommentSeen`, which
       nothing calls.
     - The `database.query` calls from commits 2 and 6 become direct
-      calls.
+      calls. (`container.database` is `MumlaRoomDatabase`, which declares
+      `query`; until this commit the ViewModels use it.)
     - Screens without a ViewModel call the database from `lifecycleScope`:
       `FavouriteServerListFragment`, `ServerEditFragment`, the
       favourites code in `MumlaActivity`, and the certificate activities.
@@ -277,7 +308,7 @@ Commits, in order:
       `OnSettingChangedListener`, and `SettingsRepository`'s listener code.
       `SettingsRepository.kt` (3) and `MumlaRoomDatabase.kt` (2) leave the
       allowlist.
-12. **Observer bridge and compatibility types.** `HumlaClient` and
+13. **Observer bridge and compatibility types.** `HumlaClient` and
     `Session` lose the observer, the main-thread poster, and the deny
     formatter. `HumlaRuntime` loses `callbacks`, the observer-bridge
     collectors (route, SCO, and talk hints), and `Inputs.denyFormatter`,
@@ -297,16 +328,27 @@ Commits, in order:
     - the `model` whisper-target classes (`WhisperTarget`,
       `WhisperTargetChannel`, `WhisperTargetUsers`, `WhisperTargetList`),
       replaced by `state.WhisperTarget` since commits 4 and 6;
-    - `HandlesTest`, `ChannelAdapterTest`, and the other tests of deleted
-      types.
+    - `HandlesTest`, `ChannelAdapterTest`, and `WhisperTargetListTest`,
+      which test only deleted types.
+
+    Tests that pass an observer or read through handles move to state and
+    events in the same commit: `ClientTestSupport` (in both modules),
+    `HumlaClientTest`, `SessionTest`, `TransportImplTest`,
+    `TalkActivityPublisherTest`, and the interop suite. In the interop
+    suite, `InteropClient.create` loses its observer parameter, the no-op
+    observers in `MurmurConnectTest` and `MurmurVoiceGateInteropTest` go,
+    and the text test waits on a `TextMessageReceived` record from
+    `client.events` instead of `onMessageLogged`. Because `Session`
+    changes, `./scripts/test_interop.sh` runs on this commit and must stay
+    green. `AvatarCacheTest` moves to the `UserInfo` texture key in
+    commit 6.
 
     [Issue 07](../issues/07-channel-adapter-spike-weaker.md) is resolved
     by commit 6's test, since the handles it worries about are gone.
-13. **Docs.**
-    - The migration README's native-fence and binder-surface bullets each
-      get a dated "superseded" note that links the replacing decision (see
-      [below](../migration.md#decisions-this-reverses)); the original text
-      stays.
+14. **Docs.**
+    - The [decisions table](../migration.md#decisions-this-reverses)
+      records the native-fence and binder-surface reversals as done. The
+      old migration README is a historical record and is not edited.
     - The living specs drop the interim notes this step retires: the
       interim hand-off, the observer bridge, the chat log's step-6 inputs,
       the `HumlaRuntime` interim members, and the compatibility-handles
