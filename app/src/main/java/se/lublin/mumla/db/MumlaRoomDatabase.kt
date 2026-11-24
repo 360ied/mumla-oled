@@ -70,8 +70,8 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
     }
 
     override fun close() {
-        // No-op for the shared singleton only: activities, services, and Hilt
-        // share the process-lifetime instance, so closing under one consumer
+        // No-op for the shared singleton only: activities and services share
+        // the process-lifetime instance, so closing under one consumer
         // breaks the rest. Directly-built instances (tests) close normally.
         if (this !== instance) {
             super.close()

@@ -35,7 +35,7 @@ import se.lublin.mumla.BuildConfig
  * ApplicationExitInfo backstop drain with causal-key dedup.
  *
  * Crash-path uses only synchronous, capped file I/O (no DataStore,
- * Hilt, coroutines, or runBlocking). Handler work is capped; delegation to
+ * coroutines, or runBlocking). Handler work is capped; delegation to
  * the previous handler happens in a finally block.
  */
 object CrashReporter {

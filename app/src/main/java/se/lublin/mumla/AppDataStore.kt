@@ -33,8 +33,8 @@ import kotlinx.coroutines.SupervisorJob
  * Migration slice 2: the fleet's SharedPreferences must survive the move, so
  * the default prefs file (`<package>_preferences`, all keys) migrates via
  * [SharedPreferencesMigration] on first access. Exactly one instance may exist
- * per file per process — every consumer (Hilt graph, legacy [Settings]
- * facade) goes through [get].
+ * per file per process — every consumer (the legacy [Settings] facade and
+ * the app container) goes through [get].
  */
 object AppDataStore {
     const val FILE_NAME = "settings"

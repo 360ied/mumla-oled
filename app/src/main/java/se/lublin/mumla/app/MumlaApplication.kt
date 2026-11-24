@@ -20,13 +20,11 @@ package se.lublin.mumla.app
 import android.app.Application
 import android.content.Context
 import androidx.appcompat.app.AppCompatDelegate
-import dagger.hilt.android.HiltAndroidApp
 import se.lublin.humla.HumlaService
 import se.lublin.mumla.R
 import se.lublin.mumla.Settings
 import se.lublin.mumla.util.CrashReporter
 
-@HiltAndroidApp
 class MumlaApplication : Application(), Settings.OnSettingChangedListener {
     private var mSettings: Settings? = null
 

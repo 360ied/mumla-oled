@@ -26,8 +26,6 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -197,8 +195,7 @@ class MutablePrefs {
     var newsShownVersions: Set<String>? = null
 }
 
-@Singleton
-class SettingsRepository @Inject constructor(
+class SettingsRepository(
     private val store: DataStore<Preferences>,
 ) {
     // Java interop: java.util.function.Consumer (void methods) rather than Kotlin
