@@ -25,7 +25,7 @@ import kotlinx.collections.immutable.persistentListOf
  * Everything a connection needs, frozen when [HumlaClient.connect] is called.
  * See docs/target-architecture/client.md#connecttarget.
  *
- * Android-free: no android.* imports. Deeply immutable: ByteString blobs,
+ * Android-free: no Android imports. Deeply immutable: ByteString blobs,
  * persistent collections, data classes only.
  */
 data class ServerEndpoint(

@@ -23,6 +23,10 @@ step 1 and only ever gets stricter.
 `\bHandlerThread\s*\(`, `\bHandler\s*[\(.]`, `\brunBlocking\b`,
 `\bReentrantLock\b`, `\bReentrantReadWriteLock\b`, `\bExecutors\.`,
 `\bCountDownLatch\b`, `\bjava\.util\.concurrent\.locks\b`,
+`\bThreadPoolExecutor\b`, `\bForkJoinPool\b`,
+`\bScheduledExecutorService\b`, `\bnewSingleThreadContext\b`,
+`\bGlobalScope\b`, `\basExecutor\b`, `\bTimer\s*\(`, `\bHandlerCompat\b`,
+`\bAlarmManager\b`, `\bWorkManager\b`,
 `\bkotlin\.concurrent\.thread\b`.
 
 `\bThread\s*[({]` catches both `Thread(...)` and Kotlin's `Thread { … }`.
@@ -131,7 +135,9 @@ types exist.
 ## Android-free packages
 
 The check fails if any file in these packages imports `android.*`,
-`androidx.*`, or an `R` class:
+`androidx.*`, or an `R` class, or uses a fully-qualified `android.*` /
+`androidx.*` reference, reflection (`Class.forName`, `getIdentifier`), or
+an `"android.` string literal without an import:
 
 - `se.lublin.humla.state`
 - `se.lublin.humla.client`
@@ -152,7 +158,9 @@ in step 3, which is a strictness increase, not a relaxation.
 From step 6, `check_architecture.py` lists the feature classes in
 `app/src/main/java/se/lublin/mumla/feature/` (the classes that declare
 `fun start(scope: CoroutineScope)`) and fails if any file there names
-another file's feature class. Shared helpers in that package that are not
+another file's feature class. The set is closed: any `fun start` with a
+different signature (including `suspend fun start`) fails instead of
+silently dropping out of the feature set. Shared helpers in that package that are not
 features, such as the connection-line formatter that the chat log and TTS
 both use, may be referenced freely. Features get everything they share
 from the container (see [app](app.md#features)); a feature that needs
@@ -167,7 +175,9 @@ From step 6, `check_architecture.py` fails if a file under `app/src/main`
 other than the `LocalFactsStore` implementation and the `db` package (which
 declares these methods) contains a call to `.addLocalMutedUser(`,
 `.removeLocalMutedUser(`, `.addLocalIgnoredUser(`, `.removeLocalIgnoredUser(`,
-`localMuteDao()`, `localIgnoreDao()`, or `.setMutedAndDeafened(`. The
+`localMuteDao()`, `localIgnoreDao()`, `.setMutedAndDeafened(`, or the DAO-level
+wrappers `insertLocalMutedUser(`, `deleteLocalMutedUser(`,
+`insertLocalIgnoredUser(`, `deleteLocalIgnoredUser(`. The
 patterns are call sites, so declarations and tests never match, and the
 store's `suspend` path through the DAOs is covered by the DAO patterns.
 The session decides local mute, ignore, and self-mute, and its store is
@@ -229,7 +239,15 @@ libraries/humla/src/main/jni/crypto/NativeCryptStateJni.cpp: <jni.h>
   `NativeCrashTestJni.cpp` moved to `jni/diagnostics/`. The block above is
   the step-1 seed; the live list is the `[native]` section of
   `scripts/architecture-allowlist.txt`.
-- Logging through `<android/log.h>` is not forbidden.
+- Logging through `<android/log.h>` is not forbidden. Other `<sys/>` /
+  `<asm/>` / SIMD-intrinsic headers for CPU detection (such as
+  `<sys/auxv.h>`) remain allowed; only the listed I/O, thread, and JNI
+  headers are banned.
+
+Body-level indirection is also banned in the same three directories:
+`dlopen`, `dlsym`, `AAudio_`, `Oboe`, `oboe/`, `syscall`, `mmap`,
+`pthread_create`, `std::thread`, `__has_include`. All absent today; the
+tripwire fails on any occurrence.
 
 `voice_io/` is the only native directory allowed to include socket,
 AAudio, thread, and JNI headers. Third-party submodules (`opus`,

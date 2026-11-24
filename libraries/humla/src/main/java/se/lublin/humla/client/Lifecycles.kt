@@ -81,7 +81,7 @@ class NoopRouteLifecycle : RouteLifecycle {
  * with this (see migration.md ground rules).
  *
  * Android-free implementation: the JVM/Android main thread is named
- * "main". This deliberately avoids android.os.Looper so the client
+ * "main". This deliberately avoids the platform main-looper API so the
  * package stays import-clean for plain JVM tests; the app-layer
  * route/voice threads (step 4) assert off-main the same way.
  */

@@ -88,7 +88,7 @@ import se.lublin.humla.util.IHumlaObserver
  * One connection. Created by the client for each attempt and never reused.
  * See docs/target-architecture/client.md#session.
  *
- * Android-free: no android.* imports. All lifecycle logic runs in the
+ * Android-free: no Android imports. All lifecycle logic runs in the
  * session scope; intents are non-blocking (one atomic update and/or one
  * enqueued TCP message). Decisions that depend on current state happen
  * inside update, never after reading state.value.

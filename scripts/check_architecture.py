@@ -87,6 +87,21 @@ CONCURRENCY_PATTERNS = (
     r"\bExecutors\.",
     r"\bCountDownLatch\b",
     r"\bjava\.util\.concurrent\.locks\b",
+    # Constructor-form pools evade Executors.: all create real threads.
+    r"\bThreadPoolExecutor\b",
+    r"\bForkJoinPool\b",
+    r"\bScheduledExecutorService\b",
+    # Coroutine thread factories and unstructured scopes.
+    r"\bnewSingleThreadContext\b",
+    r"\bGlobalScope\b",
+    r"\basExecutor\b",
+    # java.util.Timer spawns its own thread; TimerTask alone does not.
+    r"\bTimer\s*\(",
+    # Compat factory evades the Handler pattern (HandlerCompat, not Handler).
+    r"\bHandlerCompat\b",
+    # System schedulers that run work off the calling thread.
+    r"\bAlarmManager\b",
+    r"\bWorkManager\b",
     # Lowercase thread creation (kotlin.concurrent.thread { }): the bare word
     # is too noisy in prose ("render thread (" appears in comments, and
     # comments count by design), so only the import-qualified form is
@@ -118,6 +133,13 @@ ANDROID_FREE_NET_EXCLUDE = {"HumlaSSLSocketFactory.kt"}
 RE_ANDROID_IMPORT = re.compile(r"^\s*import\s+android\.")
 RE_ANDROIDX_IMPORT = re.compile(r"^\s*import\s+androidx\.")
 RE_R_IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?[\w.]+\.R\b")
+# Fully-qualified use without an import evades the import check (the exact
+# pattern already used once outside the gate in util/HumlaCallbacks).
+RE_ANDROID_FQN = re.compile(r"\bandroid\s*\.\s*(util|os|content|app|net|widget|view|provider|media)\s*\.")
+RE_ANDROIDX_FQN = re.compile(r"\bandroidx\s*\.")
+# Reflection and resource-lookup indirection around the import check.
+RE_REFLECTION = re.compile(r"Class\.forName\s*\(|getIdentifier\s*\(\s*[\"']")
+RE_ANDROID_LITERAL = re.compile(r'"android\.')
 
 NATIVE_ROOT = "libraries/humla/src/main/jni"
 NATIVE_DIRS = ("audio_engine", "voice_codec", "crypto")
@@ -140,6 +162,21 @@ NATIVE_FORBIDDEN_SINGLE_THREADED = (
     "<shared_mutex>",
     "<condition_variable>",
     "<atomic>",
+)
+# Body-level indirection around the include check: dynamic loading, direct
+# syscalls, and thread creation without the banned headers. All absent
+# today; landing them as tripwires only ratchets.
+NATIVE_FORBIDDEN_BODY = (
+    "dlopen",
+    "dlsym",
+    "AAudio_",
+    "Oboe",
+    "oboe/",
+    "syscall",
+    "mmap",
+    "pthread_create",
+    "std::thread",
+    "__has_include",
 )
 RE_INCLUDE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]')
 
@@ -168,6 +205,13 @@ LOCAL_FACTS_CALL_PATTERNS = (
     r"\blocalMuteDao\(\)",
     r"\blocalIgnoreDao\(\)",
     r"\.setMutedAndDeafened\(",
+    # DAO-level suspend wrappers: public today, same rows as above.
+    # Service-level setLocalMute/setLocalIgnore funnel through the store
+    # and are deliberately not matched.
+    r"\binsertLocalMutedUser\(",
+    r"\bdeleteLocalMutedUser\(",
+    r"\binsertLocalIgnoredUser\(",
+    r"\bdeleteLocalIgnoredUser\(",
 )
 RE_LOCAL_FACTS_CALL = re.compile(
     "|".join(f"(?:{p})" for p in LOCAL_FACTS_CALL_PATTERNS)
@@ -177,6 +221,9 @@ RE_LOCAL_FACTS_CALL = re.compile(
 # package (no start(scope) method) are not features and may be referenced.
 FEATURE_DIR = "app/src/main/java/se/lublin/mumla/feature"
 RE_FEATURE_START = re.compile(r"\bfun start\(\s*scope\s*:\s*CoroutineScope\s*\)")
+# Any start-shaped declaration that does not match RE_FEATURE_START would
+# silently drop out of the feature set; fail closed instead.
+RE_ANY_START = re.compile(r"\b(?:suspend\s+)?fun\s+start\s*\(")
 
 RE_RENDER_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*renderActive")
 RE_CAPTURE_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*captureActive")
@@ -206,6 +253,30 @@ def check_local_facts_writers(root: Path):
                         f"local-facts: {rel}:{i}: writes belong in "
                         f"{LOCAL_FACTS_STORE_FILE}: {line.strip()}"
                     )
+    return errors
+
+
+def check_feature_set_closed(root: Path):
+    """Fail if a feature-dir file declares start with a non-matching signature."""
+    feature_dir = root / FEATURE_DIR
+    if not feature_dir.is_dir():
+        return []
+    errors = []
+    for full in sorted(feature_dir.rglob("*.kt")):
+        try:
+            text = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = full.relative_to(root).as_posix()
+        for i, line in enumerate(text.splitlines(), 1):
+            if RE_ANY_START.search(line) and (
+                not RE_FEATURE_START.search(line)
+                or re.search(r"\bsuspend\s+fun\s+start", line)
+            ):
+                errors.append(
+                    f"feature-isolation: {rel}:{i}: start signature must be "
+                    f"fun start(scope: CoroutineScope): {line.strip()}"
+                )
     return errors
 
 
@@ -429,9 +500,38 @@ def scan_android_free(root: Path):
                         RE_ANDROID_IMPORT.search(line)
                         or RE_ANDROIDX_IMPORT.search(line)
                         or RE_R_IMPORT.search(line)
+                        or RE_ANDROID_FQN.search(line)
+                        or RE_ANDROIDX_FQN.search(line)
+                        or RE_REFLECTION.search(line)
+                        or RE_ANDROID_LITERAL.search(line)
                     ):
                         violations.append((rel, i, line.strip()))
     return violations
+
+
+def scan_native_body(root: Path):
+    """Return list of (path, line-no, snippet) for body-level native evasions."""
+    hits = []
+    for dirname in NATIVE_DIRS:
+        d = root / NATIVE_ROOT / dirname
+        if not d.is_dir():
+            continue
+        for dirpath, _, filenames in os.walk(d):
+            for name in filenames:
+                if not name.endswith(NATIVE_EXTS):
+                    continue
+                full = Path(dirpath) / name
+                rel = full.relative_to(root).as_posix()
+                try:
+                    lines = full.read_text(encoding="utf-8", errors="replace").splitlines()
+                except OSError:
+                    continue
+                for i, line in enumerate(lines, 1):
+                    for token in NATIVE_FORBIDDEN_BODY:
+                        if token in line:
+                            hits.append((rel, i, line.strip()))
+                            break
+    return hits
 
 
 def native_forbidden_for(dirname):
@@ -527,8 +627,11 @@ def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
     for rel, lineno, line in scan_android_free(root):
         errors.append(f"android-free: {rel}:{lineno}: {line}")
     errors.extend(check_native(scan_native(root), native_allowed))
+    for rel, lineno, line in scan_native_body(root):
+        errors.append(f"native-body: {rel}:{lineno}: {line}")
     errors.extend(check_voice_lifecycle(root))
     errors.extend(check_local_facts_writers(root))
+    errors.extend(check_feature_set_closed(root))
     errors.extend(check_feature_isolation(root))
     return errors, actual
 

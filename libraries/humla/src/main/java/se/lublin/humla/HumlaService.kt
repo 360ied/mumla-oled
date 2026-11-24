@@ -28,7 +28,6 @@ import android.net.Network
 import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager

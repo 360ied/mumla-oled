@@ -28,7 +28,7 @@ import kotlinx.collections.immutable.persistentMapOf
  *
  * One immutable value per session, held in a MutableStateFlow owned by the
  * Session. Every change is `state.update { ... }` with a pure transition.
- * Android-free: no android.* imports.
+ * Android-free: no Android imports.
  */
 data class SessionState(
     val server: ServerState,
