@@ -1,7 +1,7 @@
 # What Went Wrong in Step 5a
 
 Part of the [step 5a retrospective](README.md). Commit hashes refer to the
-discarded attempt (see [where the attempt lives](README.md#where-the-attempt-lives)).
+discarded attempt (see [do not reuse the attempt](README.md#do-not-reuse-the-attempt)).
 
 ## Summary
 

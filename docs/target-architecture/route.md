@@ -9,8 +9,9 @@ between the client, routing, and voice.
 Routing is the hardest real-world part of the app and the most churned:
 [`BluetoothScoManager`](../../libraries/humla/src/main/java/se/lublin/humla/audio/BluetoothScoManager.kt)
 and
-[`AudioRouteController`](../../libraries/humla/src/main/java/se/lublin/humla/audio/AudioRouteController.kt)
-have 27 commits between them since September. The controller is already
+`AudioRouteController` (now
+[`RouteControl`](../../libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt))
+had 27 commits between them since September. The controller is already
 close to the target: one event funnel (`RouteEvent`), main-thread
 confinement, ports for the platform (`AudioPlatform`) and SCO (`ScoLink`),
 a pure decision (`AppliedRoute`), and 71 virtual-time tests. The

@@ -49,8 +49,9 @@ Additional cases:
 
 Under `kotlinx-coroutines-test`, with fakes for `Transport`,
 `NetworkMonitor`, `AudioPlatform`, `ScoLink`, and the native voice layer.
-[`AudioRouteControllerTest`](../../libraries/humla/src/test/java/se/lublin/humla/audio/AudioRouteControllerTest.kt)
-is the model.
+`AudioRouteControllerTest` (deleted in step 4) was the model;
+[`RouteControlTest`](../../libraries/humla/src/test/java/se/lublin/humla/route/RouteControlTest.kt)
+carries its virtual-time pattern on.
 
 Scenarios:
 - disconnect at every message boundary of the sync sequence;

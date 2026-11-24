@@ -189,7 +189,7 @@ Never use `GlobalScope`.
 ## 4. UI → Compose (DEFERRED 2026-10-13 with slices 6-7 — internals only, pixels frozen, if revived)
 
 Visual/structural parity is a hard guardrail (see
-[plan](plan.md#ui-parity-hard-guardrail)). Mapping:
+[plan](plan.md#ui-parity-active-with-slices-6-7--hard-guardrail)). Mapping:
 
 - Fragment destination → navigation route composable; `loadDrawerFragment`
   becomes a route map, same order, same back stack.
