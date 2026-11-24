@@ -379,8 +379,8 @@ OutputScenario makeOutputScenario(const std::string& name) {
         render(4);
     } else if (name == "output-lost") {
         // Drop the fifth packet of a single voice, then a two-packet burst:
-        // covers FEC recovery (the encoder sends LBRR), concealment and the
-        // miss expiry.
+        // covers inline concealment of single and burst losses and the miss
+        // expiry.
         scenario.voices.push_back(makeVoicePackets(280.0, 24));
         render(2);
         for (size_t packet = 0; packet < 24; ++packet) {
