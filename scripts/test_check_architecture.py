@@ -117,8 +117,13 @@ class TestPatterns(unittest.TestCase):
         self.assertIsNone(ca.RE_CONCURRENCY.search("createAudioHandler()"))
         self.assertIsNone(ca.RE_CONCURRENCY.search("Thread.sleep(1)"))
         self.assertIsNone(ca.RE_CONCURRENCY.search("Thread.currentThread()"))
+        self.assertIsNone(ca.RE_CONCURRENCY.search("ModelHandler.messageUserState"))
+        self.assertIsNone(ca.RE_CONCURRENCY.search("mainHandler.post(r)"))
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("Thread { }"))
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("Handler(foo)"))
+        self.assertIsNotNone(
+            ca.RE_CONCURRENCY.search("Handler.createAsync(Looper.getMainLooper())")
+        )
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("@Volatile"))
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("runBlocking { }"))
 

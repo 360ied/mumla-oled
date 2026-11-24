@@ -20,7 +20,7 @@ step 1 and only ever gets stricter.
 
 **Forbidden patterns** (regular expressions):
 `@Volatile`, `@Synchronized`, `\bsynchronized\s*\(`, `\bThread\s*[({]`,
-`\bHandlerThread\s*\(`, `\bHandler\s*\(`, `\brunBlocking\b`,
+`\bHandlerThread\s*\(`, `\bHandler\s*[\(.]`, `\brunBlocking\b`,
 `\bReentrantLock\b`, `\bReentrantReadWriteLock\b`, `\bExecutors\.`,
 `\bCountDownLatch\b`, `\bjava\.util\.concurrent\.locks\b`,
 `\bkotlin\.concurrent\.thread\b`.
@@ -29,7 +29,10 @@ step 1 and only ever gets stricter.
 The word boundaries keep `currentThread(` from matching the `Thread`
 pattern and `createAudioHandler(` from matching the `Handler` pattern;
 `Thread.sleep`, `Thread.currentThread`, and friends are deliberately not
-matched (they are not thread creation). Java-style `synchronized (lock)`
+matched (they are not thread creation). The `Handler` pattern also matches
+`Handler.` so the `Handler.createAsync` factory cannot evade the tripwire
+(the boundary still keeps `ModelHandler.*` and `mainHandler.post` from
+matching). Java-style `synchronized (lock)`
 with a space matches, as does `Handler (`; only the import-qualified
 `kotlin.concurrent.thread` is matched, because bare prose (`render thread (`
 in comments) is too noisy. Comments are not stripped: a pattern named in
