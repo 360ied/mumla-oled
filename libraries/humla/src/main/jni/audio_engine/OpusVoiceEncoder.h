@@ -32,9 +32,11 @@ namespace audio {
 /**
  * Native Opus Voice Encoder with Mandatory Hard Constant Bitrate (CBR).
  *
- * Configures libopus in VOIP application mode with complexity 6, voice signal
- * weighting, in-band forward error correction (FEC), and strictly enforced
- * Hard Constant Bitrate (VBR=0) to prevent packet-length side-channel attacks.
+ * Follows upstream Mumble's encoder setup: general-audio application from
+ * 32 kbit/s (VoIP below), automatic signal type, no in-band FEC, and strictly
+ * enforced Hard Constant Bitrate (VBR=0) to prevent packet-length
+ * side-channel attacks. Diverges with complexity 6 (realtime callback budget)
+ * and an explicit fullband bandwidth cap.
  */
 class OpusVoiceEncoder : public IVoiceEncoder {
 public:
@@ -70,6 +72,7 @@ public:
 private:
     OpusEncoder* m_encoder;
     int m_bitrate;
+    int m_application;
 };
 
 std::unique_ptr<IVoiceEncoder> makeOpusVoiceEncoder(int bitrate = OpusVoiceEncoder::DEFAULT_BITRATE);
