@@ -184,10 +184,10 @@ elsewhere:
 | `SYNCING` | First `ChannelState` or `UserState` arrives | Not published: the message coroutine applies server transitions to a private value (intent-owned local fields are the exception; see below) |
 | `SYNCED` | `ServerSync` arrives | The private value is published in one `update`; every change after this publishes |
 
-**Local intents before `SYNCED`.** `setPtt`, `togglePtt`, and `setVoiceTarget` are valid
-before sync and update the published value directly (only `local.pttPressed`
-and `local.voiceTargetId` change; everything else stays the `HANDSHAKING`
-value). The `ServerSync` publication carries those two fields over from
+**Local intents before `SYNCED`.** `setPtt`, `togglePtt`, and
+`setVoiceTarget` are valid before sync and update the published value
+directly (only `local.pttPressed` and `local.voiceTargetId` change;
+everything else stays the `HANDSHAKING` value). The `ServerSync` publication carries those two fields over from
 the current published value into the synced value, inside the same
 `update`, so a press racing sync is never lost. The lambda only computes
 the merged value; the session records the result (its private value and

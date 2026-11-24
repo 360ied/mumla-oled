@@ -86,9 +86,10 @@ project's Kotlin version replaces it.
 ### `HumlaRuntime`
 
 The library's public assembly point. `RouteControl`, `AudioPlatform`,
-`ScoLink`, `RouteThread`, and the policy collector stay `internal` to
-`:libraries:humla`; `HumlaRuntime.create` builds them, so `:app` never
-names them:
+`ScoLink`, and `RouteThread` stay `internal` to `:libraries:humla`, and
+`PolicyCollector` becomes `internal` in step 6 (it is public today, with no
+user outside the library). `HumlaRuntime.create` builds them, so `:app`
+never names them:
 
 ```kotlin
 class HumlaRuntime private constructor(/* … */) {
@@ -116,6 +117,7 @@ class HumlaRuntime private constructor(/* … */) {
     val talkActivity: StateFlow<TalkActivity>
     val sessionState: StateFlow<SessionState>   // the mirror; empty without a session
     val callbacks: HumlaCallbacks               // interim, until step 8
+    val voiceSettings: StateFlow<VoiceSettings> // interim: the input, for getTransmitMode
 }
 ```
 
@@ -134,8 +136,12 @@ the deny formatter); the session-state mirror; the policy collector (see
 that forward route, SCO, and talk hints into the callbacks. The runtime's
 own collectors run in `scope` under the same exception rule as `appScope`.
 
-Step 7 removes the interim members with `IHumlaObserver`. The runtime
-itself stays.
+`voiceSettings` echoes the input so `HumlaService.getTransmitMode` can
+read it. It goes in step 6, with `getTransmitMode`, once the PTT-sound and
+talk-broadcast features read the input method setting directly (see
+[migration](migration.md#step-6--container-storage-and-features)). Step 7
+removes the other interim members with `IHumlaObserver`. The runtime itself
+stays.
 
 ## `ConnectionService`
 
@@ -181,7 +187,11 @@ container builds and starts every feature once, at process start.
   constructor takes the flows it collects and the intent functions it
   calls (`setPtt`, `setSelfMuteDeaf`, `disconnect`), never the container
   or `HumlaClient` itself, so its tests drive it with plain flows (see
-  [testing](testing.md#app-layer-tests)).
+  [testing](testing.md#app-layer-tests)). The one exception is interim:
+  until step 7 the chat log also takes the runtime's `HumlaCallbacks`,
+  registering on it for received text and forwarding its lines into it
+  for the open chat screen (see
+  [migration](migration.md#step-6--container-storage-and-features)).
 - **Features run on the main thread.** Each feature collects on
   `Dispatchers.Main.immediate` in its own child `SupervisorJob`, so one
   failing feature stops alone and the `appScope` handler reports it. That
@@ -200,7 +210,7 @@ container builds and starts every feature once, at process start.
 | Feature | Replaces (today) | Collects | Does |
 |---|---|---|---|
 | Connection notification and media session | `MumlaConnectionNotification` (including its `MediaSession`, custom actions, and headset-hook and claimed-key dispatch), `updateConnectedNotification`, `onMuteToggled`, `onDeafenToggled`, `onOverlayToggled`, `onDisconnect`, `onCancelReconnect`, `setSuppressNotifications` | `client.state`, session-state mirror (self, channel), `client.events` (`PermissionDenied`), `talkActivity`, overlay setting, notification style setting | Builds the foreground notification in its connecting, connected, and reconnecting variants and exposes it as a `StateFlow<Notification>` that always has a value (`Idle` maps to the connecting variant, since a service only asks while connecting or later). The service calls `startForeground` with the current value as soon as it starts, which meets Android's five-second rule however late `client.state` moves, and then posts each update (`HumlaService` in step 6, `ConnectionService` from step 7). Its actions are explicit `PendingIntent`s to a non-exported `NotificationActionReceiver` (in `se.lublin.mumla.service`, not a feature) that calls the feature through the container, so they work with or without a service. Owns the media session; actions call session and client intents. A permission denial re-shows the notification, as `MumlaService.onPermissionDenied` does today, except while the activity is in the foreground (today's `setSuppressNotifications`) |
-| Message notifications | `MumlaMessageNotification`, `clearChatNotifications` | `client.events` (`TextMessageReceived`), `chatNotify` setting | Posts and clears message notifications. Never suppressed by chat visibility, as today. Clears them when `client.state` returns to `Idle`; today they go when the service is destroyed, which follows the disconnect |
+| Message notifications | `MumlaMessageNotification`, `clearChatNotifications` | `client.events` (`TextMessageReceived`), `chatNotify` setting | Posts and clears message notifications. Never suppressed by chat visibility, as today. Clears them each time `client.state` becomes `Idle`, `Reconnecting`, or `Failed`, as `MumlaService.onConnectionDisconnected` does today |
 | Chat log | `MumlaService` message log (`getMessageLog`, `clearMessageLog`, `addChatMessageToLog`, `updateActiveServerLog`, `getServerKey`) | `client.events` (filters read each record's state), `client.state` (today's connecting, connected, disconnected, and reconnecting lines), the runtime's `voiceEvents` (`EncoderLimited`, `PipelineError`); until step 7 also `onMessageLogged` and `MumlaService`'s send delegations (see [migration](migration.md#step-6--container-storage-and-features)) | Keeps chat history per server as `StateFlow<List<IChatMessage>>` with today's limits: 500 messages per server (`MAX_CHAT_LOG_SIZE`), 10 servers in least-recently-used order (`MAX_CACHED_SERVERS`), for the life of the process (today the log goes when the service is destroyed). Until step 7 it forwards each line it appends to `HumlaCallbacks` for the open chat screen. Formats events into the text `ModelHandler` produces today, with the `chat_notify_*`, `deny_reason_*`, and `audio_max_bandwidth` strings, and applies today's filters: moves only when they enter or leave the self user's channel (with today's wording when the user moved themselves), recordings only in the same or a linked channel. `ConnectionWarning` and `PipelineError` are logged as warnings |
 | TTS | `speakTts`, `initTts`, TTS parts of `handleUserTalkStateUpdated` | `client.events`, `client.state` (connection announcements), TTS settings, self deafen state | Speaks messages with today's rules (HTML stripped, links shortened, short form when configured, the 250-character threshold, nothing while deafened), plus today's connection announcements and engine-failure messages |
 | PTT sounds | `initSoundPool`, `playPttSound`, `releaseSoundPool` | `talkActivity.selfTalking`, `route.state`, input method and `pttSound` settings | Plays the PTT beeps in push-to-talk mode on the stream today's code picks (voice call stream on the voice route, music otherwise); reloads on route change. The mode comes from the setting: on `master` the check reads `getTransmitMode`, which always says voice activity, so the beeps never play (see [migration](migration.md#step-6--container-storage-and-features)) |

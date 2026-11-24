@@ -74,7 +74,7 @@ steps, the kill criteria, and the decisions this work reverses.
   - Until step 6, the self-mute/deafen half of the interim
     `LocalFactsStore` in `HumlaService` is a stub (loads unset, drops
     writes); `MumlaService` restores self-mute after sync and persists it,
-    as before the migration. Step 6 (commit 5) moves both into the session
+    as before the migration. Step 6 (commit 4) moves both into the session
     and `LocalFactsStore` in one change, so there is never zero or two
     owners.
   - Until step 5a, `IHumlaService.getCurrentBandwidth` reads the current
@@ -696,7 +696,7 @@ the chat log's `value`), and writes launch into the feature's scope.
 **Lifetime rule.** Everything the container builds lives as long as the
 process and is never closed (see [app](app.md#appcontainer)). Today
 `HumlaService.onDestroy` closes `RouteControl`, `VoiceEngine`, and
-`PolicyCollector` and unregisters the network callback. From commit 4 on
+`PolicyCollector` and unregisters the network callback. From commit 5 on
 it does none of that. The service is destroyed and re-created within one
 process (disconnect, leave the app, come back), and a second instance
 handed closed objects has no voice. This is the same class of failure that
@@ -712,13 +712,45 @@ Commits, in order:
    `@AndroidEntryPoint`, and the only `@Inject` is `SettingsRepository`'s
    constructor. Delete `@HiltAndroidApp`, that `@Inject`, `DatabaseModule`,
    `SettingsModule`, the Hilt plugin in both modules and in the root
-   `build.gradle`, the Hilt and `androidx.hilt` dependencies and their
-   `gradle/libs.versions.toml` entries, and kapt in `:libraries:humla`,
-   where Hilt is its only processor. `:app` keeps kapt for the Room
-   compiler until the KSP TODO in `gradle/libs.versions.toml` lands. Doing
-   this first means the container never shares construction with a second
-   provider.
-2. **`AppContainer` and storage.** `MumlaApplication.onCreate` builds the
+   `build.gradle`, the Hilt and `androidx.hilt` dependencies, their
+   `gradle/libs.versions.toml` entries (including the unused
+   `hilt-navigation-compose` version and library and the Hilt notes beside
+   them), and kapt in `:libraries:humla`, where Hilt is its only
+   processor. `:app` keeps kapt for the Room compiler until the KSP TODO
+   in `gradle/libs.versions.toml` lands. Doing this first means the
+   container never shares construction with a second provider.
+2. **Transmit mode and talk state.** `InputModes` keeps its own transmit
+   mode, and nothing feeds it (nothing calls `applyAudioDelta`). So on
+   `master`, `getTransmitMode` returns voice activity whatever the
+   setting. That silences the PTT sounds and makes the talk broadcast
+   receiver reject every request. `HumlaService`'s `voiceSettingsFlow`
+   already gets the real mode through `VoiceSettingsMapper` in `apply`,
+   so this fix needs nothing from the container and lands on its own,
+   where a regression in beeps or broadcasts bisects to it alone. The
+   commit:
+   - makes `getTransmitMode` map `voiceSettingsFlow.value.inputMode` back
+     to its `Constants.TRANSMIT_*` value;
+   - makes `SessionState.local.pttPressed` the only record of whether the
+     user is talking. `isTalking` reads it (`false` without a session),
+     `setTalkingState` calls `session.setPtt`, and a new
+     `session.togglePtt()` intent flips it inside `update {}` for toggle
+     mode (see [state](state.md#user-intents)). A toggle-mode press no
+     longer survives a reconnect; today the button stays lit while the
+     new session's gate is closed;
+   - deletes `InputModes`, `InputModesValidationTest`, and the
+     `audio/inputmode` package. `VoiceSettingsMapper` already applies
+     every rule `validateAudioDelta` applies, so `apply` maps the next
+     `VoiceSettings` **before** it merges anything, and a rejected delta
+     still commits nothing, as today. The bitrate and amplitude-boost
+     bounds (`MIN_INPUT_BITRATE` and the others) move from `InputModes.kt`
+     into `VoiceSettingsMapper.kt`. Any `InputModesValidationTest` case
+     that `VoiceSettingsMapperTest` does not already cover moves there,
+     and an `apply` test pins that a rejected delta leaves the pending
+     connect target and `voiceSettingsFlow` unchanged.
+
+   `InputModes.kt` (2) and `ToggleInputMode.kt` (1) leave the allowlist
+   here.
+3. **`AppContainer` and storage.** `MumlaApplication.onCreate` builds the
    container through an overridable `createContainer()` (the test seam) and
    exposes it as `container`. The container constructs the settings
    `DataStore`, `SettingsRepository`, and `MumlaRoomDatabase` once. The
@@ -746,11 +778,11 @@ Commits, in order:
      features, and `LocalFactsStore` use from here on. Comments that name
      `runBlocking` without calling it are reworded, so the tripwire counts
      only real calls.
-3. **Local facts.** `LocalFactsStore` gets its real implementation in
+4. **Local facts.** `LocalFactsStore` gets its real implementation in
    `:app`, over the database (mute and ignore lists per server ID) and
    settings (self-mute and self-deafen). It skips writes, and loads empty
    lists, for a server that is not saved (negative ID), as the adapter's
-   `isSaved()` guard does today. Until commit 4, `HumlaService` gets it
+   `isSaved()` guard does today. Until commit 5, `HumlaService` gets it
    from a `localFactsStore()` hook that `MumlaService` implements from the
    container. The same commit removes the other writers, so there is never
    zero or two: `ChannelListAdapter` stops writing local mute to the
@@ -760,9 +792,10 @@ Commits, in order:
    [state](state.md#self-mute-and-deafen)); and
    `ConfigDelta.localMuteHistory`, `ConfigDelta.localIgnoreHistory`, and
    `HumlaService`'s pending-snapshot store are deleted.
-4. **`HumlaRuntime`.** `RouteControl`, `AudioPlatform`, `VoiceEngine`'s
-   collaborators, and the policy collector are `internal` to
-   `:libraries:humla`, and they stay that way. A public
+5. **`HumlaRuntime`.** `RouteControl`, `AudioPlatform`, and `VoiceEngine`'s
+   other collaborators are `internal` to `:libraries:humla`, and they stay
+   that way. `PolicyCollector` is public today, with no user outside the
+   library and its tests; this commit makes it `internal` too. A public
    `HumlaRuntime.create` in the library builds them, in the order and with
    the inputs [app](app.md#humlaruntime) gives, plus the interim pieces
    they reference: `HumlaCallbacks`, the main-thread poster, the
@@ -770,7 +803,7 @@ Commits, in order:
    route, SCO, and talk hints into `HumlaCallbacks`. The container calls
    it once and hands the result to `HumlaService` through an abstract
    `runtime()` that `MumlaService` implements. `HumlaService` constructs
-   and closes none of it (lifetime rule), and the commit-3 hook folds into
+   and closes none of it (lifetime rule), and the commit-4 hook folds into
    the runtime's inputs. The same commit:
    - derives `VoiceSettings` and `RoutePreferences` in the container from
      the settings snapshot, so `HumlaService.apply` loses its voice and
@@ -783,17 +816,15 @@ Commits, in order:
      carries Bluetooth SCO only when the setting is on **and** the
      `BLUETOOTH_CONNECT` grant is held, so a value the permission guard is
      about to revert never reaches `RouteControl`;
-   - makes `SessionState.local.pttPressed` the only record of whether the
-     user is talking. `isTalking` reads it, `setTalkingState` calls
-     `session.setPtt`, and a new `session.togglePtt()` intent flips it
-     inside `update {}` for toggle mode. `InputModes` and the
-     `audio/inputmode` package are deleted: their transmit mode was never
-     fed (nothing calls `applyAudioDelta`), so `getTransmitMode` has
-     returned voice activity on `master` whatever the setting, which has
-     silenced PTT sounds and made the talk broadcast receiver reject every
-     request. `getTransmitMode` now reads the runtime's `VoiceSettings`
-     until the features that called it read the setting directly.
-5. **Client-level events.** `HumlaClient.events` replaces `Session.events`
+   - moves `voiceSettingsFlow` out of `HumlaService`, so `getTransmitMode`
+     reads the runtime's interim `voiceSettings` member instead (see
+     [app](app.md#humlaruntime)). Its only callers are the PTT-sound
+     check in `MumlaService` and `TalkBroadcastReceiver`. The features
+     that take them over read the input method setting directly, and the
+     later of those two feature commits deletes `getTransmitMode` from
+     `IHumlaSession` and `HumlaService` and `voiceSettings` from the
+     runtime.
+6. **Client-level events.** `HumlaClient.events` replaces `Session.events`
    (see [state](state.md#events)): one application-lifetime
    `SharedFlow<SessionEventRecord>`, where each record pairs the event with
    the emitting session's state right after the transition that produced
@@ -801,7 +832,7 @@ Commits, in order:
    session cannot emit before its collectors exist, and filters read the
    state the event came from instead of a mirror that may lag. The interim
    chat-log adapter switches to it.
-6. **Features, one per commit** (see [app](app.md#features)), chat log
+7. **Features, one per commit** (see [app](app.md#features)), chat log
    first.
    - **Chat-log goldens.** Before the chat-log commit deletes
      `StateEventLogger`, it records golden strings from it in `:app`
@@ -870,6 +901,10 @@ becomes `Connecting`), which step 7 moves into `MainViewModel`.
     [local-facts writer check](enforcement.md#local-facts-writer).
   - **One owner of talk state:** a `Session` test that `togglePtt`
     flips `pttPressed` inside `update {}`, and `InputModes` gone.
+  - **Transmit mode follows the setting:** a `HumlaService` test that
+    `getTransmitMode` returns push-to-talk after a push-to-talk delta
+    (commit 2), then the PTT-sound and talk-broadcast feature tests in
+    push-to-talk and voice-activity modes.
   - **Features do not call each other:** the
     [feature isolation check](enforcement.md#feature-isolation).
   - **Event collectors never stall the session:** for each feature that
@@ -931,8 +966,9 @@ becomes `Connecting`), which step 7 moves into `MainViewModel`.
   `Failed`.
 - No screen implements an observer or extends `HumlaServiceFragment`, and
   nothing binds a service.
-- The allowlist no longer lists `HumlaService`, `MumlaService`,
-  `MumlaActivity`, `SettingsRepository.kt`, or `MumlaRoomDatabase.kt`.
+- `HumlaService.kt` and `MumlaService.kt` are deleted (step 6 already
+  took them off the allowlist), and the allowlist no longer lists
+  `MumlaActivity.kt`, `SettingsRepository.kt`, or `MumlaRoomDatabase.kt`.
 
 ## Step 8 — Clean up
 

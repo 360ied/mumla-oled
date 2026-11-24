@@ -164,10 +164,10 @@ declares these methods) contains a call to `.addLocalMutedUser(`,
 `.removeLocalMutedUser(`, `.addLocalIgnoredUser(`, `.removeLocalIgnoredUser(`,
 `localMuteDao()`, `localIgnoreDao()`, or `.setMutedAndDeafened(`. The
 patterns are call sites, so declarations and tests never match, and the
-store's `suspend` path through the DAOs is covered by the DAO patterns. The session decides local mute, ignore, and
-self-mute, and its store is their only writer (see
-[state](state.md#self-mute-and-deafen)); before step 6, the adapter, the
-service, and the store all wrote them.
+store's `suspend` path through the DAOs is covered by the DAO patterns.
+The session decides local mute, ignore, and self-mute, and its store is
+their only writer (see [state](state.md#self-mute-and-deafen)); before
+step 6, the adapter, the service, and the store all wrote them.
 
 ## Native tripwire
 
