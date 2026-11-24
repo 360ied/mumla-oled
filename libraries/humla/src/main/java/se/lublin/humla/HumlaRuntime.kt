@@ -88,6 +88,8 @@ class HumlaRuntime private constructor(
     internal val voiceEngine: VoiceEngine,
     internal val routeControl: RouteControl,
     internal val routePreferences: StateFlow<RoutePreferences>,
+    private val connectivityManager: ConnectivityManager?,
+    private val networkCallback: ConnectivityManager.NetworkCallback?,
 ) {
     data class Inputs(
         val voiceSettings: StateFlow<VoiceSettings>,
@@ -109,6 +111,27 @@ class HumlaRuntime private constructor(
     fun retrySco() = routeControl.retrySco()
 
     val isMediaRouteActive: Boolean get() = routeControl.isMediaRouteActive
+
+    /** True until close() unregisters the process network callback. */
+    var networkCallbackRegistered: Boolean = networkCallback != null
+        private set
+
+    /**
+     * Release the process network callback. The runtime is app-lifetime in
+     * prod and is never closed there; Robolectric tests call this in teardown
+     * so each container leaves no registered callback behind. Idempotent.
+     */
+    fun close() {
+        if (!networkCallbackRegistered) return
+        networkCallbackRegistered = false
+        val cm = connectivityManager ?: return
+        val callback = networkCallback ?: return
+        try {
+            cm.unregisterNetworkCallback(callback)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error unregistering network callback: ${e.message}")
+        }
+    }
 
     companion object {
         private const val TAG = "HumlaRuntime"
@@ -168,10 +191,11 @@ class HumlaRuntime private constructor(
                 prefs = inputs.routePreferences,
             )
 
-            // Registered once for the process in prod; the holder is kept so
-            // tests (and a future close()) can unregister. The callback
-            // lives as long as the runtime, which is process-lifetime.
+            // Registered once for the process in prod; the runtime holds the
+            // callback and the manager so close() can unregister it. The
+            // callback lives as long as the runtime, which is process-lifetime.
             var networkCallback: ConnectivityManager.NetworkCallback? = null
+            var connectivityManager: ConnectivityManager? = null
             try {
                 val cm = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager?
                 if (cm != null) {
@@ -182,6 +206,7 @@ class HumlaRuntime private constructor(
                     }
                     cm.registerDefaultNetworkCallback(callback)
                     networkCallback = callback
+                    connectivityManager = cm
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error registering network callback: ${e.message}")
@@ -345,6 +370,8 @@ class HumlaRuntime private constructor(
                 voiceEngine = voiceEngine,
                 routeControl = routeControl,
                 routePreferences = inputs.routePreferences,
+                connectivityManager = connectivityManager,
+                networkCallback = networkCallback,
             )
         }
     }

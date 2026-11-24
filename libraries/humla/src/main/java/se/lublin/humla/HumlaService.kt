@@ -99,6 +99,8 @@ import se.lublin.humla.util.VoiceTargetMode
 import java.io.File
 import java.io.IOException
 import java.time.Clock
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.collections.immutable.toPersistentList
@@ -185,8 +187,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
     private lateinit var appRuntime: HumlaRuntime
 
-    /** Observers registered through this service instance's binder. */
-    private val boundObservers = mutableSetOf<IHumlaObserver>()
+    /**
+     * Observers registered through this service instance's binder. Binder
+     * entry points may run off the main thread, and onDestroy iterates this
+     * set on main, so use the same concurrent set as HumlaCallbacks.
+     */
+    private val boundObservers: MutableSet<IHumlaObserver> =
+        Collections.newSetFromMap(ConcurrentHashMap<IHumlaObserver, Boolean>())
 
     /** The runtime's mirror; live handles read it across reconnects. */
     val sessionState: StateFlow<SessionState> get() = appRuntime.sessionState
@@ -343,7 +350,13 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         // service outlives the connection.
         val foreground = foregroundNotification()
         if (foreground != null) {
-            postForeground(foreground.value)
+            // A bound-but-Idle service must not flash the connecting
+            // placeholder. The collector below promotes the notification
+            // on the first non-Idle state and removes it on Idle/Failed.
+            val initial = appRuntime.client.state.value
+            if (initial !is ClientState.Idle && initial !is ClientState.Failed) {
+                postForeground(foreground.value)
+            }
             lifecycleScope.launch {
                 try {
                     combine(appRuntime.client.state, foreground) { state, notification ->

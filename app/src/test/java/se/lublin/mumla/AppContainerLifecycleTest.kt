@@ -24,6 +24,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import android.os.Looper
@@ -100,6 +101,31 @@ class AppContainerLifecycleTest {
         override fun lastDroppedOutbound(): Long = 0
         override fun getStats(): IntArray? = null
         override fun destroy() = Unit
+    }
+
+    @After fun closeRuntime() {
+        // Every Robolectric container registers one process network callback;
+        // release it so tests do not accumulate callbacks.
+        (RuntimeEnvironment.getApplication() as TestApplication).container.runtime.close()
+    }
+
+    @Test fun runtimeKeepsAndReleasesItsNetworkCallback() {
+        val runtime = (RuntimeEnvironment.getApplication() as TestApplication).container.runtime
+        assertTrue(runtime.networkCallbackRegistered)
+        runtime.close()
+        assertFalse(runtime.networkCallbackRegistered)
+        runtime.close()
+        assertFalse(runtime.networkCallbackRegistered)
+    }
+
+    @Test fun idleServiceDoesNotPostAConnectingPlaceholder() {
+        val controller = Robolectric.buildService(MumlaService::class.java).create()
+        val shadow = Shadows.shadowOf(controller.get())
+        assertFalse(
+            "a bound-but-Idle service must not post the connecting notification",
+            shadow.isLastForegroundNotificationAttached(),
+        )
+        controller.destroy()
     }
 
     @Test
