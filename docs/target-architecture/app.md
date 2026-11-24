@@ -146,12 +146,14 @@ class HumlaRuntime private constructor(/* … */) {
     val voiceEvents: SharedFlow<VoiceEvent>
     val talkActivity: StateFlow<TalkActivity>
     val sessionState: StateFlow<SessionState>   // the mirror; empty without a session
-    val callbacks: HumlaCallbacks               // interim, until step 8
+    val callbacks: HumlaCallbacks               // interim, until step 7
     val voiceSettings: StateFlow<VoiceSettings> // interim: the input, for getTransmitMode
 }
 ```
 
-`create` builds, in order: the `TalkActivityPublisher`; `RouteControl`
+`create` first applies today's MiniDNS setup (link properties and the
+800 ms resolver timeout, `HumlaService.init` until step 7), then builds, in
+order: the `TalkActivityPublisher`; `RouteControl`
 through `RouteControl.create` with `AndroidAudioPlatform` and a factory
 that builds `BluetoothScoManager` on the application context (see
 [route](route.md#api)), then calls its `onInit` and `start`; `VoiceEngine`
@@ -170,19 +172,29 @@ own collectors run in `scope` under the same exception rule as `appScope`.
 read it. It goes in step 6, with `getTransmitMode`, once the PTT-sound and
 talk-broadcast features read the input method setting directly (see
 [migration](steps/6-container-storage-and-features.md#step-6--container-storage-and-features)). Step 7
-removes the other interim members with `IHumlaObserver`. The runtime itself
+removes the other interim members with `IHumlaObserver`, keeping the
+session-state mirror for features and ViewModels. The runtime itself
 stays.
 
 ## `ConnectionService`
 
 A foreground `Service` of type `microphone` with no logic of its own.
 
-- **Started by the UI path that calls `connect`**, before calling it, while
-  the app is in the foreground. Android 14 and later generally refuse to
-  start a microphone foreground service from the background.
+- **Started by the UI's connect path, once the attempt is visible.** The
+  container's `connect(target)` calls `client.connect(target)` and starts
+  the service at the first non-terminal `ClientState` after it, while the
+  app is still in the foreground; Android 14 and later generally refuse to
+  start a microphone foreground service from the background. Starting it
+  before `connect` would let the service see the old `Idle` or `Failed`
+  and stop at once. An attempt that fails before `Connecting` is observed
+  starts no service (see
+  [step 7](steps/7-screens-and-service-cut-over.md#step-7--screens-and-service-cut-over)).
 - **Stays in the foreground** while `ClientState` is `Connecting`,
-  `Connected`, or `Reconnecting`, including every reconnect cycle. It stops
-  itself when the state becomes `Idle` or `Failed`. Today's `HumlaService`
+  `Connected`, or `Reconnecting`, including every reconnect cycle. It calls
+  `startForeground` as soon as it starts, and stops itself when the state
+  becomes `Idle` or `Failed`. If it is destroyed while the state is not
+  terminal, it calls `client.disconnect()`, so a connection never outlives
+  its foreground service. Today's `HumlaService`
   lingers after a kick or ban (`CONNECTION_LOST` without reconnect) so the
   bound UI can show the error; in the target the error lives in the
   application-scoped `ClientState.Failed`, so screens show it without a
@@ -284,9 +296,9 @@ with `repeatOnLifecycle(STARTED)`.
 | Screen | ViewModel | UI state from | Actions |
 |---|---|---|---|
 | `MumlaActivity` | `MainViewModel` | `client.state` (target name, reconnect countdown, failure, wrong-password reason), `client.events` (`PermissionDenied`), crash report availability | Connect, switch server (with today's confirmation when already connected), disconnect, cancel reconnect, trust decisions, wrong-password retry |
-| `ChannelFragment` | `ChannelViewModel` | Self `UserInfo`, `talkActivity.selfTalking`, input mode setting | PTT button, self-mute and deafen |
+| `ChannelFragment` | `ChannelViewModel` | Self `UserInfo`, `talkActivity.selfTalking`, voice and whisper target from `SessionState.local`, input mode setting | PTT button (into `talkKeys`), self-mute and deafen, chat target |
 | `ChannelListFragment` + `ChannelListAdapter` | `ChannelListViewModel` | `ServerState.tree`, `users`, `talkActivity` | Join, move, menus. Expanded and collapsed channels stay where today's adapter keeps them |
-| `ChannelChatFragment` | `ChatViewModel` | Chat log feature, chat target, `ServerSettingsInfo` limits | Send text, clear log. The ViewModel holds the chat target as `StateFlow<ChatTarget?>` (channel or user ID), replacing the fragment-implemented `ChatTargetProvider` interface; the channel list sets it through the shared activity ViewModel. Length and image-size checks run in the ViewModel before `sendText`, with today's messages; `sendText` itself only fails when not connected, which the screen already shows |
+| `ChannelChatFragment` | `ChatViewModel` | Chat log feature, chat target, `ServerSettingsInfo` limits | Send text, clear log. The ViewModel holds the chat target as `StateFlow<ChatTarget?>` (channel or user ID), replacing the fragment-implemented `ChatTargetProvider` interface; `ChannelViewModel` owns it, because `ChannelFragment` hosts both the list and the chat, and both children read it from the parent's ViewModel. Length and image-size checks run in the ViewModel before `sendText`, with today's messages; `sendText` itself only fails when not connected, which the screen already shows |
 | `ServerInfoFragment` | `ServerInfoViewModel` | `ServerState.info`, `session.stats` | none |
 | `AccessTokenFragment` | `AccessTokenViewModel` | Tokens from the database | Edit tokens (saved to the database), `sendAccessTokens` to the live session after each change, as today |
 | `UserCommentFragment`, `ChannelDescriptionFragment` | `CommentViewModel` | The user's `comment` or channel's `description` in state | Request blob, `setComment` |
@@ -300,7 +312,7 @@ with `repeatOnLifecycle(STARTED)`.
 | Service binding, `onServiceConnected`, observer registration | `MainViewModel` collecting client state |
 | Reconnect observers (`setReconnectObserver` and friends) | `ClientState.Reconnecting` rendered by `MainViewModel` |
 | TLS trust dialogs (`showMismatchDialog`, `showFirstTrustDialog`, `showChangedDialog`, `pinAndReconnect`, `pinnedForHost`) | `ClientState.Failed(Trust)` rendered as the same three dialogs with today's choices: the first-trust and changed-certificate dialogs can pin (writing `MumlaTrustStore` and calling `connect`); the hostname-mismatch dialog cannot, as today |
-| `connectToServer`, `connectToServerWithPerm`, permission results | Activity keeps the permission prompts; then `MainViewModel.connect`, which starts `ConnectionService` first |
+| `connectToServer`, `connectToServerWithPerm`, permission results | Activity keeps the permission prompts; then `MainViewModel.connect`, which builds the `ConnectTarget` off the main thread and calls the container's connect path (see [`ConnectionService`](#connectionservice)) |
 | Crash report snackbar, drawer, favourites, server editing, `mumble://` URL handling, first-run certificate guide, options menu, back-press and disconnect confirmation, volume-control stream, stay-awake, the drawer-open PTT cancel | Stay in the activity (UI-only); key events forward to the talk keys feature |
 | `onPermissionDenied` dialog (replacing any open one), and the service's error-shown flag that keeps the connection-lost dialog from showing twice | `MainViewModel` exposes the latest `PermissionDenied` reason, formatted with the `deny_reason_*` strings, for the same dialog, and remembers which connection error (in `Failed` or `Reconnecting`) the user already dismissed |
 | Rotation and process recreation | ViewModels survive rotation; pending dialogs are rebuilt from `ClientState` instead of saved instance state. Process death ends the connection, as today |

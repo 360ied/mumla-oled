@@ -448,4 +448,5 @@ Handle member sources:
 Reads of two properties are not mutually consistent (each reads the latest
 value), which matches today's per-field `@Volatile` behavior. New code uses
 `UserInfo` and `ChannelInfo` directly. The handles, `IUser`, and `IChannel`
-are deleted in step 8.
+are deleted in step 7, once its screen commits leave them without a
+reader.

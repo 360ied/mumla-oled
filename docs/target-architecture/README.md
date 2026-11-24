@@ -200,8 +200,9 @@ enqueuing commands or by publishing state that others read.
 
 ### Connecting
 
-1. The server list's ViewModel starts `ConnectionService` and calls
-   `client.connect(target)`.
+1. `MainViewModel` calls the container's connect path, which calls
+   `client.connect(target)` and starts `ConnectionService` once the
+   attempt shows in `ClientState`.
 2. The client cancels any current session, creates a new `Session`, and
    publishes `Connecting`.
 3. The session's `Transport` opens the TLS connection; the session sends
