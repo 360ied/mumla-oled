@@ -918,8 +918,9 @@ a last frame in that window can report talking with no not-talking after
 it, which would leave `selfTalking` stuck in the long-lived publisher
 (service lifetime until step 6, process lifetime after). 5a.3a moves the
 reset and report after the join. Two of them can run at the same moment,
-so in 5a.3a every write uses `MutableStateFlow.update {}`: a plain read-copy-write could let one
-writer overwrite the other's change and lose a not-talking.
+so in 5a.3a every write uses `MutableStateFlow.update {}`: a plain
+read-copy-write could let one writer overwrite the other's change and lose
+a not-talking.
 
 **Cleared when the output engine goes away.** Whenever the I/O layer stops
 render and destroys or resets the output engine, the publisher sets

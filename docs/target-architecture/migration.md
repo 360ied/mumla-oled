@@ -65,10 +65,11 @@ steps, the kill criteria, and the decisions this work reverses.
   [step 6 lifetime rule](#step-6--container-storage-and-features)).
 - **Interim observer bridge.** Until step 7, `HumlaClient` and `Session`
   take `IHumlaObserver`, a main-thread poster, and the deny formatter so
-  today's screens keep working. From step 6 `HumlaRuntime` owns all three
-  (the observer is its `HumlaCallbacks`), because the client outlives
-  every service instance. Step 7 removes them along with
-  `IHumlaObserver`.
+  today's screens keep working. From step 6 `HumlaRuntime` holds all
+  three, because the client outlives every service instance: it owns the
+  observer (its `HumlaCallbacks`) and the main-thread poster, and takes the
+  deny formatter from the container as an input. Step 7 removes them along
+  with `IHumlaObserver`.
 - **Other recorded interims** (found by the
   [steps 1–4 audit](issues/README.md)):
   - Until step 6, the self-mute/deafen half of the interim
@@ -743,10 +744,11 @@ Commits, in order:
      `VoiceSettings` **before** it merges anything, and a rejected delta
      still commits nothing, as today. The bitrate and amplitude-boost
      bounds (`MIN_INPUT_BITRATE` and the others) move from `InputModes.kt`
-     into `VoiceSettingsMapper.kt`. Any `InputModesValidationTest` case
-     that `VoiceSettingsMapperTest` does not already cover moves there,
-     and an `apply` test pins that a rejected delta leaves the pending
-     connect target and `voiceSettingsFlow` unchanged.
+     into `VoiceSettingsMapper.kt`, and its KDoc, which names `InputModes`
+     and `ActivityInputMode`, is reworded. Any `InputModesValidationTest`
+     case that `VoiceSettingsMapperTest` does not already cover moves
+     there, and an `apply` test pins that a rejected delta leaves the
+     pending connect target and `voiceSettingsFlow` unchanged.
 
    `InputModes.kt` (2) and `ToggleInputMode.kt` (1) leave the allowlist
    here.
@@ -781,8 +783,8 @@ Commits, in order:
 4. **Local facts.** `LocalFactsStore` gets its real implementation in
    `:app`, over the database (mute and ignore lists per server ID) and
    settings (self-mute and self-deafen). It skips writes, and loads empty
-   lists, for a server that is not saved (negative ID), as the adapter's
-   `isSaved()` guard does today. Until commit 5, `HumlaService` gets it
+   lists, for a server that is not saved (ID `-1`), as the adapter's
+   `Server.isSaved()` guard does today. Until commit 5, `HumlaService` gets it
    from a `localFactsStore()` hook that `MumlaService` implements from the
    container. The same commit removes the other writers, so there is never
    zero or two: `ChannelListAdapter` stops writing local mute to the
@@ -804,7 +806,20 @@ Commits, in order:
    it once and hands the result to `HumlaService` through an abstract
    `runtime()` that `MumlaService` implements. `HumlaService` constructs
    and closes none of it (lifetime rule), and the commit-4 hook folds into
-   the runtime's inputs. The same commit:
+   the runtime's inputs. `HumlaService` keeps the per-instance work that
+   [app](app.md#appcontainer) lists for the interim hand-off, including the
+   hooks `MumlaService` still overrides: its `client.state` collector
+   still calls `onConnectionSynchronized` and `onConnectionDisconnected`,
+   and its own collector of the runtime's `routeState` calls
+   `onAudioRouteChanged`, so the PTT sound pool and the proximity lock keep
+   following route changes until their features land. The same commit:
+   - creates `:libraries:humla-testing` (added to `settings.gradle` and to
+     the module list in `AGENTS.md`), moves the shared fakes into it (see
+     [testing](testing.md#app-layer-tests)), and adds
+     `AppContainerLifecycleTest` with the identity, route, observer, and
+     connect assertions from the done-when below. It is the executable
+     check of the lifetime rule, so it lands with the commit that starts
+     the rule;
    - derives `VoiceSettings` and `RoutePreferences` in the container from
      the settings snapshot, so `HumlaService.apply` loses its voice and
      route branches (including the `setTargetBitrate` and
@@ -842,7 +857,8 @@ Commits, in order:
      The `chat_notify_*`, `deny_reason_*`, and `audio_max_bandwidth`
      strings (with their translations) move from `:libraries:humla` to
      `:app` in that commit, and the deny formatter that the client's
-     interim observer bridge uses moves with them.
+     interim observer bridge uses moves with them. The commit also adds the
+     lifecycle test's feature-events assertion.
    - **Chat log interim edges.** Until step 7 the chat log keeps two
      inputs from today's paths: received text arrives through the
      observer bridge's `onMessageLogged` (the container registers the
@@ -852,13 +868,23 @@ Commits, in order:
      `onLogWarning`, or `onLogError`, so an open `ChannelChatFragment`
      keeps updating live as it does today.
    - **Tests move with their code.** `MumlaServiceChatLogTest`,
-     `MumlaServiceTalkKeyTest`, and the `MumlaConnectionNotification`
+     `MumlaServiceTalkKeyTest`, `TalkBroadcastReceiverTest`,
+     `MumlaOverlayMarginsTest`, and the `MumlaConnectionNotification`
      tests become tests of the features that take that code over, in the
      same commits. `HumlaService` tests that reach into its fields build a
      test runtime instead.
-   - The connection notification feature exposes its notification, and
-     `HumlaService` posts it with `startForeground` until step 7 hands that
-     to `ConnectionService`. The other features follow in any order.
+   - **Hand-off flows** (`talkKeys`, `speech`, `appLog`; see
+     [app](app.md#appcontainer)) join the container with the first feature
+     that emits into or collects each one.
+   - **Interim hooks go with their last user.** The later of the PTT-sound
+     and proximity feature commits deletes `onAudioRouteChanged` and its
+     route collector from `HumlaService`.
+   - The connection notification feature exposes its notification.
+     `HumlaService` posts it with `startForeground` and removes it on
+     `Idle` or `Failed` (see [app](app.md#appcontainer)) until step 7
+     hands that to `ConnectionService`; the same commit adds the lifecycle
+     test's notification assertion. The other features follow in any
+     order.
 
 What step 6 leaves in `MumlaService` for step 7: `onCreate`, `onDestroy`,
 `onBind`, `onStartCommand`, the `IMumlaService` delegations, the connect
@@ -881,7 +907,9 @@ becomes `Connecting`), which step 7 moves into `MainViewModel`.
     `HumlaCallbacks` after its destroy, and one registered through the
     second instance receives a callback;
   - a connect through the second instance reaches `Connected` on the fake
-    transport, and the features see its events.
+    transport, and the features see its events;
+  - after that connection ends, the service is out of the foreground and
+    the connection notification is gone, though the service stays bound.
 - **Executable:** the chat-log goldens recorded from `StateEventLogger`
   pass against the chat log feature.
 - Every row of the [feature table](app.md#features) has a feature class
@@ -900,7 +928,9 @@ becomes `Connecting`), which step 7 moves into `MainViewModel`.
     settings write per self-mute intent), and the
     [local-facts writer check](enforcement.md#local-facts-writer).
   - **One owner of talk state:** a `Session` test that `togglePtt`
-    flips `pttPressed` inside `update {}`, and `InputModes` gone.
+    flips `pttPressed` inside `update {}`, `InputModes` gone, and a talk
+    keys feature test that hot-corner gestures arriving on `talkKeys`
+    toggle in toggle mode, as today.
   - **Transmit mode follows the setting:** a `HumlaService` test that
     `getTransmitMode` returns push-to-talk after a push-to-talk delta
     (commit 2), then the PTT-sound and talk-broadcast feature tests in
@@ -918,8 +948,9 @@ becomes `Connecting`), which step 7 moves into `MainViewModel`.
   `HumlaService.kt` (1), `ChannelListAdapter.kt` (1), `InputModes.kt` (2),
   and `ToggleInputMode.kt` (1). `SettingsRepository.kt` drops from 8 to 3
   (the listener bridge) and `MumlaRoomDatabase.kt` from 5 to 2 (the `io`
-  bridge and its import). `AppContainer.kt` joins as a boundary file with 1
-  (the startup read). That takes the list from 23 / 74 to 15 / 43.
+  bridge and its import). `AppContainer.kt` joins as a boundary file with 2
+  (the startup read and its `runBlocking` import). That takes the list from
+  23 / 74 to 15 / 44.
 
 ## Step 7 — Screens and service cut-over
 
@@ -950,8 +981,8 @@ becomes `Connecting`), which step 7 moves into `MainViewModel`.
 4. Delete `MumlaService`, `IMumlaService`, `HumlaService`,
    `HumlaServiceProvider`, `HumlaServiceFragment`, `ConfigDelta` and its
    bridge, and the service-binding code. `HumlaRuntime` stays as the
-   library's public assembly point; it loses its interim members (the
-   main-thread poster, the deny formatter, and the observer-bridge
+   library's public assembly point; it loses its interim pieces (the
+   main-thread poster, the deny-formatter input, and the observer-bridge
    collectors) along with the client's `IHumlaObserver` parameter.
    `HumlaCallbacks` itself goes in step 8.
 5. Update the migration README's native fence and binder-surface decisions

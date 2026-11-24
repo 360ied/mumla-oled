@@ -71,10 +71,11 @@ libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt   4
   app/src/main/java/se/lublin/mumla/AppContainer.kt                       # step 6: the one blocking settings read at process start
   ```
 
-  `AppContainer.kt` joins in step 6 with exactly one matching line: the
-  first settings snapshot must exist before the first activity applies its
-  theme, and `DataStore` has no synchronous read (see
-  [app](app.md#appcontainer)). Any second match in it is a violation.
+  `AppContainer.kt` joins in step 6 with exactly two matching lines, the
+  startup read and its `runBlocking` import: the first settings snapshot
+  must exist before the first activity applies its theme, and `DataStore`
+  has no synchronous read (see [app](app.md#appcontainer)). Any third
+  match in it is a violation.
 
   Every other change can only lower counts or remove entries.
 - Every migration step's "done" includes lowering the totals.
@@ -153,8 +154,9 @@ features, such as the connection-line formatter that the chat log and TTS
 both use, may be referenced freely. Features get everything they share
 from the container (see [app](app.md#features)); a feature that needs
 another feature's output means that output belongs in the container as a
-flow. Same-package references need no import, so the check matches class
-names, not imports.
+flow, such as the `talkKeys`, `speech`, and `appLog` hand-off flows.
+Same-package references need no import, so the check matches class names,
+not imports.
 
 ## Local-facts writer
 

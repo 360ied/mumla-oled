@@ -228,12 +228,17 @@ Added in step 6 (see [migration](migration.md#step-6--container-storage-and-feat
   that the second instance gets the same, still working objects (the
   exact assertions are in step 6's done-when). The container runs real
   dispatchers and a real route thread, so the test waits on flows with a
-  timeout instead of using virtual time. Step 7 rewrites it for
+  timeout instead of using virtual time. It lands in step 6's
+  `HumlaRuntime` commit, which starts the lifetime rule; the chat-log and
+  connection-notification commits add the feature-events and
+  notification-removal assertions. Step 7 rewrites it for
   `ConnectionService`.
 - **Shared fakes.** `FakeTransport`, `FakeFactory`, `FakeVoice`, and the
   message builders in `ClientTestSupport.kt` move to a new Android library
   module, `:libraries:humla-testing`, as public classes, and both modules'
-  unit tests depend on it (`testImplementation`). They implement only
+  unit tests depend on it (`testImplementation`). The `HumlaRuntime`
+  commit creates the module, because the lifecycle test is its first user
+  in `:app`. They implement only
   public interfaces (`Transport`, `TransportFactory`, `VoiceLifecycle`,
   `VoiceLink`), so the move needs no `internal` access and no test
   fixtures support from the build plugin.
@@ -258,7 +263,9 @@ Added in step 6 (see [migration](migration.md#step-6--container-storage-and-feat
 - **Tests move with their code.** Each feature commit turns the
   `MumlaService` tests for the code it takes over into feature tests in
   the same commit (`MumlaServiceChatLogTest`, `MumlaServiceTalkKeyTest`,
-  `MumlaConnectionNotificationTest`, `MumlaConnectionNotificationMediaKeyTest`).
+  `TalkBroadcastReceiverTest`, `MumlaOverlayMarginsTest`,
+  `MumlaConnectionNotificationTest`, and
+  `MumlaConnectionNotificationMediaKeyTest`).
   `HumlaService` tests that read its private fields by reflection build a
   `HumlaRuntime` with fake edges instead.
 - **Settings current-value API.** A write is visible in `state` on the

@@ -37,7 +37,7 @@ application-scoped object by hand, in this order:
    also runs the migration), because the theme and locale must be applied
    before the first activity draws. Today's first `Settings` read already
    blocks there, so startup costs the same. `AppContainer.kt` is a
-   boundary file for this one line (see
+   boundary file for this one call and its import (see
    [enforcement](enforcement.md#concurrency-tripwire)).
 3. Settings-derived inputs for the runtime, each a `StateFlow` (`stateIn`
    on `appScope`, seeded from the snapshot read in step 2):
@@ -47,10 +47,20 @@ application-scoped object by hand, in this order:
      and the `BLUETOOTH_CONNECT` grant is held. Android kills the process
      when a grant is revoked, so at runtime a grant only appears, and the
      permission guard has already turned the setting off by then.
-4. Platform signals: `configuration`, a `StateFlow<Configuration>` that
-   `MumlaApplication.onConfigurationChanged` updates (the overlay and hot
-   corner reposition on rotation, as `MumlaService.onConfigurationChanged`
-   does today).
+4. Platform signals and hand-off flows:
+   - `configuration`, a `StateFlow<Configuration>` that
+     `MumlaApplication.onConfigurationChanged` updates (the overlay and hot
+     corner reposition on rotation, as `MumlaService.onConfigurationChanged`
+     does today).
+   - The hand-off flows, which carry one feature's output to another
+     without a call (see [features](#features)): `talkKeys` (`Down`, `Up`,
+     and `Cancel` from the screens' talk keys and the hot corner, for the
+     talk keys feature), `speech` (lines another feature wants spoken, for
+     TTS), and `appLog` (info and warning lines from features, for the
+     chat log). Each is a `MutableSharedFlow` with a buffer of 64, emitted
+     with `tryEmit` on the main thread and collected on the main thread
+     without slow work inline. A failed `tryEmit` follows the `appScope`
+     rule: it throws in debug builds and logs in release builds.
 5. `LocalFactsStore` over the database and settings (local mute and
    ignore lists, persisted self-mute and self-deafen).
 6. The deny formatter, from the `deny_reason_*` strings.
@@ -71,11 +81,31 @@ theirs on the first connect (see [features](#features)).
 
 **Interim hand-off (step 6 only).** `HumlaService` still exists in step 6
 and gets the runtime from an abstract `runtime()` that `MumlaService`
-implements from the container. `HumlaService` keeps only service-lifetime
-work: the wake lock and Wi-Fi lock, posting the connection notification,
-the binder delegations (including registering and, on destroy,
-unregistering observers on the runtime's `HumlaCallbacks`), and the
-connect half of `ConfigDelta`.
+implements from the container. `HumlaService` keeps only per-instance
+work:
+
+- The wake lock and Wi-Fi lock, with today's windows.
+- The connection notification, from an abstract `foregroundNotification()`
+  that `MumlaService` implements from the feature. `HumlaService` calls
+  `startForeground` with its current value when it starts and posts each
+  update. When `client.state` becomes `Idle` or `Failed`, it calls
+  `stopForeground(STOP_FOREGROUND_REMOVE)`, as
+  `MumlaConnectionNotification.hide` does today, because a bound service
+  outlives the connection.
+- The binder delegations, including registering observers on the runtime's
+  `HumlaCallbacks` and unregistering them on destroy.
+- The connect half of `ConfigDelta`.
+- The hooks `MumlaService` overrides until the features that replace them
+  land. Its `client.state` collector, which also drives the locks and the
+  connection-state observer callbacks, calls `onConnectionSynchronized` and
+  `onConnectionDisconnected`. A collector of the runtime's `routeState`
+  calls `onAudioRouteChanged`, which rebuilds the PTT sound pool for the
+  new stream and rechecks the proximity lock; the runtime's own route
+  collector only forwards hints into `HumlaCallbacks` and cannot reach a
+  service override. The later of the PTT-sound and proximity feature
+  commits deletes this hook.
+- The `StateEventLogger` chat-log adapter, which logs through the service
+  into `HumlaCallbacks` until the chat log feature replaces it.
 
 Screens get dependencies through one `ViewModelProvider.Factory` that reads
 the container from `application`. There is no DI framework: Hilt is removed
@@ -177,7 +207,12 @@ with a `start(scope)` method that collects the flows it needs. The
 container builds and starts every feature once, at process start.
 
 - **Features do not call each other.** What two features share comes from
-  the container (a flow, the settings repository, the client). The
+  the container (a flow, the settings repository, the client). Where
+  today's code has one responsibility call another, the sender emits into
+  a [hand-off flow](#appcontainer) and the receiver collects it: the hot
+  corner's gestures reach the talk keys feature through `talkKeys`, the
+  media-key mute confirmation reaches TTS through `speech`, and TTS engine
+  failures reach the chat log through `appLog`. The
   [feature isolation check](enforcement.md#feature-isolation) enforces it.
 - **Event collectors never block.** Features collect `client.events` and
   hand anything slow (TTS synthesis, database writes, notification
@@ -205,18 +240,20 @@ container builds and starts every feature once, at process start.
 - **Features own no Android component.** A feature uses the application
   context (for example for overlay windows, `TextToSpeech`, `SoundPool`,
   and toasts) and never holds a service or an activity. Anything that needs
-  an activity, such as a dialog, belongs to a screen.
+  an activity, such as a dialog, belongs to a screen. Overlay windows
+  inflate from a `ContextThemeWrapper` over the application context,
+  themed by `MumlaApplication.applyTheme`, as `MumlaService.onCreate`
+  themes its own context for the overlay views today.
 
 | Feature | Replaces (today) | Collects | Does |
 |---|---|---|---|
-| Connection notification and media session | `MumlaConnectionNotification` (including its `MediaSession`, custom actions, and headset-hook and claimed-key dispatch), `updateConnectedNotification`, `onMuteToggled`, `onDeafenToggled`, `onOverlayToggled`, `onDisconnect`, `onCancelReconnect`, `setSuppressNotifications` | `client.state`, session-state mirror (self, channel), `client.events` (`PermissionDenied`), `talkActivity`, overlay setting, notification style setting | Builds the foreground notification in its connecting, connected, and reconnecting variants and exposes it as a `StateFlow<Notification>` that always has a value (`Idle` maps to the connecting variant, since a service only asks while connecting or later). The service calls `startForeground` with the current value as soon as it starts, which meets Android's five-second rule however late `client.state` moves, and then posts each update (`HumlaService` in step 6, `ConnectionService` from step 7). Its actions are explicit `PendingIntent`s to a non-exported `NotificationActionReceiver` (in `se.lublin.mumla.service`, not a feature) that calls the feature through the container, so they work with or without a service. Owns the media session; actions call session and client intents. A permission denial re-shows the notification, as `MumlaService.onPermissionDenied` does today, except while the activity is in the foreground (today's `setSuppressNotifications`) |
+| Connection notification and media session | `MumlaConnectionNotification` (including its `MediaSession`, custom actions, and headset-hook and claimed-key dispatch), `updateConnectedNotification`, `onMuteToggled`, `onMediaKeyMuteToggled`, `onDeafenToggled`, `onOverlayToggled`, `onDisconnect`, `onCancelReconnect`, `setSuppressNotifications` | `client.state`, session-state mirror (self, channel), `client.events` (`PermissionDenied`), `talkActivity`, overlay setting, notification style setting, media-key mute settings | Builds the foreground notification in its connecting, connected, and reconnecting variants and exposes it as a `StateFlow<Notification>` that always has a value (`Idle` maps to the connecting variant, since a service only asks while connecting or later). The service calls `startForeground` with the current value as soon as it starts, which meets Android's five-second rule however late `client.state` moves, and posts each update while the connection lasts. On `Idle` or `Failed` the notification goes, as `MumlaConnectionNotification.hide` does today: in step 6 `HumlaService` removes it with `stopForeground`, because the bound service outlives the connection, and from step 7 `ConnectionService` stops itself. Its actions are explicit `PendingIntent`s to a non-exported `NotificationActionReceiver` (in `se.lublin.mumla.service`, not a feature) that calls the feature through the container, so they work with or without a service. Owns the media session; actions call session and client intents. Media keys and play/pause toggle self-mute while media-key mute is on (today's `onMediaKeyMuteToggled`, whose only source is the media session), with today's claimed-key and auto-repeat rules, and emit today's spoken confirmation into `speech` when that option is on. A permission denial re-shows the notification, as `MumlaService.onPermissionDenied` does today, except while the activity is in the foreground (today's `setSuppressNotifications`) |
 | Message notifications | `MumlaMessageNotification`, `clearChatNotifications` | `client.events` (`TextMessageReceived`), `chatNotify` setting | Posts and clears message notifications. Never suppressed by chat visibility, as today. Clears them each time `client.state` becomes `Idle`, `Reconnecting`, or `Failed`, as `MumlaService.onConnectionDisconnected` does today |
-| Chat log | `MumlaService` message log (`getMessageLog`, `clearMessageLog`, `addChatMessageToLog`, `updateActiveServerLog`, `getServerKey`) | `client.events` (filters read each record's state), `client.state` (today's connecting, connected, disconnected, and reconnecting lines), the runtime's `voiceEvents` (`EncoderLimited`, `PipelineError`); until step 7 also `onMessageLogged` and `MumlaService`'s send delegations (see [migration](migration.md#step-6--container-storage-and-features)) | Keeps chat history per server as `StateFlow<List<IChatMessage>>` with today's limits: 500 messages per server (`MAX_CHAT_LOG_SIZE`), 10 servers in least-recently-used order (`MAX_CACHED_SERVERS`), for the life of the process (today the log goes when the service is destroyed). Until step 7 it forwards each line it appends to `HumlaCallbacks` for the open chat screen. Formats events into the text `ModelHandler` produces today, with the `chat_notify_*`, `deny_reason_*`, and `audio_max_bandwidth` strings, and applies today's filters: moves only when they enter or leave the self user's channel (with today's wording when the user moved themselves), recordings only in the same or a linked channel. `ConnectionWarning` and `PipelineError` are logged as warnings |
-| TTS | `speakTts`, `initTts`, TTS parts of `handleUserTalkStateUpdated` | `client.events`, `client.state` (connection announcements), TTS settings, self deafen state | Speaks messages with today's rules (HTML stripped, links shortened, short form when configured, the 250-character threshold, nothing while deafened), plus today's connection announcements and engine-failure messages |
+| Chat log | `MumlaService` message log (`getMessageLog`, `clearMessageLog`, `addChatMessageToLog`, `updateActiveServerLog`, `getServerKey`) | `client.events` (filters read each record's state), `client.state` (today's connecting, connected, disconnected, and reconnecting lines), the runtime's `voiceEvents` (`EncoderLimited`, `PipelineError`), `appLog` (other features' lines, today the TTS engine-failure warnings); until step 7 also `onMessageLogged` and `MumlaService`'s send delegations (see [migration](migration.md#step-6--container-storage-and-features)) | Keeps chat history per server as `StateFlow<List<IChatMessage>>` with today's limits: 500 messages per server (`MAX_CHAT_LOG_SIZE`), 10 servers in least-recently-used order (`MAX_CACHED_SERVERS`), for the life of the process (today the log goes when the service is destroyed). Until step 7 it forwards each line it appends to `HumlaCallbacks` for the open chat screen. Formats events into the text `ModelHandler` produces today, with the `chat_notify_*`, `deny_reason_*`, and `audio_max_bandwidth` strings, and applies today's filters: moves only when they enter or leave the self user's channel (with today's wording when the user moved themselves), recordings only in the same or a linked channel. `ConnectionWarning` and `PipelineError` are logged as warnings |
+| TTS | `speakTts`, `initTts`, TTS parts of `handleUserTalkStateUpdated` | `client.events`, `client.state` (connection announcements), `speech`, TTS settings, self deafen state | Speaks messages with today's rules (HTML stripped, links shortened, short form when configured, the 250-character threshold, nothing while deafened), today's connection announcements, and each `speech` line, all under the TTS master switch. Engine-failure warnings go into `appLog`, so they still reach the chat log as today |
 | PTT sounds | `initSoundPool`, `playPttSound`, `releaseSoundPool` | `talkActivity.selfTalking`, `route.state`, input method and `pttSound` settings | Plays the PTT beeps in push-to-talk mode on the stream today's code picks (voice call stream on the voice route, music otherwise); reloads on route change. The mode comes from the setting: on `master` the check reads `getTransmitMode`, which always says voice activity, so the beeps never play (see [migration](migration.md#step-6--container-storage-and-features)) |
-| Talk keys | `onTalkKeyDown`, `onTalkKeyUp`, `onTalkKeyCancel` | Key events from the activity, the media session, and the on-screen PTT button, PTT settings | Calls `session.setPtt`, or `session.togglePtt` in toggle mode, as today. A cancel (today's `ChannelFragment.onPause` and `ACTION_CANCEL` paths call `onTalkKeyCancel`) always ends a press, so leaving or rotating the screen mid-press never leaves transmit on |
-| Media key mute | `onMediaKeyMuteToggled` | Media session events, settings | Toggles self-mute; optional TTS announcement |
-| Hot corner | `MumlaHotCorner`, `onHotCorner*`, `updateHotCornerVisibility` | `client.state`, `configuration`, hot corner settings | Shows the overlay window; calls `session.setPtt`; refreshes its gesture exclusion after rotation, deferred past the relayout as today |
+| Talk keys | `onTalkKeyDown`, `onTalkKeyUp`, `onTalkKeyCancel` | `talkKeys` (the activity's key handling and the on-screen PTT button through `MumlaService`'s `onTalkKey*` delegations until step 7, and the hot corner), `client.state`, input method and PTT toggle settings | With today's guards (connected, push-to-talk mode), calls `session.setPtt`, or `session.togglePtt` on release in toggle mode, as today. The media session is not a source: it swallows a media key bound as the PTT key so the activity's key handling gets it. A cancel (today's `ChannelFragment.onPause` and `ACTION_CANCEL` paths call `onTalkKeyCancel`) always ends a press, so leaving or rotating the screen mid-press never leaves transmit on |
+| Hot corner | `MumlaHotCorner`, `onHotCorner*`, `updateHotCornerVisibility` | `client.state`, `talkActivity.selfTalking`, `configuration`, hot corner and input method settings | Shows the overlay window while connected with the hot corner on in push-to-talk mode, as today; highlights it while the user talks (today's `updateTalkState`, seeded from the current level when it appears); emits its down, up, and cancel gestures into `talkKeys`, so toggle mode and the push-to-talk guards apply to it exactly as to any other talk key (today it calls `onTalkKey*`); refreshes its gesture exclusion after rotation, deferred past the relayout as today |
 | Overlay | `MumlaOverlay`, `setOverlayShown`, `isOverlayShown`, `updateOverlayVisibility`, `checkAndRequestOverlayPermission` | Session-state mirror, `talkActivity`, `configuration`, overlay settings | Shows who is talking in a system overlay; repositions on rotation and on a placement change, as today |
 | Proximity | `shouldUseProximitySensor`, `setProximitySensorOn` | `route.state`, `client.state`, handset-mode setting | Holds `PROXIMITY_SCREEN_OFF_WAKE_LOCK` while connected in handset mode without SCO, as today's condition, with today's guards for devices without the sensor |
 | Talk broadcast | `TalkBroadcastReceiver`, `registerTalkReceiver`, `unregisterTalkReceiver` | `client.state`, `allowTalkBroadcast` and input method settings | Registers the receiver while connected; maps on and off to `session.setPtt` and toggle to `session.togglePtt`, with today's guards (connected, push-to-talk mode only, unknown values ignored). The mode comes from the setting, which also restores the receiver: on `master` its `getTransmitMode` guard rejects every request |
@@ -303,16 +340,16 @@ collects only the keys it uses, from one current-value API on
 | Settings key (today's `Settings` property) | Consumer |
 |---|---|
 | Server, certificate (`defaultCertificate`, `isUsingCertificate`), trust store, `isTcpForced`, client name, access tokens | `ConnectTarget`, frozen at `connect`; the certificate and `isTcpForced` also feed the reconnect-required notice |
-| `inputMethod`, `detectionThreshold`, `amplitudeBoostMultiplier`, `inputQuality`, `framesPerPacket`, `isHalfDuplex`, `isAdaptiveLevelerEnabled` | `VoiceSettings` (see [voice](voice.md#policy-and-settings-handoff)) |
+| `inputMethod`, `detectionThreshold`, `amplitudeBoostMultiplier`, `inputQuality`, `framesPerPacket`, `isHalfDuplex`, `isAdaptiveLevelerEnabled` | `VoiceSettings` (see [voice](voice.md#policy-and-settings-handoff)); `inputMethod` also feeds the talk keys, hot corner, PTT-sound, and talk broadcast features |
 | `isBluetoothHeadset`, `isHandsetMode` | `RoutePreferences`; `isHandsetMode` also feeds the proximity feature |
 | `isMuted`, `isDeafened` | `LocalFactsStore` (self-mute restore) |
 | Local mute and ignore lists (database) | `LocalFactsStore` |
-| `pushToTalkKey`, `isPushToTalkToggle`, `isPushToTalkButtonShown`, `pttButtonHeight` | Talk keys feature; `ChannelFragment` |
+| `pushToTalkKey`, `isPushToTalkToggle`, `isPushToTalkButtonShown`, `pttButtonHeight` | Talk keys feature; `ChannelFragment`; `pushToTalkKey` also feeds the connection notification feature's claimed-key check |
 | `hotCorner` | Hot corner feature |
 | `isOverlayShown`, `overlayPlacement`, overlay position | Overlay feature |
 | `isChatNotifyEnabled` | Message notifications feature |
 | `notificationStyle` | Connection notification feature |
-| `isMediaKeyMuteEnabled`, `isMediaKeyMuteTtsEnabled` | Media key mute feature |
+| `isMediaKeyMuteEnabled`, `isMediaKeyMuteTtsEnabled` | Connection notification feature (media keys) |
 | `isTextToSpeechEnabled`, `isShortTextToSpeechMessagesEnabled`, `ttsEngine` | TTS feature |
 | `isPttSoundEnabled` | PTT sounds feature |
 | `isTalkBroadcastAllowed` | Talk broadcast feature |
