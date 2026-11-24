@@ -250,4 +250,24 @@ class VoiceEngineStreamTest {
         assertEquals(1, h.fake.streamCloses)
         assertNull(h.engine.pipelineForTests())
     }
+
+    @Test
+    fun `disconnect after window reopens instead of failing`() {
+        val h = Harness()
+        var now = 0L
+        h.engine.clock = { now }
+        h.start()
+        h.ready()
+        h.engine.onStreamDisconnect(1L)
+        val reopened = h.engine.pipelineForTests()
+        assertNotNull(reopened)
+        // Past the 5 s window the same generation is a fresh disconnect,
+        // not a failed reopen: it rebuilds instead of reporting an error.
+        now = 6_000L
+        h.engine.onStreamDisconnect(reopened!!.generation)
+        assertNotNull(h.engine.pipelineForTests())
+        assertEquals(3, h.fake.streamOpens.size)
+        assertEquals(3, h.fake.streamStarts)
+        assertTrue(h.pipelineErrors().isEmpty())
+    }
 }

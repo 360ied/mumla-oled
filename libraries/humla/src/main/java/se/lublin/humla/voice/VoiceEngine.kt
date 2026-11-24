@@ -95,6 +95,11 @@ class VoiceEngine @JvmOverloads constructor(
     private val context: Context? = null,
     private val routeStates: StateFlow<RouteState>? = null,
     private val prefs: StateFlow<RoutePreferences>? = null,
+    // Reopen clock, injectable for tests: production reads the monotonic
+    // elapsed clock; unit tests run with returnDefaultValues (frozen 0),
+    // so they set this to advance past the failure window deterministically.
+    // Control-thread only, like lastReopenAt.
+    internal var clock: () -> Long = { SystemClock.elapsedRealtime() },
 ) : VoiceLink, VoiceLifecycle, NativeVoiceEngine.Listener {
     companion object {
         private val TAG: String = VoiceEngine::class.java.name
@@ -946,7 +951,7 @@ class VoiceEngine @JvmOverloads constructor(
         val current = pipelineRef.get() ?: return
         if (!runningFlag.get()) return
         if (generation != current.generation) return
-        val now = SystemClock.elapsedRealtime()
+        val now = clock()
         val reopenedAt = lastReopenAt
         if (reopenedAt != null && lastReopenGeneration == current.generation &&
             now - reopenedAt < REOPEN_FAILURE_WINDOW_MS
