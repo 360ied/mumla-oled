@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.service
 
+import se.lublin.mumla.container
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
@@ -647,8 +648,8 @@ open class MumlaService : HumlaService(),
         registerObserver(mObserver)
 
         // Register for preference changes
-        mSettings = Settings.getInstance(this)
-        mDatabase = MumlaRoomDatabase.getInstance(this)
+        mSettings = this.container.settings
+        mDatabase = this.container.database
         val settings = mSettings ?: throw NullPointerException("mSettings")
         mPTTSoundEnabled = settings.isPttSoundEnabled
         initSoundPool()

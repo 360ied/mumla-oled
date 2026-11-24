@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.channel
 
+import se.lublin.mumla.container
 import android.content.Context
 import android.graphics.PorterDuff
 import android.os.Bundle
@@ -169,8 +170,8 @@ class ChannelListFragment : HumlaServiceFragment(), OnChannelClickListener, OnUs
         } catch (e: ClassCastException) {
             throw ClassCastException(parentFragment.toString() + " must implement ChatTargetProvider")
         }
-        mDatabase = MumlaRoomDatabase.getInstance(context)
-        val settings = Settings.getInstance(context)
+        mDatabase = context.container.database
+        val settings = context.container.settings
         mSettings = settings
         settings.registerListener(this)
     }

@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.service
 
+import se.lublin.mumla.container
 import android.content.Context
 import android.graphics.Insets
 import android.graphics.PixelFormat
@@ -125,7 +126,7 @@ class MumlaOverlay(service: MumlaService) {
     }
 
     private val mService: MumlaService = service
-    private val mSettings: Settings = Settings.getInstance(service)
+    private val mSettings: Settings = service.container.settings
 
     // Fail-soft snapshot: getSessionChannel() throws IllegalStateException when
     // unsynchronized or teardown-racing (cf. MumlaService's own try/catch

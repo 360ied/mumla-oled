@@ -59,6 +59,9 @@ BOUNDARY_FILES = (
     "libraries/humla/src/main/java/se/lublin/humla/voice/VoiceEngine.kt",
     # Uncaught-exception handler + its background thread.
     "app/src/main/java/se/lublin/mumla/util/CrashReporter.kt",
+    # Step 6: the one blocking settings startup read (theme/locale before
+    # the first activity draws) and its import.
+    "app/src/main/java/se/lublin/mumla/AppContainer.kt",
 )
 
 CONCURRENCY_PATTERNS = (

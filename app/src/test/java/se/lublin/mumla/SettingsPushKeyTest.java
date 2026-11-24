@@ -37,14 +37,14 @@ public class SettingsPushKeyTest extends TestCase {
     }
 
     public void testGetPushToTalkKey_Unconfigured() {
-        Settings settings = Settings.createForTesting(TestDataStores.create());
+        Settings settings = TestSettings.create(TestDataStores.create());
         assertEquals("Unconfigured preference must resolve to -1", -1, settings.getPushToTalkKey());
     }
 
     public void testGetPushToTalkKey_BoundKeyRoundTrip() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
-        TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), KeyEvent.KEYCODE_VOLUME_UP);
+        Settings settings = TestSettings.create(store);
+        TestSettings.put(settings, TestDataStores.intKey(Settings.PREF_PUSH_KEY), KeyEvent.KEYCODE_VOLUME_UP);
         assertEquals(KeyEvent.KEYCODE_VOLUME_UP, settings.getPushToTalkKey());
     }
 
@@ -54,15 +54,15 @@ public class SettingsPushKeyTest extends TestCase {
         // Settings.isPttKeyBound treats it as unbound, and the dialog
         // normalizes it to -1 on load so storage converges on next edit.
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
-        TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), 0);
+        Settings settings = TestSettings.create(store);
+        TestSettings.put(settings, TestDataStores.intKey(Settings.PREF_PUSH_KEY), 0);
         assertEquals("Legacy stored 0 must read back as stored", 0, settings.getPushToTalkKey());
     }
 
     public void testResetSentinelRoundTrip() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
-        TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), Settings.DEFAULT_PUSH_KEY);
+        Settings settings = TestSettings.create(store);
+        TestSettings.put(settings, TestDataStores.intKey(Settings.PREF_PUSH_KEY), Settings.DEFAULT_PUSH_KEY);
         assertEquals("Reset path must persist the -1 sentinel",
                 Settings.DEFAULT_PUSH_KEY, settings.getPushToTalkKey());
     }
@@ -70,17 +70,17 @@ public class SettingsPushKeyTest extends TestCase {
     /** Regression check for the ODD-07 activity guard semantics, via production code. */
     public void testPttGuardSemantics_AgainstLegacyZeroAndUnknown() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         for (int keyCode : new int[] {0 /* KEYCODE_UNKNOWN */, Settings.DEFAULT_PUSH_KEY}) {
-            TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), keyCode);
+            TestSettings.put(settings, TestDataStores.intKey(Settings.PREF_PUSH_KEY), keyCode);
             int pttKey = settings.getPushToTalkKey();
             assertFalse("KEYCODE_UNKNOWN/sentinel must never match PTT",
                     Settings.isPttKeyBound(pttKey, keyCode));
         }
 
         // A real key must still match, and only its exact code.
-        TestDataStores.put(store, TestDataStores.intKey(Settings.PREF_PUSH_KEY), KeyEvent.KEYCODE_VOLUME_UP);
+        TestSettings.put(settings, TestDataStores.intKey(Settings.PREF_PUSH_KEY), KeyEvent.KEYCODE_VOLUME_UP);
         int pttKey = settings.getPushToTalkKey();
         assertTrue(Settings.isPttKeyBound(pttKey, KeyEvent.KEYCODE_VOLUME_UP));
         assertFalse(Settings.isPttKeyBound(pttKey, KeyEvent.KEYCODE_VOLUME_DOWN));

@@ -38,13 +38,13 @@ class SettingsSnapshotTest {
     @Before
     fun setUp() {
         store = TestDataStores.create()
-        settings = Settings.createForTesting(store)
+        settings = TestSettings.create(store)
     }
 
     @Test
     fun scaledReadsDivideByHundred() {
-        TestDataStores.put(store, TestDataStores.intKey("vadThreshold"), 50)
-        TestDataStores.put(store, TestDataStores.intKey("inputVolume"), 80)
+        TestSettings.put(settings, TestDataStores.intKey("vadThreshold"), 50)
+        TestSettings.put(settings, TestDataStores.intKey("inputVolume"), 80)
         assertEquals(0.5f, settings.detectionThreshold, 0.0001f)
         assertEquals(0.8f, settings.amplitudeBoostMultiplier, 0.0001f)
     }
@@ -61,15 +61,15 @@ class SettingsSnapshotTest {
 
     @Test
     fun hidePttInvertsButtonShown() {
-        TestDataStores.put(store, TestDataStores.booleanKey("hidePtt"), true)
+        TestSettings.put(settings, TestDataStores.booleanKey("hidePtt"), true)
         assertEquals(false, settings.isPushToTalkButtonShown)
-        TestDataStores.put(store, TestDataStores.booleanKey("hidePtt"), false)
+        TestSettings.put(settings, TestDataStores.booleanKey("hidePtt"), false)
         assertEquals(true, settings.isPushToTalkButtonShown)
     }
 
     @Test
     fun ttsEmptyStringNormalizesToNull() {
-        TestDataStores.put(store, TestDataStores.stringKey("ttsEngine"), "")
+        TestSettings.put(settings, TestDataStores.stringKey("ttsEngine"), "")
         assertNull("stored \"\" must read as system-default null", settings.ttsEngine)
         settings.ttsEngine = "com.example.tts"
         assertEquals("com.example.tts", settings.ttsEngine)
@@ -96,15 +96,15 @@ class SettingsSnapshotTest {
 
     @Test
     fun pttButtonHeightClamps() {
-        TestDataStores.put(store, TestDataStores.intKey("pttButtonHeight"), 5)
+        TestSettings.put(settings, TestDataStores.intKey("pttButtonHeight"), 5)
         assertEquals(Settings.MIN_PTT_BUTTON_HEIGHT, settings.pttButtonHeight)
-        TestDataStores.put(store, TestDataStores.intKey("pttButtonHeight"), 500)
+        TestSettings.put(settings, TestDataStores.intKey("pttButtonHeight"), 500)
         assertEquals(Settings.MAX_PTT_BUTTON_HEIGHT, settings.pttButtonHeight)
     }
 
     @Test
     fun corruptFramesPerPacketFallsBack() {
-        TestDataStores.put(store, TestDataStores.stringKey("audio_per_packet"), "fast")
+        TestSettings.put(settings, TestDataStores.stringKey("audio_per_packet"), "fast")
         assertEquals(se.lublin.humla.Constants.DEFAULT_FRAMES_PER_PACKET, settings.framesPerPacket)
     }
 

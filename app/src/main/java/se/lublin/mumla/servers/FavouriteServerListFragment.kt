@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.servers
 
+import se.lublin.mumla.container
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -62,7 +63,7 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
         } catch (e: ClassCastException) {
             throw ClassCastException(context.toString() + " must implement ServerConnectHandler!")
         }
-        mDatabase = MumlaRoomDatabase.getInstance(context)
+        mDatabase = context.container.database
     }
 
     override fun onCreateView(

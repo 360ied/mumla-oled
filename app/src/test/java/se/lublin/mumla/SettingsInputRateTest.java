@@ -32,39 +32,39 @@ import junit.framework.TestCase;
 public class SettingsInputRateTest extends TestCase {
 
     public void testDefaultRateWhenUnset() {
-        Settings settings = Settings.createForTesting(TestDataStores.create());
+        Settings settings = TestSettings.create(TestDataStores.create());
         assertEquals("Unset rate must resolve to the 48 kHz default", 48000,
                 settings.getInputSampleRate());
     }
 
     public void testValidRateStringRoundTrip() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "22050");
+        Settings settings = TestSettings.create(store);
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "22050");
         assertEquals("Valid rate string must parse through", 22050,
                 settings.getInputSampleRate());
     }
 
     public void testCorruptedRateStringFallsBack() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "fast");
+        Settings settings = TestSettings.create(store);
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "fast");
         assertEquals("Garbage rate string must fall back, not throw", 48000,
                 settings.getInputSampleRate());
     }
 
     public void testEmptyRateStringFallsBack() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "");
+        Settings settings = TestSettings.create(store);
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "");
         assertEquals("Empty rate string must fall back, not throw", 48000,
                 settings.getInputSampleRate());
     }
 
     public void testOverflowingRateStringFallsBack() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "9999999999");
+        Settings settings = TestSettings.create(store);
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), "9999999999");
         assertEquals("Out-of-int-range rate must fall back, not throw", 48000,
                 settings.getInputSampleRate());
     }
@@ -72,8 +72,8 @@ public class SettingsInputRateTest extends TestCase {
     public void testWhitespacePaddedRateStringFallsBack() {
         // parseInt does not trim: padded input falls back rather than passing.
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), " 48000 ");
+        Settings settings = TestSettings.create(store);
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_INPUT_RATE), " 48000 ");
         assertEquals("Padded rate string must fall back, not throw", 48000,
                 settings.getInputSampleRate());
     }

@@ -18,20 +18,17 @@
 package se.lublin.mumla.preference
 
 import android.content.Context
-import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.preference.PreferenceDataStore
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
-import se.lublin.mumla.AppDataStore
+import se.lublin.mumla.SettingsRepository
+import se.lublin.mumla.container
 
 /**
  * `PreferenceDataStore` over the settings DataStore (migration slice 2,
@@ -40,12 +37,12 @@ import se.lublin.mumla.AppDataStore
  * service state diverge permanently after the one-time migration.
  *
  * Reads fall back to the caller-supplied default (the XML widget default),
- * mirroring `SharedPreferences` semantics. Blocking reads/writes on
- * DataStore's in-memory cache — same interim stance as `Settings` itself.
+ * mirroring `SharedPreferences` semantics. Reads use the repository's raw
+ * in-memory [Preferences] and writes go through its non-blocking update.
  */
-class DataStorePreferenceDataStore(private val store: DataStore<Preferences>) : PreferenceDataStore() {
+class DataStorePreferenceDataStore(private val repository: SettingsRepository) : PreferenceDataStore() {
 
-    constructor(context: Context) : this(AppDataStore.get(context))
+    constructor(context: Context) : this(context.container.settingsRepository)
 
     // Key cache: Preferences.Key equality is name-based, so a fresh key
     // object per get/put is correct but wasteful under rapid-tap
@@ -77,17 +74,14 @@ class DataStorePreferenceDataStore(private val store: DataStore<Preferences>) : 
     private fun stringSetKey(name: String): Preferences.Key<Set<String>> =
         keyCache.computeIfAbsent("ss/$name") { stringSetPreferencesKey(name) } as Preferences.Key<Set<String>>
 
-    private fun <T> read(block: suspend (Preferences) -> T): T =
-        runBlocking(Dispatchers.IO) { block(store.data.first()) }
+    private fun <T> read(block: (Preferences) -> T): T = block(repository.state.value.preferences)
 
     // NPE-exact with a message: platform callers never pass null keys, and a
     // bare `key!!` would throw message-less. Mirrors the file's idiom elsewhere.
     private fun keyOf(key: String?): String =
         key ?: throw NullPointerException("Preference key is null")
 
-    private fun write(block: suspend (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
-        runBlocking(Dispatchers.IO) { store.edit(block) }
-    }
+    private fun write(block: (MutablePreferences) -> Unit) = repository.update(block)
 
     override fun getBoolean(key: String?, defValue: Boolean): Boolean =
         read { it[booleanKey(keyOf(key))] ?: defValue }

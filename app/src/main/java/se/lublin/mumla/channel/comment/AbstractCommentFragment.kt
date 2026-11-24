@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.channel.comment
 
+import se.lublin.mumla.container
 import android.app.Dialog
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -204,7 +205,7 @@ abstract class AbstractCommentFragment : DialogFragment() {
         commentSettings.allowContentAccess = false
         commentSettings.allowFileAccessFromFileURLs = false
         commentSettings.allowUniversalAccessFromFileURLs = false
-        val loadExternalImages = Settings.getInstance(requireContext()).shouldLoadExternalImages
+        val loadExternalImages = requireContext().container.settings.shouldLoadExternalImages
         commentSettings.blockNetworkImage = !loadExternalImages
         commentSettings.blockNetworkLoads = !loadExternalImages
     }

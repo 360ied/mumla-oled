@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.preference
 
+import se.lublin.mumla.container
 import android.app.Activity
 import android.content.Context
 import android.os.AsyncTask
@@ -65,7 +66,7 @@ open class MumlaCertificateGenerateTask(context: Context) : AsyncTask<Void, Void
             val dateFormat = SimpleDateFormat(DATE_FORMAT, Locale.getDefault())
             val fileName = mContext.getString(R.string.certificate_export_format, dateFormat.format(Date()))
 
-            val database = MumlaRoomDatabase.getInstance(mContext)
+            val database = mContext.container.database
             val dc = database.addCertificate(fileName, baos.toByteArray())
             database.close()
             return dc

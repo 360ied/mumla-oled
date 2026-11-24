@@ -24,6 +24,7 @@ import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import se.lublin.mumla.TestDataStores
+import se.lublin.mumla.TestSettings
 
 /**
  * Covers the DataStore-backed `PreferenceDataStore` bridge: typed round-trips
@@ -36,7 +37,7 @@ class DataStorePreferenceDataStoreTest {
     @Before
     fun setUp() {
         store = TestDataStores.create()
-        dataStore = DataStorePreferenceDataStore(store)
+        dataStore = DataStorePreferenceDataStore(TestSettings.repository(store))
     }
 
     @Test

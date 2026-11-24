@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.channel
 
+import se.lublin.mumla.container
 import android.content.res.TypedArray
 import android.os.Bundle
 import android.util.Log
@@ -221,7 +222,7 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
 
         // NPE-exact: the original passed getActivity() straight through.
         val host = activity ?: throw NullPointerException("activity")
-        val settings = Settings.getInstance(host)
+        val settings = host.container.settings
         mSettings = settings
         settings.registerListener(this)
 
@@ -258,7 +259,7 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
             // toasts, never by this checkmark.
             // NPE-exact: the original dereferenced getActivity() unconditionally.
             val host = activity ?: throw NullPointerException("activity")
-            val requested = Settings.getInstance(host).isBluetoothHeadset
+            val requested = host.container.settings.isBluetoothHeadset
             val service = getService()
             bluetoothItem.setVisible(service != null && service.isConnected())
             bluetoothItem.setChecked(requested)
@@ -274,14 +275,14 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
                 // requested state. No explicit retry; a failed link
                 // retries by flipping off and on again.
                 host.setBluetoothHeadset(
-                    !Settings.getInstance(host).isBluetoothHeadset
+                    !host.container.settings.isBluetoothHeadset
                 )
             }
             return true
         }
         // NPE-exact: the original passed getActivity() straight through.
         val host = activity ?: throw NullPointerException("activity")
-        val settings = Settings.getInstance(host)
+        val settings = host.container.settings
         if (itemId == R.id.menu_input_voice) {
             settings.inputMethod = Settings.ARRAY_INPUT_METHOD_VOICE
             return true
@@ -391,7 +392,7 @@ class ChannelFragment : HumlaServiceFragment(), Settings.OnSettingChangedListene
         }
         // NPE-exact: the original passed getActivity() straight through.
         val host = activity ?: throw NullPointerException("activity")
-        val settings = Settings.getInstance(host)
+        val settings = host.container.settings
 
         val heightDp = settings.pttButtonHeight
         val heightPx = calculateButtonHeightPx(

@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.app
 
+import se.lublin.mumla.container
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ComponentName
@@ -666,7 +667,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        val settings = Settings.getInstance(this)
+        val settings = this.container.settings
         mSettings = settings
 
         super.onCreate(savedInstanceState)
@@ -718,7 +719,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
 
         setStayAwake(settings.shouldStayAwake)
 
-        mDatabase = MumlaRoomDatabase.getInstance(this) // TODO add support for cloud storage
+        mDatabase = this.container.database // TODO add support for cloud storage
         // NPE-exact: the original dereferenced mDatabase unconditionally below.
         val database = mDatabase ?: throw NullPointerException("mDatabase")
         database.open()

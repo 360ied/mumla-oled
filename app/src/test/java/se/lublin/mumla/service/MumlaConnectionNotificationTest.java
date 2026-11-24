@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.service;
 
+import se.lublin.mumla.TestSettings;
 import junit.framework.TestCase;
 
 import android.view.KeyEvent;
@@ -145,7 +146,7 @@ public class MumlaConnectionNotificationTest extends TestCase {
     }
 
     public void testNotificationInstanceHooks() {
-        se.lublin.mumla.Settings settings = se.lublin.mumla.Settings.createForTesting(
+        se.lublin.mumla.Settings settings = se.lublin.mumla.TestSettings.create(
                 TestDataStores.create());
         MumlaConnectionNotification notification = new MumlaConnectionNotification(null, null, settings);
         assertSame(settings, notification.getSettings());

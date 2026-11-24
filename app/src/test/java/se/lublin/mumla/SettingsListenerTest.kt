@@ -47,7 +47,7 @@ class SettingsListenerTest {
     fun setUp() {
         Dispatchers.setMain(StandardTestDispatcher(scheduler))
         store = TestDataStores.create()
-        settings = Settings.createForTesting(store)
+        settings = TestSettings.create(store)
     }
 
     @After

@@ -20,8 +20,8 @@ package se.lublin.mumla
 import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -30,12 +30,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import java.util.Optional
 
 /**
@@ -47,12 +50,11 @@ import java.util.Optional
  * per-key defaults table in docs/migration/slices.md before touching a
  * default — the matching `settings_*.xml` widget default must change too.
  *
- * Threading (interim): the legacy surface is synchronous and main-thread, so
- * reads/writes block via `runBlocking(Dispatchers.IO)` on DataStore's
- * in-memory cache. Listener delivery runs on `Dispatchers.Main.immediate`
- * (same thread as legacy `apply()` delivery); the collector scope starts only
- * when the first listener registers, so plain-JVM tests (no Main dispatcher)
- * never touch it.
+ * The repository holds the one in-memory [SettingsState], seeded by the
+ * container's startup read. Getters read that value; writers change it
+ * atomically and signal the single store writer. Listener delivery runs on
+ * `Dispatchers.Main.immediate` (same thread as legacy `apply()` delivery);
+ * the collector scope starts only when the first listener registers.
  */
 data class PrefSnapshot(
     val audioInputMethod: String,
@@ -195,9 +197,58 @@ class MutablePrefs {
     var newsShownVersions: Set<String>? = null
 }
 
+/** The raw value and its typed view are always published together. */
+data class SettingsState(
+    val preferences: Preferences,
+    val snapshot: PrefSnapshot,
+)
+
 class SettingsRepository(
     private val store: DataStore<Preferences>,
+    private val scope: CoroutineScope,
+    initial: Preferences,
 ) {
+    private val _state = MutableStateFlow(SettingsState(initial, initial.toSnapshot()))
+
+    /** Current value; always present, never a blocking read. */
+    val state: StateFlow<SettingsState> = _state.asStateFlow()
+
+    val snapshot: Flow<PrefSnapshot> = state.map { it.snapshot }.distinctUntilChanged()
+
+    // Conflated signal: racing updates coalesce, and the writer always
+    // persists the latest whole raw value, so store and memory converge.
+    private val writes = Channel<Unit>(Channel.CONFLATED)
+
+    init {
+        scope.launch {
+            for (signal in writes) {
+                try {
+                    store.updateData { _state.value.preferences }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Settings write failed; the next update retries", e)
+                }
+            }
+        }
+    }
+
+    /** Non-blocking and read-your-writes: the caller's next line sees the change. */
+    fun update(block: (MutablePreferences) -> Unit) {
+        _state.update { current ->
+            val next = current.preferences.toMutablePreferences()
+            block(next)
+            val preferences: Preferences = next.toPreferences()
+            SettingsState(preferences, preferences.toSnapshot())
+        }
+        writes.trySend(Unit)
+    }
+
+    /** Typed convenience for the Settings facade; the raw keys stay private. */
+    fun updateTyped(block: (MutablePrefs) -> Unit) {
+        val pending = MutablePrefs()
+        block(pending)
+        update { prefs -> pending.writeback(prefs) }
+    }
+
     // Java interop: java.util.function.Consumer (void methods) rather than Kotlin
     // function types or fun interfaces (Unit return) so Java lambdas and method
     // references compile without Unit adapters.
@@ -249,28 +300,9 @@ class SettingsRepository(
         val NEWS_SHOWN_VERSIONS = stringSetPreferencesKey("newsShownVersions")
     }
 
-    val snapshot: Flow<PrefSnapshot> =
-        store.data.map { it.toSnapshot() }.distinctUntilChanged()
-
-    fun snapshotBlocking(): PrefSnapshot =
-        runBlocking(Dispatchers.IO) {
-            store.data.map { it.toSnapshot() }.first()
-        }
-
-    fun updateBlocking(update: java.util.function.Consumer<MutablePrefs>) =
-        runBlocking(Dispatchers.IO) {
-            val pending = MutablePrefs()
-            update.accept(pending)
-            doUpdate(pending)
-        }
-
-    private suspend fun doUpdate(pending: MutablePrefs) {
-        store.edit { prefs -> pending.writeback(prefs) }
-    }
-
     // Legacy listener bridge: diff consecutive snapshots per key and fire the
-    // legacy PREF_* key strings, preserving MumlaService/MumlaApplication
-    // dispatch with zero service changes.
+    // legacy PREF_* key strings for the screens that still register listeners
+    // (they move to flows in step 7).
     private val listeners = mutableSetOf<java.util.function.Consumer<String>>()
     private var collectScope: CoroutineScope? = null
 
@@ -283,14 +315,11 @@ class SettingsRepository(
                 null
             }
         }
-        // Baseline captured outside the lock: snapshotBlocking() does a
-        // runBlocking(Dispatchers.IO) disk/migration read that must never
-        // run while holding the monitor (all callers register on Main).
-        // A write landing between registration and collector start is still
-        // diffed: the collector's own first emission is compared against
-        // this baseline instead of being swallowed.
+        // Baseline from the current in-memory value: a write landing between
+        // registration and collector start is still diffed, because the
+        // collector's first emission is compared against this baseline.
         if (scopeToStart != null) {
-            var previous: PrefSnapshot? = snapshotBlocking()
+            var previous: PrefSnapshot? = _state.value.snapshot
             scopeToStart.launch {
                 snapshot.collect { current ->
                     val prev = previous
@@ -330,6 +359,8 @@ class SettingsRepository(
     }
 
     companion object {
+        private const val TAG = "SettingsRepository"
+
         internal fun Preferences.toSnapshot(): PrefSnapshot = PrefSnapshot(
             audioInputMethod = this[Keys.AUDIO_INPUT_METHOD] ?: Settings.ARRAY_INPUT_METHOD_VOICE,
             vadThreshold = this[Keys.VAD_THRESHOLD] ?: Settings.DEFAULT_THRESHOLD,

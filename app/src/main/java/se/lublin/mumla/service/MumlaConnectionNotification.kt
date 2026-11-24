@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.service
 
+import se.lublin.mumla.container
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -58,7 +59,7 @@ class MumlaConnectionNotification {
     private var mOverlayShown: Boolean = false
 
     private constructor(service: Service?, listener: OnActionListener?) :
-        this(service, listener, service?.let { Settings.getInstance(it) })
+        this(service, listener, service?.let { it.container.settings })
 
     // Widened to public: Kotlin has no package visibility (was package-visible
     // in Java for the same-package service and its tests).
@@ -66,7 +67,7 @@ class MumlaConnectionNotification {
         mService = service
         mListener = listener
         // NPE-exact: the original dereferenced service unconditionally for the default.
-        mSettings = settings ?: Settings.getInstance(service ?: throw NullPointerException("service"))
+        mSettings = settings ?: (service ?: throw NullPointerException("service")).container.settings
         mActionsShown = false
         mReconnectingShown = false
         mMuted = false

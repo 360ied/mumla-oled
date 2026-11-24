@@ -35,35 +35,35 @@ public class SettingsOverlayTest extends TestCase {
 
     public void testOverlayDefaultState() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         assertFalse("Overlay must be disabled by default", settings.isOverlayShown());
     }
 
     public void testSetOverlayShownTrue() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         settings.setOverlayShown(true);
         assertTrue("Overlay should be enabled after setOverlayShown(true)", settings.isOverlayShown());
-        assertEquals(true, (boolean) TestDataStores.get(store, TestDataStores.booleanKey(Settings.PREF_OVERLAY_SHOWN), false));
+        assertEquals(true, (boolean) TestSettings.get(settings, TestDataStores.booleanKey(Settings.PREF_OVERLAY_SHOWN), false));
     }
 
     public void testSetOverlayShownFalse() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         settings.setOverlayShown(true);
         assertTrue(settings.isOverlayShown());
 
         settings.setOverlayShown(false);
         assertFalse("Overlay should be disabled after setOverlayShown(false)", settings.isOverlayShown());
-        assertEquals(false, (boolean) TestDataStores.get(store, TestDataStores.booleanKey(Settings.PREF_OVERLAY_SHOWN), true));
+        assertEquals(false, (boolean) TestSettings.get(settings, TestDataStores.booleanKey(Settings.PREF_OVERLAY_SHOWN), true));
     }
 
     public void testOverlayCoordinatesPersistence() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         // Defaults pass through
         assertEquals(7, settings.getOverlayPosX(7));
@@ -78,7 +78,7 @@ public class SettingsOverlayTest extends TestCase {
 
     public void testRepeatedOverlayToggles() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         for (int i = 0; i < 5; i++) {
             settings.setOverlayShown(true);
@@ -100,7 +100,7 @@ public class SettingsOverlayTest extends TestCase {
 
     public void testOverlayPlacementDefault() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         assertEquals(Settings.OVERLAY_PLACEMENT_FLOATING, settings.getOverlayPlacement());
         assertFalse("Overlay should not be pinned by default", settings.isOverlayPinned());
@@ -109,51 +109,51 @@ public class SettingsOverlayTest extends TestCase {
 
     public void testOverlayPlacementTopLeft() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_TOP_LEFT);
         assertEquals(Settings.OVERLAY_PLACEMENT_TOP_LEFT, settings.getOverlayPlacement());
         assertTrue(settings.isOverlayPinned());
         assertEquals(Gravity.TOP | Gravity.LEFT, settings.getOverlayGravity());
-        assertEquals("topLeft", TestDataStores.get(store, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), ""));
+        assertEquals("topLeft", TestSettings.get(settings, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), ""));
     }
 
     public void testOverlayPlacementTopRight() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_TOP_RIGHT);
         assertEquals(Settings.OVERLAY_PLACEMENT_TOP_RIGHT, settings.getOverlayPlacement());
         assertTrue(settings.isOverlayPinned());
         assertEquals(Gravity.TOP | Gravity.RIGHT, settings.getOverlayGravity());
-        assertEquals("topRight", TestDataStores.get(store, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), ""));
+        assertEquals("topRight", TestSettings.get(settings, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), ""));
     }
 
     public void testOverlayPlacementBottomLeft() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT);
         assertEquals(Settings.OVERLAY_PLACEMENT_BOTTOM_LEFT, settings.getOverlayPlacement());
         assertTrue(settings.isOverlayPinned());
         assertEquals(Gravity.BOTTOM | Gravity.LEFT, settings.getOverlayGravity());
-        assertEquals("bottomLeft", TestDataStores.get(store, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), ""));
+        assertEquals("bottomLeft", TestSettings.get(settings, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), ""));
     }
 
     public void testOverlayPlacementBottomRight() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_BOTTOM_RIGHT);
         assertEquals(Settings.OVERLAY_PLACEMENT_BOTTOM_RIGHT, settings.getOverlayPlacement());
         assertTrue(settings.isOverlayPinned());
         assertEquals(Gravity.BOTTOM | Gravity.RIGHT, settings.getOverlayGravity());
-        assertEquals("bottomRight", TestDataStores.get(store, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), ""));
+        assertEquals("bottomRight", TestSettings.get(settings, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), ""));
     }
 
     public void testOverlayPlacementResetToFloating() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         settings.setOverlayPlacement(Settings.OVERLAY_PLACEMENT_TOP_RIGHT);
         assertTrue(settings.isOverlayPinned());
@@ -162,28 +162,28 @@ public class SettingsOverlayTest extends TestCase {
         assertEquals(Settings.OVERLAY_PLACEMENT_FLOATING, settings.getOverlayPlacement());
         assertFalse(settings.isOverlayPinned());
         assertEquals(Gravity.TOP | Gravity.LEFT, settings.getOverlayGravity());
-        assertEquals("floating", TestDataStores.get(store, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), ""));
+        assertEquals("floating", TestSettings.get(settings, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), ""));
     }
 
     public void testOverlayPlacementUnknownOrCorruptedValue() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), "corruptedCorner");
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), "corruptedCorner");
         assertEquals("corruptedCorner", settings.getOverlayPlacement());
         assertFalse("Unrecognized placement must not be treated as pinned", settings.isOverlayPinned());
         assertEquals(Gravity.TOP | Gravity.LEFT, settings.getOverlayGravity());
 
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), "");
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT), "");
         assertFalse("Empty placement must not be treated as pinned", settings.isOverlayPinned());
         assertEquals(Gravity.TOP | Gravity.LEFT, settings.getOverlayGravity());
     }
 
     public void testOverlayPlacementNullSafety() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
-        TestDataStores.remove(store, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT));
+        TestSettings.remove(settings, TestDataStores.stringKey(Settings.PREF_OVERLAY_PLACEMENT));
         assertEquals(Settings.DEFAULT_OVERLAY_PLACEMENT, settings.getOverlayPlacement());
         assertFalse(settings.isOverlayPinned());
         assertEquals(Gravity.TOP | Gravity.LEFT, settings.getOverlayGravity());
@@ -191,7 +191,7 @@ public class SettingsOverlayTest extends TestCase {
 
     public void testOverlayPositionPersistence() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         assertEquals(100, settings.getOverlayPosX(100));
         assertEquals(200, settings.getOverlayPosY(200));
@@ -199,13 +199,13 @@ public class SettingsOverlayTest extends TestCase {
         settings.setOverlayPosition(350, 720);
         assertEquals(350, settings.getOverlayPosX(0));
         assertEquals(720, settings.getOverlayPosY(0));
-        assertEquals(350, (int) TestDataStores.get(store, TestDataStores.intKey(Settings.PREF_OVERLAY_POS_X), 0));
-        assertEquals(720, (int) TestDataStores.get(store, TestDataStores.intKey(Settings.PREF_OVERLAY_POS_Y), 0));
+        assertEquals(350, (int) TestSettings.get(settings, TestDataStores.intKey(Settings.PREF_OVERLAY_POS_X), 0));
+        assertEquals(720, (int) TestSettings.get(settings, TestDataStores.intKey(Settings.PREF_OVERLAY_POS_Y), 0));
     }
 
     public void testHotCornerGravityDefault() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
         assertFalse("Hot corner must be disabled by default", settings.isHotCornerEnabled());
         assertEquals(0, settings.getHotCornerGravity());
@@ -213,45 +213,45 @@ public class SettingsOverlayTest extends TestCase {
 
     public void testHotCornerGravityTopLeft() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY), Settings.ARRAY_HOT_CORNER_TOP_LEFT);
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY), Settings.ARRAY_HOT_CORNER_TOP_LEFT);
         assertTrue(settings.isHotCornerEnabled());
         assertEquals(Gravity.LEFT | Gravity.TOP, settings.getHotCornerGravity());
     }
 
     public void testHotCornerGravityTopRight() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY), Settings.ARRAY_HOT_CORNER_TOP_RIGHT);
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY), Settings.ARRAY_HOT_CORNER_TOP_RIGHT);
         assertTrue(settings.isHotCornerEnabled());
         assertEquals(Gravity.RIGHT | Gravity.TOP, settings.getHotCornerGravity());
     }
 
     public void testHotCornerGravityBottomLeft() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY), Settings.ARRAY_HOT_CORNER_BOTTOM_LEFT);
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY), Settings.ARRAY_HOT_CORNER_BOTTOM_LEFT);
         assertTrue(settings.isHotCornerEnabled());
         assertEquals(Gravity.LEFT | Gravity.BOTTOM, settings.getHotCornerGravity());
     }
 
     public void testHotCornerGravityBottomRight() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY), Settings.ARRAY_HOT_CORNER_BOTTOM_RIGHT);
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY), Settings.ARRAY_HOT_CORNER_BOTTOM_RIGHT);
         assertTrue(settings.isHotCornerEnabled());
         assertEquals(Gravity.RIGHT | Gravity.BOTTOM, settings.getHotCornerGravity());
     }
 
     public void testHotCornerGravityCorruptedValue() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
-        TestDataStores.put(store, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY), "sideways");
+        TestSettings.put(settings, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY), "sideways");
         assertFalse("Corrupted hot-corner value must not enable the hot corner",
                 settings.isHotCornerEnabled());
         assertEquals(0, settings.getHotCornerGravity());
@@ -259,9 +259,9 @@ public class SettingsOverlayTest extends TestCase {
 
     public void testHotCornerGravityNullSafety() {
         DataStore<Preferences> store = TestDataStores.create();
-        Settings settings = Settings.createForTesting(store);
+        Settings settings = TestSettings.create(store);
 
-        TestDataStores.remove(store, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY));
+        TestSettings.remove(settings, TestDataStores.stringKey(Settings.PREF_HOT_CORNER_KEY));
         assertFalse(settings.isHotCornerEnabled());
         assertEquals(0, settings.getHotCornerGravity());
     }

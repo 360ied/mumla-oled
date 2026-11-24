@@ -12,61 +12,62 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
 package se.lublin.mumla.app
 
 import android.app.Application
 import android.content.Context
+import android.content.res.Configuration
 import androidx.appcompat.app.AppCompatDelegate
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import se.lublin.humla.HumlaService
+import se.lublin.mumla.AppContainer
 import se.lublin.mumla.R
 import se.lublin.mumla.Settings
+import se.lublin.mumla.container
 import se.lublin.mumla.util.CrashReporter
 
-class MumlaApplication : Application(), Settings.OnSettingChangedListener {
-    private var mSettings: Settings? = null
+open class MumlaApplication : Application() {
+    lateinit var container: AppContainer
+        private set
 
     override fun onCreate() {
         super.onCreate()
         CrashReporter.install(this)
-        val settings = Settings.getInstance(this)
-        mSettings = settings
+        container = createContainer()
+        val settings = container.settings
         applyTheme(settings)
-        settings.registerListener(this)
-
+        applyLanguage(settings)
+        // Theme and locale follow the settings flow. The legacy listener
+        // bridge stays for the screens that still register until step 7.
+        container.appScope.launch(Dispatchers.Main.immediate) {
+            container.settingsRepository.state.collect {
+                applyTheme(settings)
+                applyLanguage(settings)
+            }
+        }
         HumlaService.init(this)
     }
 
-    override fun onSettingChanged(key: String?) {
-        if (key == null) {
-            return
-        }
-        // NPE-exact: the original dereferenced mSettings unconditionally.
-        val settings = mSettings ?: throw NullPointerException("mSettings")
-        when (key) {
-            Settings.PREF_LANGUAGE -> {
-                val language = settings.language
-                AppCompatDelegate.setApplicationLocales(
-                    if (language == Settings.DEFAULT_LANGUAGE) {
-                        androidx.core.os.LocaleListCompat.getEmptyLocaleList()
-                    } else {
-                        androidx.core.os.LocaleListCompat.forLanguageTags(language)
-                    }
-                )
-            }
-            Settings.PREF_THEME -> applyTheme(settings)
+    /** Test seam: a test application can build the real container with fake edges. */
+    protected open fun createContainer(): AppContainer = AppContainer(this)
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (::container.isInitialized) {
+            container.updateConfiguration(newConfig)
         }
     }
 
     companion object {
         @JvmStatic
         fun applyTheme(context: Context) {
-            val settings = Settings.getInstance(context)
+            val settings = context.container.settings
             applyTheme(settings)
-            val theme = settings.theme
-            if (Settings.DEFAULT_THEME == theme) {
+            if (Settings.DEFAULT_THEME == settings.theme) {
                 context.setTheme(R.style.Theme_Mumla_Oled)
             }
         }
@@ -87,6 +88,17 @@ class MumlaApplication : Application(), Settings.OnSettingChangedListener {
                     settings.theme = Settings.DEFAULT_THEME
                 }
             }
+        }
+
+        private fun applyLanguage(settings: Settings) {
+            val language = settings.language
+            AppCompatDelegate.setApplicationLocales(
+                if (language == Settings.DEFAULT_LANGUAGE) {
+                    androidx.core.os.LocaleListCompat.getEmptyLocaleList()
+                } else {
+                    androidx.core.os.LocaleListCompat.forLanguageTags(language)
+                },
+            )
         }
     }
 }

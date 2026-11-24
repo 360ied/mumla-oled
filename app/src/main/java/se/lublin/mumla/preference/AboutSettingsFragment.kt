@@ -1,5 +1,6 @@
 package se.lublin.mumla.preference
 
+import se.lublin.mumla.container
 import android.os.Bundle
 import se.lublin.mumla.BuildConfig
 import se.lublin.mumla.R
@@ -17,7 +18,7 @@ class AboutSettingsFragment : MumlaPreferenceFragment() {
         val preference = versionPreference ?: throw NullPointerException("versionPreference")
         preference.summary = summary
         preference.setOnPreferenceClickListener {
-            Settings.getInstance(requireContext()).resetNewsShownVersion()
+            requireContext().container.settings.resetNewsShownVersion()
             true
         }
     }
