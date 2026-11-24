@@ -7,7 +7,7 @@
 | Severity | Harmful (step 4's central class is behaviorally untested) |
 | Verified | Yes, by reading the test and the class |
 | Area | Step-4 voice control |
-| Spec | [testing.md § Test layers](../testing.md#test-layers) ("voice control with a fake native layer"), [migration.md § Step 4](../migration.md#step-4--voice-control-and-route) item 2 and done-when |
+| Spec | [testing.md § Test layers](../testing.md#test-layers) ("voice control with a fake native layer"), [migration.md § Step 4](../steps/4-voice-control-and-route.md#step-4--voice-control-and-route) item 2 and done-when |
 | Code | `libraries/humla/src/test/java/se/lublin/humla/voice/VoiceControlTest.kt`, `libraries/humla/src/main/java/se/lublin/humla/voice/VoiceControl.kt` |
 | Gates | Low priority on its own: `VoiceControl` is deleted in step 5a.4. But its replacement must not repeat the pattern |
 

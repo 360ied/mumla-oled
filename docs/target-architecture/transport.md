@@ -110,8 +110,7 @@ exits without reporting a failure (the session is already ending).
 
 ## Keepalive and UDP health
 
-Ported from
-[`HumlaConnection`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaConnection.kt)
+Ported from `HumlaConnection` (deleted in step 3)
 with the same constants:
 
 - **Cadence:** a ping every 5 s for the first 30 s after `ServerSync`, and

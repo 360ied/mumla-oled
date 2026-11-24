@@ -7,7 +7,7 @@
 | Severity | Benign-to-moderate (the spike's conclusion is backed by weaker evidence; daily use since agrees with it) |
 | Verified | Yes (test file read; spec compared) |
 | Area | State / compatibility handles / app adapter |
-| Spec | [migration.md § Step 2](../migration.md#step-2--immutable-state) ("Spike first"), [migration.md § Kill criteria](../migration.md#kill-criteria) (step 2) |
+| Spec | [migration.md § Step 2](../steps/2-immutable-state.md#step-2--immutable-state) ("Spike first"), [migration.md § Kill criteria](../steps/2-immutable-state.md#kill-criterion) (step 2) |
 | Code | `app/src/test/java/se/lublin/mumla/channel/ChannelAdapterTest.java`; `libraries/humla/src/test/java/se/lublin/humla/state/HandlesTest.kt` |
 | Gates | Not gating |
 

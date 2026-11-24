@@ -49,8 +49,9 @@ Additional cases:
 
 Under `kotlinx-coroutines-test`, with fakes for `Transport`,
 `NetworkMonitor`, `AudioPlatform`, `ScoLink`, and the native voice layer.
-[`AudioRouteControllerTest`](../../libraries/humla/src/test/java/se/lublin/humla/audio/AudioRouteControllerTest.kt)
-is the model.
+`AudioRouteControllerTest` (deleted in step 4) was the model;
+[`RouteControlTest`](../../libraries/humla/src/test/java/se/lublin/humla/route/RouteControlTest.kt)
+carries its virtual-time pattern on.
 
 Scenarios:
 - disconnect at every message boundary of the sync sequence;
@@ -169,7 +170,7 @@ pins). From step 3 on, it drives `HumlaClient` directly.
   control-channel traffic and never involves the codec);
 - from step 5a.3: voice between two clients — inbound over the tunnel
   from 5a.3a, inbound over UDP from 5a.3b, both directions from 5a.4
-  (see [migration](migration.md#step-5a--engine-refactor-codec-network-threads));
+  (see [migration](steps/5a-engine-refactor-codec-network-threads.md#step-5a--engine-refactor-codec-network-threads));
   from 5a.3b also restart → `Reconnecting` → `Connected` with voice
   afterward, and a locally muted peer silent over UDP and the tunnel.
 
@@ -204,7 +205,7 @@ of the fix, run the matching scenario (connect, then connect again while
 the first connection is still tearing down), and confirm it fails. Record
 the result in `PROGRESS.md`. If no past race can be reproduced, the
 harness cannot vouch for the later steps (see
-[migration](migration.md#kill-criteria)).
+[migration](steps/1-harness-and-gate.md#kill-criterion)).
 
 Run 2026-11-13 on `master` (`f5973f71`): with both stale-attempt guards
 in `HumlaClient` disabled (`if (false)` at the `runAttempt` bug guard and
@@ -218,7 +219,7 @@ throwaway break was reverted without committing. Recorded in
 
 ## App-layer tests
 
-Added in step 6 (see [migration](migration.md#step-6--container-storage-and-features)).
+Added in step 6 (see [migration](steps/6-container-storage-and-features.md#step-6--container-storage-and-features)).
 
 - **Container lifetime.** `AppContainerLifecycleTest` (Robolectric) builds
   the real `AppContainer` through a test `MumlaApplication` that overrides
