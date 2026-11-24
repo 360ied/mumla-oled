@@ -33,8 +33,8 @@ class IOutputDecoder;
  * Native Opus Voice Decoder for the output pipeline.
  *
  * Mono fullband decoder at 48 kHz mirroring OpusVoiceEncoder's configuration.
- * Supports in-band forward error correction decode and standalone
- * packet-loss concealment for missing frames.
+ * Runs standalone packet-loss concealment for missing frames; in-band FEC
+ * is never decoded.
  */
 class OpusVoiceDecoder {
 public:

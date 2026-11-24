@@ -107,7 +107,7 @@ struct VoiceStreamContext {
     std::atomic<uint64_t> lastDroppedJitter{0};
     std::atomic<uint64_t> lastDroppedOutbound{0};
 
-    // Two-frame carry: one 20 ms chunk rendered at a time, copied out in
+    // One-frame carry: one 10 ms frame rendered at a time, copied out in
     // whatever burst sizes AAudio delivers.
     int16_t renderCarry[kStreamChunkSamples] = {};
     size_t renderCarryOffset = 0;

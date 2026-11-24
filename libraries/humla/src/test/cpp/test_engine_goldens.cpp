@@ -62,7 +62,7 @@ using mumla::audio::InputMode;
 using mumla::audio::OpusVoiceEncoder;
 
 constexpr size_t kFrameSamples = 480; // 10 ms @ 48 kHz
-constexpr int kRenderSamples = 960;   // 20 ms, the Kotlin render quantum
+constexpr int kRenderSamples = 960;   // 20 ms host-test quantum (engine allows up to 60 ms; the AAudio path renders one 10 ms frame per call)
 constexpr int kBitrate = 40000;
 constexpr double kPi = 3.14159265358979323846;
 

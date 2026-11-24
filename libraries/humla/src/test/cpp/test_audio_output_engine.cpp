@@ -718,8 +718,9 @@ void testEvictionEmitsPassiveForTalker() {
 void testLossConcealsInline() {
     g_testCount++;
     // Gap at seq 1 with seq 2 already buffered: the gap is concealed at once
-    // (upstream parity) and the successor still decodes normally. Levels below the saturation knee are linear, so real
-    // 0.2 -> 6553 and PLC 0.1 -> 3277 exactly.
+    // (upstream parity) and the successor still decodes normally. Levels
+    // below the saturation knee are linear, so real 0.2 -> 6553 and
+    // PLC 0.1 -> 3277 exactly.
     std::vector<TalkEvent> events;
     auto engine = makeLevelEngine(0.2f, 0.1f, &events);
     openGateOnFirstFrame(*engine);
