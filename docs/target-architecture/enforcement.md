@@ -23,8 +23,9 @@ step 1 and only ever gets stricter.
 `\bHandlerThread\s*\(`, `\bHandler\s*[\(.]`, `\brunBlocking\b`,
 `\bReentrantLock\b`, `\bReentrantReadWriteLock\b`, `\bExecutors\.`,
 `\bCountDownLatch\b`, `\bjava\.util\.concurrent\.locks\b`,
-`\bThreadPoolExecutor\b`, `\bForkJoinPool\b`,
-`\bScheduledExecutorService\b`, `\bnewSingleThreadContext\b`,
+`\bThreadPoolExecutor\b`, `\bScheduledThreadPoolExecutor\b`,
+`\bForkJoinPool\b`, `\bScheduledExecutorService\b`,
+`\bnewSingleThreadContext\b`,
 `\bGlobalScope\b`, `\basExecutor\b`, `\bTimer\s*\(`, `\bHandlerCompat\b`,
 `\bAlarmManager\b`, `\bWorkManager\b`,
 `\bkotlin\.concurrent\.thread\b`.
@@ -39,8 +40,11 @@ matched (they are not thread creation). The `Handler` pattern also matches
 matching). Java-style `synchronized (lock)`
 with a space matches, as does `Handler (`; only the import-qualified
 `kotlin.concurrent.thread` is matched, because bare prose (`render thread (`
-in comments) is too noisy. Comments are not stripped: a pattern named in
-a comment counts, which keeps the script simple and the comments honest.
+in comments) is too noisy. The constructor-form pools are listed
+separately: `\bThreadPoolExecutor\b` does not match
+`ScheduledThreadPoolExecutor`, because the preceding `d` is a word
+character. Comments are not stripped: a pattern named in a comment
+counts, which keeps the script simple and the comments honest.
 
 **Allowlist:** `scripts/architecture-allowlist.txt`, one entry per line:
 
@@ -144,6 +148,11 @@ an `"android.` string literal without an import:
 - the non-JNI parts of `se.lublin.humla.net` (everything except the TLS
   socket factory, which uses Android's trust store APIs)
 
+The fully-qualified pattern is `\bandroid\s*\.`: every `android.*`
+subpackage is matched, so `android.graphics.*`, `android.bluetooth.*`,
+`android.hardware.*`, and `android.location.*` cannot be used without an
+import. `\bandroidx\s*\.` matches all `androidx.` references.
+
 This keeps state, transitions, the client state machine, and the reconnect
 policy runnable in plain JVM tests with virtual time.
 
@@ -157,12 +166,15 @@ in step 3, which is a strictness increase, not a relaxation.
 
 From step 6, `check_architecture.py` lists the feature classes in
 `app/src/main/java/se/lublin/mumla/feature/` (the classes that declare
-`fun start(scope: CoroutineScope)`) and fails if any file there names
-another file's feature class. The set is closed: any `fun start` with a
-different signature (including `suspend fun start`) fails instead of
-silently dropping out of the feature set. Shared helpers in that package that are not
-features, such as the connection-line formatter that the chat log and TTS
-both use, may be referenced freely. Features get everything they share
+`fun start(scope: CoroutineScope)`) and fails if **any file in that
+package** names another file's feature class. The set is closed: any
+`fun start` with a different signature (including `suspend fun start`)
+fails instead of silently dropping out of the feature set. Shared
+helpers in that package that are not features, such as the
+connection-line formatter that the chat log and TTS both use, may be
+referenced freely, but they are scanned as referrers too: moving a
+cross-feature call into a start-less helper does not launder it.
+Features get everything they share
 from the container (see [app](app.md#features)); a feature that needs
 another feature's output means that output belongs in the container as a
 flow, such as the `talkKeys`, `speech`, and `appLog` hand-off flows.
@@ -177,9 +189,15 @@ declares these methods) contains a call to `.addLocalMutedUser(`,
 `.removeLocalMutedUser(`, `.addLocalIgnoredUser(`, `.removeLocalIgnoredUser(`,
 `localMuteDao()`, `localIgnoreDao()`, `.setMutedAndDeafened(`, or the DAO-level
 wrappers `insertLocalMutedUser(`, `deleteLocalMutedUser(`,
-`insertLocalIgnoredUser(`, `deleteLocalIgnoredUser(`. The
-patterns are call sites, so declarations and tests never match, and the
-store's `suspend` path through the DAOs is covered by the DAO patterns.
+`insertLocalIgnoredUser(`, `deleteLocalIgnoredUser(`. The database/DAO
+suspend writer is anchored on its receiver — `(database|db|dao).setLocalMute(`
+and `.setLocalIgnore(`, plus the read wrappers `localMutedUsers(` and
+`localIgnoredUsers(` — because the room database exposes the same rows
+through a public API. The sanctioned service funnel
+(`mService.setLocalMute` in `UserMenu.kt`) deliberately does not match:
+it goes through the store. The patterns are call sites, so declarations
+and tests never match, and the store's `suspend` path through the DAOs
+is covered by the DAO patterns.
 The session decides local mute, ignore, and self-mute, and its store is
 their only writer (see [state](state.md#self-mute-and-deafen)); before
 step 6, the adapter, the service, and the store all wrote them.

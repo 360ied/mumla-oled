@@ -140,6 +140,7 @@ class TestPatterns(unittest.TestCase):
             "GlobalScope.launch { }",
             "HandlerCompat.createAsync(looper)",
             "ThreadPoolExecutor(1, 2, 0L, TimeUnit.SECONDS, q)",
+            "ScheduledThreadPoolExecutor(1)",
             "ForkJoinPool.commonPool()",
             "ScheduledExecutorService x",
             "dispatcher.asExecutor()",
@@ -196,11 +197,21 @@ class TestAndroidFree(unittest.TestCase):
             pkg = root / "libraries/humla/src/main/java/se/lublin/humla/state"
             pkg.mkdir(parents=True)
             (pkg / "Fqn.kt").write_text("val x = android.util.Log.w(t, m)\n", encoding="utf-8")
+            (pkg / "Graphics.kt").write_text(
+                "val c = android.graphics.Color.RED\n", encoding="utf-8"
+            )
+            (pkg / "Bluetooth.kt").write_text(
+                "val a = android.bluetooth.BluetoothAdapter.getDefaultAdapter()\n",
+                encoding="utf-8",
+            )
             (pkg / "Refl.kt").write_text('Class.forName("android.os.Foo")\n', encoding="utf-8")
             (pkg / "Lit.kt").write_text('val s = "android.os.Foo"\n', encoding="utf-8")
             (pkg / "Ok.kt").write_text("// no Android imports\n", encoding="utf-8")
             v = ca.scan_android_free(root)
-            self.assertEqual(len(v), 3)
+            self.assertEqual(len(v), 5)
+            flagged = sorted(path for path, _, _ in v)
+            self.assertTrue(any("Graphics.kt" in p for p in flagged))
+            self.assertTrue(any("Bluetooth.kt" in p for p in flagged))
 
     def test_net_excludes_tls_factory_only(self):
         # Step 3 removed the legacy grandfathering (HumlaConnection deleted;
@@ -597,6 +608,41 @@ class TestLocalFactsWriter(unittest.TestCase):
             self.assertEqual(len(errors), 1)
             self.assertIn("ChannelListAdapter.kt", errors[0])
 
+    def test_database_suspend_writer_call_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/service/Sneaky.kt",
+                "container.database.setLocalMute(1, 2, true)\n",
+            )
+            errors = ca.check_local_facts_writers(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Sneaky.kt", errors[0])
+
+    def test_dao_read_wrappers_fail(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/service/Sneaky.kt",
+                "database.localMutedUsers(1)\n",
+            )
+            errors = ca.check_local_facts_writers(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Sneaky.kt", errors[0])
+
+    def test_sanctioned_service_funnel_still_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/channel/UserMenu.kt",
+                "mService.setLocalMute(mUser.session, !mUser.isLocalMuted)\n"
+                "mService.setLocalIgnore(mUser.session, !mUser.isLocalIgnored)\n",
+            )
+            self.assertEqual(ca.check_local_facts_writers(root), [])
+
 
 class TestFeatureIsolation(unittest.TestCase):
     """Step 6: features share flows, never each other."""
@@ -635,6 +681,21 @@ class TestFeatureIsolation(unittest.TestCase):
             errors = ca.check_feature_isolation(root)
             self.assertEqual(len(errors), 1)
             self.assertIn("TtsFeature.kt", errors[0])
+
+    def test_start_less_helper_cannot_launder_a_cross_feature_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "ChatLogFeature.kt",
+                "class ChatLogFeature { fun start(scope: CoroutineScope) {} }\n",
+            )
+            self.write(
+                root, "Helper.kt",
+                "object Helper { fun forward() = ChatLogFeature() }\n",
+            )
+            errors = ca.check_feature_isolation(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Helper.kt", errors[0])
 
     def test_mismatched_start_signature_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:

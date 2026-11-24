@@ -85,7 +85,10 @@ CONCURRENCY_PATTERNS = (
     r"\bCountDownLatch\b",
     r"\bjava\.util\.concurrent\.locks\b",
     # Constructor-form pools evade Executors.: all create real threads.
+    # \bThreadPoolExecutor\b does not reach ScheduledThreadPoolExecutor,
+    # because the preceding 'd' is a word character.
     r"\bThreadPoolExecutor\b",
+    r"\bScheduledThreadPoolExecutor\b",
     r"\bForkJoinPool\b",
     r"\bScheduledExecutorService\b",
     # Coroutine thread factories and unstructured scopes.
@@ -132,7 +135,9 @@ RE_ANDROIDX_IMPORT = re.compile(r"^\s*import\s+androidx\.")
 RE_R_IMPORT = re.compile(r"^\s*import\s+(?:static\s+)?[\w.]+\.R\b")
 # Fully-qualified use without an import evades the import check (the exact
 # pattern already used once outside the gate in util/HumlaCallbacks).
-RE_ANDROID_FQN = re.compile(r"\bandroid\s*\.\s*(util|os|content|app|net|widget|view|provider|media)\s*\.")
+# Match every android.* subpackage: the old nine-name allowlist let
+# android.graphics.*, android.bluetooth.* and friends through unimported.
+RE_ANDROID_FQN = re.compile(r"\bandroid\s*\.")
 RE_ANDROIDX_FQN = re.compile(r"\bandroidx\s*\.")
 # Reflection and resource-lookup indirection around the import check.
 RE_REFLECTION = re.compile(r"Class\.forName\s*\(|getIdentifier\s*\(\s*[\"']")
@@ -203,19 +208,26 @@ LOCAL_FACTS_CALL_PATTERNS = (
     r"\blocalIgnoreDao\(\)",
     r"\.setMutedAndDeafened\(",
     # DAO-level suspend wrappers: public today, same rows as above.
-    # Service-level setLocalMute/setLocalIgnore funnel through the store
-    # and are deliberately not matched.
     r"\binsertLocalMutedUser\(",
     r"\bdeleteLocalMutedUser\(",
     r"\binsertLocalIgnoredUser\(",
     r"\bdeleteLocalIgnoredUser\(",
+    # The database/DAO is also a public suspend writer. Anchor on the
+    # receiver: the sanctioned service funnel (mService.setLocalMute in
+    # UserMenu.kt) shares the method name and must keep passing.
+    r"\b(?:database|db|dao)\.setLocalMute\(",
+    r"\b(?:database|db|dao)\.setLocalIgnore\(",
+    r"\blocalMutedUsers\(",
+    r"\blocalIgnoredUsers\(",
 )
 RE_LOCAL_FACTS_CALL = re.compile(
     "|".join(f"(?:{p})" for p in LOCAL_FACTS_CALL_PATTERNS)
 )
 
 # Step 6: features never call each other. Shared helpers in the feature
-# package (no start(scope) method) are not features and may be referenced.
+# package (no start(scope) method) are not features and may be referenced,
+# but they are still scanned as referrers: a helper cannot launder a
+# cross-feature call out of the check.
 FEATURE_DIR = "app/src/main/java/se/lublin/mumla/feature"
 RE_FEATURE_START = re.compile(r"\bfun start\(\s*scope\s*:\s*CoroutineScope\s*\)")
 # Any start-shaped declaration that does not match RE_FEATURE_START would
@@ -278,22 +290,23 @@ def check_feature_set_closed(root: Path):
 
 
 def check_feature_isolation(root: Path):
-    """Return errors for a feature file that names another feature class."""
+    """Fail if any file in the feature package names another feature class."""
     feature_dir = root / FEATURE_DIR
     if not feature_dir.is_dir():
         return []
-    features = {}
+    features = set()
+    files = {}
     for full in sorted(feature_dir.rglob("*.kt")):
         try:
             text = full.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        files[full.stem] = (full.relative_to(root).as_posix(), text)
         if RE_FEATURE_START.search(text):
-            features[full.stem] = full.relative_to(root).as_posix()
+            features.add(full.stem)
     errors = []
-    for name, rel in features.items():
-        text = (root / rel).read_text(encoding="utf-8", errors="replace")
-        for other in features:
+    for name, (rel, text) in files.items():
+        for other in sorted(features):
             if other == name:
                 continue
             if re.search(r"\b" + re.escape(other) + r"\b", text):
