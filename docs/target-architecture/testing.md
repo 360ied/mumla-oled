@@ -13,6 +13,7 @@ Every migration step's done-when list is checked by the layers below.
 |---|---|---|---|
 | State transitions | `testFossDebugUnitTest` | Fast | Every server message and intent as a pure function |
 | Virtual time | `testFossDebugUnitTest` | Fast | `HumlaClient`, `Session` with a fake transport, `RouteControl`, voice control with a fake native layer, the policy collector |
+| App layer | `testFossDebugUnitTest` (Robolectric where Android is needed) | Fast | `AppContainer` lifetime, features over fake flows, chat-log goldens, settings current-value API, ViewModels (step 7) |
 | Native host suite | `check.sh` (existing `test_native_audio.sh`) | Medium | Engines, codec, OCB2, queues, loopback |
 | murmur interop | `scripts/test_interop.sh` (never `check.sh`) | Slow (a minute or more) | Real TLS, real server, real reconnects |
 | On-device | Manual, at the developer's discretion | Slowest | Audio devices, Bluetooth, Android service rules |
@@ -215,6 +216,64 @@ guards intact they pass 10 of 10. The
 throwaway break was reverted without committing. Recorded in
 [`PROGRESS.md`](PROGRESS.md).
 
+## App-layer tests
+
+Added in step 6 (see [migration](migration.md#step-6--container-storage-and-features)).
+
+- **Container lifetime.** `AppContainerLifecycleTest` (Robolectric) builds
+  the real `AppContainer` through a test `MumlaApplication` that overrides
+  `createContainer()` and passes fake `HumlaRuntime.Edges`: a fake engine
+  factory, because Robolectric cannot load `libhumlaaudio`, and a fake
+  transport factory. It creates and destroys the service twice and checks
+  that the second instance gets the same, still working objects (the
+  exact assertions are in step 6's done-when). The container runs real
+  dispatchers and a real route thread, so the test waits on flows with a
+  timeout instead of using virtual time. It lands in step 6's
+  `HumlaRuntime` commit, which starts the lifetime rule; the chat-log and
+  connection-notification commits add the feature-events and
+  notification-removal assertions. Step 7 rewrites it for
+  `ConnectionService`.
+- **Shared fakes.** `FakeTransport`, `FakeFactory`, `FakeVoice`, and the
+  message builders in `ClientTestSupport.kt` move to a new Android library
+  module, `:libraries:humla-testing`, as public classes, and both modules'
+  unit tests depend on it (`testImplementation`). The `HumlaRuntime`
+  commit creates the module, because the lifecycle test is its first user
+  in `:app`. They implement only
+  public interfaces (`Transport`, `TransportFactory`, `VoiceLifecycle`,
+  `VoiceLink`), so the move needs no `internal` access and no test
+  fixtures support from the build plugin.
+- **Features over fake flows.** A feature's constructor takes the flows
+  and intent functions it uses, never the container or `HumlaClient`
+  itself, so its test passes `MutableStateFlow`s and
+  `MutableSharedFlow`s and records intent calls under virtual time.
+  Android pieces (`TextToSpeech`, `SoundPool`, `NotificationManager`, the
+  window manager) sit behind small interfaces with a fake in tests and the
+  real class in the container.
+- **Backpressure.** For each feature that collects `client.events`, a test
+  emits 300 events (more than the 256-event buffer) while the feature's
+  slow dependency is blocked, and fails if the emitter suspends.
+- **Chat-log goldens.** Recorded in `:app` (Robolectric loads the merged
+  resources there; `:libraries:humla` tests do not load Android resources)
+  from `StateEventLogger` before step 6 deletes it, one string per
+  `SessionEvent` case and filter branch, and replayed against the chat log
+  feature. As with the 5a engine goldens, a changed string is a failing
+  test, never a re-recorded fixture. The `EncoderLimited` and
+  `PipelineError` lines, which `StateEventLogger` does not produce, get
+  their own expected-string tests from the moved resources.
+- **Tests move with their code.** Each feature commit turns the
+  `MumlaService` tests for the code it takes over into feature tests in
+  the same commit (`MumlaServiceChatLogTest`, `MumlaServiceTalkKeyTest`,
+  `TalkBroadcastReceiverTest`, `MumlaOverlayMarginsTest`,
+  `MumlaConnectionNotificationTest`, and
+  `MumlaConnectionNotificationMediaKeyTest`).
+  `HumlaService` tests that read its private fields by reflection build a
+  `HumlaRuntime` with fake edges instead.
+- **Settings current-value API.** A write is visible in `state` on the
+  next line; racing `update` calls leave the store equal to the in-memory
+  value; a failed write keeps the in-memory value, logs, and is written by
+  the next signal; `DataStorePreferenceDataStore` returns the widget's
+  default for an absent key.
+
 ## On-device testing
 
 Mumla OLED is a one-developer hobby project, and the developer is the main
@@ -228,6 +287,10 @@ They are what every step's done-when list relies on.
 
 When testing on a device, the steps most likely to show problems only
 there are:
+- **step 6**, voice after the service was destroyed and re-created in one
+  process (disconnect, leave the app, reopen, connect again), and the
+  notification, overlay, hot corner, and PTT sounds now driven by
+  features;
 - **step 4**, Bluetooth headset routing (connect, flap, failure at
   connect, mute while the route settles);
 - **step 5b**, AAudio glitches (xrun counts are logged), echo

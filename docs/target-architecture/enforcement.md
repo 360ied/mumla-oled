@@ -68,17 +68,24 @@ libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt   4
   libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt      # step 4
   libraries/humla/src/main/java/se/lublin/humla/voice/VoiceEngine.kt       # step 5a (step 4 uses voice/VoiceControl.kt, removed in 5a)
   app/src/main/java/se/lublin/mumla/util/CrashReporter.kt
+  app/src/main/java/se/lublin/mumla/AppContainer.kt                       # step 6: the one blocking settings read at process start
   ```
+
+  `AppContainer.kt` joins in step 6 with exactly two matching lines, the
+  startup read and its `runBlocking` import: the first settings snapshot
+  must exist before the first activity applies its theme, and `DataStore`
+  has no synchronous read (see [app](app.md#appcontainer)). Any third
+  match in it is a violation.
 
   Every other change can only lower counts or remove entries.
 - Every migration step's "done" includes lowering the totals.
 
-**Expected end state:** about five files, all at real boundaries: the
+**Expected end state:** about six files, all at real boundaries: the
 `VoiceEngine` facade (owns the voice control thread and the JNI handle),
 the TCP reader in `HumlaTCP`, `HumlaSSLSocketFactory` (TLS callbacks on the
-socket thread), `CrashReporter` (the uncaught-exception handler), and
+socket thread), `CrashReporter` (the uncaught-exception handler),
 `RouteControl` (owns its `HandlerThread` and the handler for platform
-callbacks).
+callbacks), and `AppContainer` (the startup settings read).
 
 It is a tripwire, not a proof: text search cannot see atomics used as
 locks or mutability hidden in state. The next two checks cover the most
@@ -136,6 +143,33 @@ policy runnable in plain JVM tests with virtual time.
 those three files until step 3 extracts the `Transport`. Only the TLS
 socket factory exclusion above is permanent; the grandfathering is removed
 in step 3, which is a strictness increase, not a relaxation.
+
+## Feature isolation
+
+From step 6, `check_architecture.py` lists the feature classes in
+`app/src/main/java/se/lublin/mumla/feature/` (the classes that declare
+`fun start(scope: CoroutineScope)`) and fails if any file there names
+another file's feature class. Shared helpers in that package that are not
+features, such as the connection-line formatter that the chat log and TTS
+both use, may be referenced freely. Features get everything they share
+from the container (see [app](app.md#features)); a feature that needs
+another feature's output means that output belongs in the container as a
+flow, such as the `talkKeys`, `speech`, and `appLog` hand-off flows.
+Same-package references need no import, so the check matches class names,
+not imports.
+
+## Local-facts writer
+
+From step 6, `check_architecture.py` fails if a file under `app/src/main`
+other than the `LocalFactsStore` implementation and the `db` package (which
+declares these methods) contains a call to `.addLocalMutedUser(`,
+`.removeLocalMutedUser(`, `.addLocalIgnoredUser(`, `.removeLocalIgnoredUser(`,
+`localMuteDao()`, `localIgnoreDao()`, or `.setMutedAndDeafened(`. The
+patterns are call sites, so declarations and tests never match, and the
+store's `suspend` path through the DAOs is covered by the DAO patterns.
+The session decides local mute, ignore, and self-mute, and its store is
+their only writer (see [state](state.md#self-mute-and-deafen)); before
+step 6, the adapter, the service, and the store all wrote them.
 
 ## Native tripwire
 

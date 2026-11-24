@@ -24,6 +24,7 @@ class HumlaClient(
     private val clock: Clock,
 ) {
     val state: StateFlow<ClientState>
+    val events: SharedFlow<SessionEventRecord> // every session's events, client lifetime (state.md#events)
 
     fun connect(target: ConnectTarget)        // non-blocking
     fun disconnect()                          // non-blocking
@@ -204,8 +205,7 @@ class Session internal constructor(
     transport: Transport,
     localFacts: LocalFacts,                   // loaded before construction
 ) {
-    val state: StateFlow<SessionState>
-    val events: SharedFlow<SessionEvent>
+    val state: StateFlow<SessionState>    // events go to HumlaClient.events
     val stats: StateFlow<SessionStats>
     val failure: Deferred<ClientError>        // completes once, when the session fails
 
@@ -268,7 +268,7 @@ is non-blocking: one atomic state update and/or one enqueued TCP message
 | `getSessionId`, `getSessionUser`, `getSessionChannel`, `getUser`, `getChannel`, `getRootChannel`, `getPermissions`, `getServerSettings`, `getServerVersion*`, `getServerRelease`, `getServerOS*` | Read `state.value` (`server.self`, `users`, `channels`, `rootPermissions`, `info`) |
 | `getTCPLatency`, `getUDPLatency`, `getMaxBandwidth`, `getCurrentBandwidth` | Read `stats.value` |
 | `getTransmitMode`, `getCodec` | Settings (transmit mode) and `state.value.server.info.opus` |
-| `isTalking`, `setTalkingState` | `VoiceEngine` talk activity; `setPtt(pressed)` |
+| `isTalking`, `setTalkingState` | `state.local.pttPressed`, the only record of whether the user is talking (from step 6); `setPtt(pressed)`, and `togglePtt()` for toggle mode |
 | `joinChannel`, `moveUserToChannel` | `joinChannel(id)`, `moveUser(session, channel)` |
 | `sendAccessTokens` | `sendAccessTokens(tokens)` |
 | `requestPermissions`, `requestComment`, `requestAvatar`, `requestChannelDescription` | `requestPermissions(channel)`, `requestComment(session)`, `requestTexture(session)`, `requestDescription(channel)` |
@@ -286,7 +286,7 @@ records both directions from the event stream.
 
 | Today (`IHumlaService`) | Target |
 |---|---|
-| `registerObserver`, `unregisterObserver` | Collect `client.state`, `session.state`, `session.events` |
+| `registerObserver`, `unregisterObserver` | Collect `client.state`, `session.state`, `client.events` |
 | `isConnected`, `getConnectionState`, `getConnectionError`, `getTargetServer` | `client.state` |
 | `isReconnecting`, `getReconnectAttempts`, `getReconnectDelay`, `cancelReconnect` | `ClientState.Reconnecting`; `client.cancelReconnect()` |
 | `disconnect` | `client.disconnect()` |

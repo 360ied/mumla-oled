@@ -184,12 +184,13 @@ elsewhere:
 | `SYNCING` | First `ChannelState` or `UserState` arrives | Not published: the message coroutine applies server transitions to a private value (intent-owned local fields are the exception; see below) |
 | `SYNCED` | `ServerSync` arrives | The private value is published in one `update`; every change after this publishes |
 
-**Local intents before `SYNCED`.** `setPtt` and `setVoiceTarget` are valid
-before sync and update the published value directly (only `local.pttPressed`
-and `local.voiceTargetId` change; everything else stays the `HANDSHAKING`
-value). The `ServerSync` publication carries those two fields over from
-the current published value into the synced value, inside the same
-`update`, so a press racing sync is never lost. The lambda only computes
+**Local intents before `SYNCED`.** `setPtt`, `togglePtt`, and
+`setVoiceTarget` are valid before sync and update the published value
+directly (only `local.pttPressed` and `local.voiceTargetId` change;
+everything else stays the `HANDSHAKING` value). The `ServerSync`
+publication carries those two fields over from the current published
+value into the synced value, inside the same `update`, so a press racing
+sync is never lost. The lambda only computes
 the merged value; the session records the result (its private value and
 "synced" flag) after `update` returns. Any intent newly allowed before
 `SYNCED` must be added to this carry-over. `VoicePolicy` still requires
@@ -285,6 +286,7 @@ exception: a `UserState` echo for the local user carrying
 |---|---|---|
 | `setSelfMuteDeaf(mute, deaf)` | `local.selfMuteDesired/selfDeafDesired`; optimistic self `UserInfo` | `UserState(self_mute, self_deaf)` |
 | `setPtt(pressed)` | `local.pttPressed` | none |
+| `togglePtt()` | `local.pttPressed` flipped inside `update {}` (step 6; toggle-mode talk keys and broadcasts) | none |
 | `setLocalMute(session, muted)` / `setLocalIgnore` | `UserInfo.localMuted/localIgnored` | none; persisted by user ID for registered users |
 | `setVoiceTarget(id)` | `local.voiceTargetId` (0–31) | none |
 | `registerWhisperTarget(target)` | Takes the lowest free ID in 1–30 inside the `update`; returns it, or `-1` when all 30 are taken, as today | `VoiceTarget` |
@@ -304,8 +306,21 @@ never after reading `state.value` (see
 
 ## Events
 
-`Session.events` is a `SharedFlow<SessionEvent>` with a replay of 0 and a
-buffer of 256. It never drops: a full buffer suspends the message
+`HumlaClient.events` is a `SharedFlow<SessionEventRecord>` with a replay
+of 0 and a buffer of 256. It lives as long as the client, and every session
+emits into it (from step 6; before that each `Session` had its own
+`events`). Collectors subscribe once, so a new session cannot emit before
+they exist, and events from a session that has ended stop with its scope.
+A record pairs the event with the emitting session's state right after the
+transition that produced it (for an intent event, the state when it is
+emitted), so a consumer that filters or names things reads the state the
+event came from, never a later one:
+
+```kotlin
+data class SessionEventRecord(val event: SessionEvent, val state: SessionState)
+```
+
+The stream never drops: a full buffer suspends the message
 coroutine, which slows the server stream rather than losing events. To
 keep that from stalling the connection, **collectors never do slow work
 inline**: features hand anything slow (TTS synthesis, database writes,
