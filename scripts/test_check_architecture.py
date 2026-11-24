@@ -542,6 +542,45 @@ class TestLocalFactsWriter(unittest.TestCase):
             self.assertEqual(ca.check_local_facts_writers(root), [])
 
 
+class TestFeatureIsolation(unittest.TestCase):
+    """Step 6: features share flows, never each other."""
+
+    def write(self, root, name, text):
+        path = root / ca.FEATURE_DIR / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_no_features_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(ca.check_feature_isolation(Path(tmp)), [])
+
+    def test_shared_helper_is_not_a_feature(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, "ConnectionLines.kt", "class ConnectionLines {}\n")
+            self.write(
+                root, "ChatLogFeature.kt",
+                "class ChatLogFeature { fun start(scope: CoroutineScope) {} }\n"
+                "// ConnectionLines is a shared helper\n",
+            )
+            self.assertEqual(ca.check_feature_isolation(root), [])
+
+    def test_cross_feature_reference_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "ChatLogFeature.kt",
+                "class ChatLogFeature { fun start(scope: CoroutineScope) {} }\n",
+            )
+            self.write(
+                root, "TtsFeature.kt",
+                "class TtsFeature { fun start(scope: CoroutineScope) { ChatLogFeature() } }\n",
+            )
+            errors = ca.check_feature_isolation(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("TtsFeature.kt", errors[0])
+
+
 class TestRunAll(unittest.TestCase):
     def test_missing_source_root_is_error(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -33,9 +33,12 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -169,6 +172,30 @@ open class AppContainer(
         override fun logError(message: String?) = Unit
     }
 
+    // Hand-off flows: one feature's output reaches another without a call.
+    // Emitted with tryEmit on the main thread and collected on the main
+    // thread without slow work inline.
+    private val _talkKeys = MutableSharedFlow<TalkKeyEvent>(extraBufferCapacity = 64)
+    val talkKeys: SharedFlow<TalkKeyEvent> = _talkKeys.asSharedFlow()
+
+    private val _speech = MutableSharedFlow<SpeechLine>(extraBufferCapacity = 64)
+    val speech: SharedFlow<SpeechLine> = _speech.asSharedFlow()
+
+    private val _appLog = MutableSharedFlow<AppLogLine>(extraBufferCapacity = 64)
+    val appLog: SharedFlow<AppLogLine> = _appLog.asSharedFlow()
+
+    fun emitTalkKey(event: TalkKeyEvent) = emitHandoff(_talkKeys, event)
+    fun emitSpeech(line: SpeechLine) = emitHandoff(_speech, line)
+    fun emitAppLog(line: AppLogLine) = emitHandoff(_appLog, line)
+
+    private fun <T> emitHandoff(flow: MutableSharedFlow<T>, value: T) {
+        if (!flow.tryEmit(value)) {
+            val error = IllegalStateException("hand-off flow is full")
+            if (BuildConfig.DEBUG) throw error
+            Log.e(TAG, "Dropping a hand-off emission", error)
+        }
+    }
+
     private val _configuration = MutableStateFlow(Configuration(context.resources.configuration))
     open val configuration: StateFlow<Configuration> = _configuration.asStateFlow()
 
@@ -191,6 +218,19 @@ open class AppContainer(
         }
     }
 }
+
+/** Gestures from talk keys, the hot corner, and the service's binder bridge. */
+sealed interface TalkKeyEvent {
+    data object Down : TalkKeyEvent
+    data object Up : TalkKeyEvent
+    data object Cancel : TalkKeyEvent
+}
+
+/** A line one feature wants spoken by TTS. */
+data class SpeechLine(val text: String)
+
+/** An info or warning line one feature wants in the chat log. */
+data class AppLogLine(val text: String, val warning: Boolean = false)
 
 /** Every component reaches the same composition root through its context. */
 val Context.container: AppContainer

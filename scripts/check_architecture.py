@@ -166,6 +166,11 @@ RE_LOCAL_FACTS_CALL = re.compile(
     "|".join(f"(?:{p})" for p in LOCAL_FACTS_CALL_PATTERNS)
 )
 
+# Step 6: features never call each other. Shared helpers in the feature
+# package (no start(scope) method) are not features and may be referenced.
+FEATURE_DIR = "app/src/main/java/se/lublin/mumla/feature"
+RE_FEATURE_START = re.compile(r"\bfun start\(\s*scope\s*:\s*CoroutineScope\s*\)")
+
 RE_RENDER_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*renderActive")
 RE_CAPTURE_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*captureActive")
 
@@ -194,6 +199,33 @@ def check_local_facts_writers(root: Path):
                         f"local-facts: {rel}:{i}: writes belong in "
                         f"{LOCAL_FACTS_STORE_FILE}: {line.strip()}"
                     )
+    return errors
+
+
+def check_feature_isolation(root: Path):
+    """Return errors for a feature file that names another feature class."""
+    feature_dir = root / FEATURE_DIR
+    if not feature_dir.is_dir():
+        return []
+    features = {}
+    for full in sorted(feature_dir.rglob("*.kt")):
+        try:
+            text = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if RE_FEATURE_START.search(text):
+            features[full.stem] = full.relative_to(root).as_posix()
+    errors = []
+    for name, rel in features.items():
+        text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        for other in features:
+            if other == name:
+                continue
+            if re.search(r"\b" + re.escape(other) + r"\b", text):
+                errors.append(
+                    f"feature-isolation: {rel} names feature {other}; use a "
+                    f"container hand-off flow instead"
+                )
     return errors
 
 
@@ -490,6 +522,7 @@ def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
     errors.extend(check_native(scan_native(root), native_allowed))
     errors.extend(check_voice_lifecycle(root))
     errors.extend(check_local_facts_writers(root))
+    errors.extend(check_feature_isolation(root))
     return errors, actual
 
 
