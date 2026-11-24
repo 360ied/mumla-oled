@@ -16,13 +16,16 @@
 """
 scripts/check_architecture.py: Tripwires for the target architecture.
 
-Four checks (see docs/target-architecture/enforcement.md):
+Checks (see docs/target-architecture/enforcement.md):
   1. Concurrency tripwire: forbidden thread/lock patterns in Kotlin/Java.
   2. Android-free packages: state/client/net must not import android(x)/R.
   3. Native tripwire: forbidden I/O/thread/JNI headers in no-I/O native dirs.
   4. Voice lifecycle: the voice_io JNI destroy/clear paths keep the debug
      asserts that render and capture are stopped, and the AAudio callback
      bodies set renderActive/captureActive through their guards.
+  5. Local-facts writer: only the store and the db package may write local
+     mute/ignore or self mute/deafen (step 6).
+  6. Feature isolation: features never name other features (step 6).
 
 The check fails if a file not on the allowlist has a match, if a listed
 file has more matches than its count, or if it has fewer (the count must
@@ -145,8 +148,53 @@ VOICE_IO_CALLBACKS_FILE = (
 )
 RE_RENDER_GUARD_USE = re.compile(r"\bRenderGuard\s+\w+")
 RE_CAPTURE_GUARD_USE = re.compile(r"\bCaptureGuard\s+\w+")
+# Step 6: one writer for device-local facts. The patterns are call sites,
+# so declarations and tests never match; the DAO declarations live in db/.
+LOCAL_FACTS_ROOT = "app/src/main"
+LOCAL_FACTS_DAO_DIR = "app/src/main/java/se/lublin/mumla/db/"
+LOCAL_FACTS_STORE_FILE = "app/src/main/java/se/lublin/mumla/AppLocalFactsStore.kt"
+LOCAL_FACTS_CALL_PATTERNS = (
+    r"\.addLocalMutedUser\(",
+    r"\.removeLocalMutedUser\(",
+    r"\.addLocalIgnoredUser\(",
+    r"\.removeLocalIgnoredUser\(",
+    r"\blocalMuteDao\(\)",
+    r"\blocalIgnoreDao\(\)",
+    r"\.setMutedAndDeafened\(",
+)
+RE_LOCAL_FACTS_CALL = re.compile(
+    "|".join(f"(?:{p})" for p in LOCAL_FACTS_CALL_PATTERNS)
+)
+
 RE_RENDER_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*renderActive")
 RE_CAPTURE_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*captureActive")
+
+
+def check_local_facts_writers(root: Path):
+    """Return errors for local-fact writes outside the store and db package."""
+    errors = []
+    base = root / LOCAL_FACTS_ROOT
+    if not base.is_dir():
+        return errors
+    for dirpath, _, filenames in os.walk(base):
+        for name in filenames:
+            if not name.endswith(CONCURRENCY_EXTS):
+                continue
+            full = Path(dirpath) / name
+            rel = full.relative_to(root).as_posix()
+            if rel == LOCAL_FACTS_STORE_FILE or rel.startswith(LOCAL_FACTS_DAO_DIR):
+                continue
+            try:
+                lines = full.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for i, line in enumerate(lines, 1):
+                if RE_LOCAL_FACTS_CALL.search(line):
+                    errors.append(
+                        f"local-facts: {rel}:{i}: writes belong in "
+                        f"{LOCAL_FACTS_STORE_FILE}: {line.strip()}"
+                    )
+    return errors
 
 
 def check_voice_lifecycle(root: Path):
@@ -441,6 +489,7 @@ def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
         errors.append(f"android-free: {rel}:{lineno}: {line}")
     errors.extend(check_native(scan_native(root), native_allowed))
     errors.extend(check_voice_lifecycle(root))
+    errors.extend(check_local_facts_writers(root))
     return errors, actual
 
 

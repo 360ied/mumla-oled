@@ -64,7 +64,7 @@ import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.ConnectTarget
 import se.lublin.humla.client.HumlaClient
-import se.lublin.humla.client.LocalFacts
+import se.lublin.humla.client.InMemoryLocalFactsStore
 import se.lublin.humla.client.LocalFactsStore
 import se.lublin.humla.client.NetworkMonitor
 import se.lublin.humla.client.ReconnectPolicy
@@ -120,8 +120,6 @@ private data class PendingConnection(
     val trustStore: String? = null,
     val trustStorePassword: String? = null,
     val trustStoreFormat: String? = null,
-    val localMuteHistory: List<Int>? = null,
-    val localIgnoreHistory: List<Int>? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -136,9 +134,7 @@ private data class PendingConnection(
             accessTokens == other.accessTokens &&
             trustStore == other.trustStore &&
             trustStorePassword == other.trustStorePassword &&
-            trustStoreFormat == other.trustStoreFormat &&
-            localMuteHistory == other.localMuteHistory &&
-            localIgnoreHistory == other.localIgnoreHistory
+            trustStoreFormat == other.trustStoreFormat
     }
 
     override fun hashCode(): Int {
@@ -151,8 +147,6 @@ private data class PendingConnection(
         result = 31 * result + (trustStore?.hashCode() ?: 0)
         result = 31 * result + (trustStorePassword?.hashCode() ?: 0)
         result = 31 * result + (trustStoreFormat?.hashCode() ?: 0)
-        result = 31 * result + (localMuteHistory?.hashCode() ?: 0)
-        result = 31 * result + (localIgnoreHistory?.hashCode() ?: 0)
         return result
     }
 }
@@ -530,55 +524,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             }
         }
 
-        // LocalFacts persistence division of labor (legacy parity): the app
-        // adapter writes mute/ignore straight to the database on toggle and
-        // ConfigDelta reloads them at the next connect; the writes below
-        // additionally keep the pending snapshot current so a reconnect in
-        // this process picks them up even before the next apply(). Self
-        // mute/deafen stays app-owned (settings, re-pushed post-sync).
-        val localFactsStore = object : LocalFactsStore {
-            override suspend fun load(serverId: Long): LocalFacts {
-                val pending = pendingConnection.get()
-                return LocalFacts(
-                    mutedUserIds = (pending.localMuteHistory ?: emptyList()).toSet()
-                        .let { kotlinx.collections.immutable.persistentSetOf(*it.toTypedArray()) },
-                    ignoredUserIds = (pending.localIgnoreHistory ?: emptyList()).toSet()
-                        .let { kotlinx.collections.immutable.persistentSetOf(*it.toTypedArray()) },
-                    selfMuted = false,
-                    selfDeafened = false,
-                )
-            }
-
-            override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) {
-                var current = pendingConnection.get()
-                while (true) {
-                    val list = current.localMuteHistory?.toMutableList() ?: mutableListOf()
-                    if (muted) {
-                        if (!list.contains(userId)) list.add(userId)
-                    } else {
-                        list.remove(userId)
-                    }
-                    val next = current.copy(localMuteHistory = list.toList())
-                    if (pendingConnection.compareAndSet(current, next)) return
-                    current = pendingConnection.get()
-                }
-            }
-            override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) {
-                var current = pendingConnection.get()
-                while (true) {
-                    val list = current.localIgnoreHistory?.toMutableList() ?: mutableListOf()
-                    if (ignored) {
-                        if (!list.contains(userId)) list.add(userId)
-                    } else {
-                        list.remove(userId)
-                    }
-                    val next = current.copy(localIgnoreHistory = list.toList())
-                    if (pendingConnection.compareAndSet(current, next)) return
-                    current = pendingConnection.get()
-                }
-            }
-            override suspend fun setSelfMuteDeaf(muted: Boolean, deafened: Boolean) = Unit
-        }
+        val localFactsStore = localFactsStore()
 
         val networkMonitor = object : NetworkMonitor {
             override val available = networkFlow.asSharedFlow()
@@ -989,6 +935,9 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         return getReconnectDelayForAttempts(attempts)
     }
 
+    /** Step 6: the container owns the only writer for device-local facts. */
+    protected open fun localFactsStore(): LocalFactsStore = InMemoryLocalFactsStore()
+
     protected open fun onAudioRouteChanged() {
     }
 
@@ -1030,9 +979,8 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         // 1. Merge pending connection parts (lock-free AtomicReference;
         // main-confined writes, atomic reads for connect). Presence-based
         // reconnect: any delta carrying a reconnect-relevant key returns true.
-        // Single-server snapshot: histories are keyed to the staged server;
-        // switching servers without fresh history fields clears the prior
-        // server's lists instead of leaking them across servers.
+        // Device-local facts live in the container's LocalFactsStore, keyed
+        // to the server at connect time, not in this snapshot.
         run {
             var updated: PendingConnection
             do {
@@ -1084,20 +1032,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
                                 "keeping previous trust store settings."
                         )
                     }
-                }
-                if (delta.localMuteHistory != null) {
-                    next = next.copy(localMuteHistory = delta.localMuteHistory.toList())
-                    reconnectNeeded = true
-                } else if (delta.server != null && delta.server.id != current.server?.id) {
-                    // Server switch without fresh histories: drop the prior
-                    // server's lists (see the single-server note above).
-                    next = next.copy(localMuteHistory = emptyList())
-                }
-                if (delta.localIgnoreHistory != null) {
-                    next = next.copy(localIgnoreHistory = delta.localIgnoreHistory.toList())
-                    reconnectNeeded = true
-                } else if (delta.server != null && delta.server.id != current.server?.id) {
-                    next = next.copy(localIgnoreHistory = emptyList())
                 }
                 updated = next
             } while (!pendingConnection.compareAndSet(current, updated))

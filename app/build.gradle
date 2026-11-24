@@ -202,6 +202,9 @@ dependencies {
     // Migration Slice 2 data layer: Room + DataStore + coroutines. The Room
     // compiler runs under kapt (no stable KSP for Kotlin 2.4).
     implementation libs.coroutines.core
+    // LocalFactsStore publishes persistent collections to the library's
+    // LocalFacts value (step 6).
+    implementation libs.collections.immutable
     implementation libs.room.runtime
     implementation libs.room.ktx
     implementation libs.datastore.preferences

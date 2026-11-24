@@ -81,8 +81,6 @@ data class ConfigDelta(
     val bluetoothSco: Boolean? = null,
     val adaptiveLeveler: Boolean? = null,
     val accessTokens: List<String>? = null,
-    val localMuteHistory: List<Int>? = null,
-    val localIgnoreHistory: List<Int>? = null,
     val clientName: String? = null,
     val audioStream: Int? = null,
     val theme: String? = null,
@@ -96,8 +94,7 @@ data class ConfigDelta(
             transmitMode != null || detectionThreshold != null || amplitudeBoost != null ||
             inputQuality != null || framesPerPacket != null || halfDuplex != null ||
             bluetoothSco != null || adaptiveLeveler != null || accessTokens != null ||
-            localMuteHistory != null || localIgnoreHistory != null || clientName != null ||
-            audioStream != null
+            clientName != null || audioStream != null
 
     /**
      * Whether any audio-affecting field besides the SCO request is set.
@@ -120,7 +117,6 @@ data class ConfigDelta(
             "halfDuplex=$halfDuplex, bluetoothSco=$bluetoothSco, " +
             "adaptiveLeveler=$adaptiveLeveler, " +
             "accessTokens=<${accessTokens?.size ?: 0} tokens>, " +
-            "localMuteHistory=$localMuteHistory, localIgnoreHistory=$localIgnoreHistory, " +
             "clientName=$clientName, audioStream=$audioStream, theme=$theme, " +
             "overlayShown=$overlayShown, overlayPlacement=$overlayPlacement, " +
             "ttsEngine=$ttsEngine)"
@@ -146,8 +142,6 @@ data class ConfigDelta(
         var bluetoothSco: Boolean? = null
         var adaptiveLeveler: Boolean? = null
         var accessTokens: List<String>? = null
-        var localMuteHistory: List<Int>? = null
-        var localIgnoreHistory: List<Int>? = null
         var clientName: String? = null
         var audioStream: Int? = null
         var theme: String? = null
@@ -179,8 +173,6 @@ data class ConfigDelta(
             bluetoothSco = bluetoothSco,
             adaptiveLeveler = adaptiveLeveler,
             accessTokens = accessTokens?.toList(),
-            localMuteHistory = localMuteHistory?.toList(),
-            localIgnoreHistory = localIgnoreHistory?.toList(),
             clientName = clientName,
             audioStream = audioStream,
             theme = theme,

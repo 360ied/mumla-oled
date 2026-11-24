@@ -483,6 +483,65 @@ class TestVoiceLifecycle(unittest.TestCase):
             self.assertTrue(any("NativeVoiceEngineJni.cpp" in e for e in errors))
 
 
+class TestLocalFactsWriter(unittest.TestCase):
+    """Step 6: one writer for device-local facts."""
+
+    def write(self, root, rel, text):
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_clean_tree_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, ca.LOCAL_FACTS_STORE_FILE, "dao.setLocalMute(1, 2, true)\n")
+            self.write(
+                root,
+                ca.LOCAL_FACTS_DAO_DIR + "MumlaRoomDatabase.kt",
+                "localMuteDao().getUsers(1)\n",
+            )
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/service/MumlaService.kt",
+                "settings.isMuted\n",
+            )
+            self.assertEqual(ca.check_local_facts_writers(root), [])
+
+    def test_adapter_write_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/channel/ChannelListAdapter.kt",
+                "mDatabase.addLocalMutedUser(1, 2)\n",
+            )
+            errors = ca.check_local_facts_writers(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("ChannelListAdapter.kt", errors[0])
+
+    def test_service_self_mute_write_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/service/MumlaService.kt",
+                "settings.setMutedAndDeafened(muted, deafened)\n",
+            )
+            errors = ca.check_local_facts_writers(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("MumlaService.kt", errors[0])
+
+    def test_declarations_do_not_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/Settings.kt",
+                "fun setMutedAndDeafened(muted: Boolean, deafened: Boolean) {}\n",
+            )
+            self.assertEqual(ca.check_local_facts_writers(root), [])
+
+
 class TestRunAll(unittest.TestCase):
     def test_missing_source_root_is_error(self):
         with tempfile.TemporaryDirectory() as tmp:

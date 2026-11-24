@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.service
 
+import se.lublin.humla.client.LocalFactsStore
 import se.lublin.mumla.container
 import android.Manifest
 import android.annotation.SuppressLint
@@ -359,9 +360,7 @@ open class MumlaService : HumlaService(),
             }
 
             if (user.session == selfSession) {
-                // NPE-exact: the original dereferenced mSettings unconditionally.
-                val settings = mSettings ?: throw NullPointerException("mSettings")
-                settings.setMutedAndDeafened(user.isSelfMuted, user.isSelfDeafened) // Update settings mute/deafen state
+                // The session persists self mute/deafen through LocalFactsStore.
                 updateConnectedNotification()
             }
 
@@ -789,11 +788,7 @@ open class MumlaService : HumlaService(),
         }
 
         val settings = mSettings ?: throw NullPointerException("mSettings")
-        // Restore mute/deafen state
-        if (settings.isMuted || settings.isDeafened) {
-            setSelfMuteDeafState(settings.isMuted, settings.isDeafened)
-        }
-
+        // The session restores persisted self mute/deafen from LocalFacts.
         updateOverlayVisibility()
 
         if (settings.isTalkBroadcastAllowed) {
@@ -998,6 +993,8 @@ open class MumlaService : HumlaService(),
         return true
     }
 
+    override fun localFactsStore(): LocalFactsStore = container.localFactsStore
+
     override fun buildConnectDelta(intent: Intent?): ConfigDelta? {
         // NPE-exact: the original dereferenced intent unconditionally.
         val request = intent ?: throw NullPointerException("intent")
@@ -1041,10 +1038,6 @@ open class MumlaService : HumlaService(),
         builder.halfDuplex = settings.isHalfDuplex
         builder.bluetoothSco = settings.isBluetoothHeadset
         builder.adaptiveLeveler = settings.isAdaptiveLevelerEnabled
-        if (connected.isSaved()) {
-            builder.localMuteHistory = database.getLocalMutedUsers(connected.id)
-            builder.localIgnoreHistory = database.getLocalIgnoredUsers(connected.id)
-        }
         if (settings.isUsingCertificate) {
             val certificateId = settings.defaultCertificate
             val certificate = database.getCertificateData(certificateId)

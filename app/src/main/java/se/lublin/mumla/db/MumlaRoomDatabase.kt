@@ -27,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import se.lublin.humla.model.Server
+import se.lublin.mumla.LocalFactsDao
 
 /**
  * Room database replacing the hand-SQL `MumlaSQLiteDatabase` behind the
@@ -57,7 +58,7 @@ import se.lublin.humla.model.Server
     version = 11,
     exportSchema = false,
 )
-abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
+abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase, LocalFactsDao {
     abstract fun serverDao(): ServerDao
     abstract fun pinnedDao(): PinnedDao
     abstract fun tokenDao(): TokenDao
@@ -207,6 +208,18 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase {
     }
 
     /** Suspend path for the service, features, and LocalFactsStore. */
+    override suspend fun mutedUsers(serverId: Long): List<Int> = localMutedUsers(serverId)
+
+    override suspend fun ignoredUsers(serverId: Long): List<Int> = localIgnoredUsers(serverId)
+
+    override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) {
+        if (muted) insertLocalMutedUser(serverId, userId) else deleteLocalMutedUser(serverId, userId)
+    }
+
+    override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) {
+        if (ignored) insertLocalIgnoredUser(serverId, userId) else deleteLocalIgnoredUser(serverId, userId)
+    }
+
     suspend fun localMutedUsers(serverId: Long): List<Int> = withContext(Dispatchers.IO) {
         localMuteDao().getUsers(serverId)
     }

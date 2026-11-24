@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import se.lublin.humla.client.LocalFactsStore
 import se.lublin.mumla.app.MumlaApplication
 import se.lublin.mumla.db.MumlaRoomDatabase
 
@@ -66,6 +67,8 @@ open class AppContainer(private val context: Context) {
     open val settings = Settings(settingsRepository)
 
     open val database: MumlaRoomDatabase = MumlaRoomDatabase.create(context)
+
+    open val localFactsStore: LocalFactsStore = AppLocalFactsStore(database, settings)
 
     private val _configuration = MutableStateFlow(Configuration(context.resources.configuration))
     open val configuration: StateFlow<Configuration> = _configuration.asStateFlow()
