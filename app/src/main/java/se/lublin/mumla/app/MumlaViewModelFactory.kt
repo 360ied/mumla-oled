@@ -18,9 +18,12 @@
 package se.lublin.mumla.app
 
 import android.app.Application
+import android.os.Bundle
+import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
+import se.lublin.mumla.channel.AccessTokenViewModel
 import se.lublin.mumla.channel.ServerInfoViewModel
 import se.lublin.mumla.container
 
@@ -30,22 +33,47 @@ import se.lublin.mumla.container
  * functions it calls, never the container or `HumlaClient` itself. Tests
  * build ViewModels directly with plain flows.
  *
- * Per-screen arguments (server ids, session ids) arrive through
- * [CreationExtras]' default-args bundle, which fragments and activities
- * populate from their own arguments/intent.
+ * Screens with arguments (server ids, session ids) pass their fragment
+ * arguments through the second constructor; the factory hands the model
+ * only the values it needs.
  */
-class MumlaViewModelFactory(private val application: Application) : ViewModelProvider.Factory {
+class MumlaViewModelFactory private constructor(
+    private val application: Application,
+    private val args: Bundle,
+) : ViewModelProvider.Factory {
+
+    constructor(application: Application) : this(application, Bundle.EMPTY)
+
+    constructor(fragment: Fragment) : this(
+        fragment.requireActivity().application,
+        fragment.arguments ?: Bundle.EMPTY,
+    )
 
     override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
         val container = application.container
+        val client = container.runtime.client
         val model: ViewModel = when {
             modelClass.isAssignableFrom(ServerInfoViewModel::class.java) -> ServerInfoViewModel(
-                clientState = container.runtime.client.state,
+                clientState = client.state,
                 sessionState = container.runtime.sessionState,
+            )
+            modelClass.isAssignableFrom(AccessTokenViewModel::class.java) -> AccessTokenViewModel(
+                serverId = args.getLong(ARG_SERVER),
+                loadTokens = { id -> container.database.query { it.getAccessTokens(id) } },
+                addToken = { id, token -> container.database.query { it.addAccessToken(id, token) } },
+                removeToken = { id, token ->
+                    container.database.query { it.removeAccessToken(id, token) }
+                },
+                sendTokens = { tokens -> client.currentSession.value?.sendAccessTokens(tokens) },
             )
             else -> throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }
         @Suppress("UNCHECKED_CAST")
         return model as T
+    }
+
+    companion object {
+        /** Fragment argument key for a saved server id. */
+        const val ARG_SERVER = "server"
     }
 }

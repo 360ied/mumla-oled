@@ -17,10 +17,8 @@
 
 package se.lublin.mumla.channel
 
-import se.lublin.mumla.container
 import android.content.Context
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -30,33 +28,24 @@ import android.widget.EditText
 import android.widget.ImageButton
 import android.widget.ListView
 import android.widget.TextView
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
 import se.lublin.mumla.R
-import se.lublin.mumla.db.MumlaDatabase
-import se.lublin.mumla.db.MumlaRoomDatabase
-import se.lublin.mumla.util.HumlaServiceFragment
+import se.lublin.mumla.app.MumlaViewModelFactory
 
-class AccessTokenFragment : HumlaServiceFragment() {
-    interface AccessTokenListener {
-        fun onAccessTokenAdded(serverId: Long, token: String)
+class AccessTokenFragment : Fragment() {
 
-        fun onAccessTokenRemoved(serverId: Long, token: String)
+    private val viewModel: AccessTokenViewModel by viewModels {
+        MumlaViewModelFactory(this)
     }
-
-    private var mTokens: MutableList<String>? = null
 
     private var mTokenList: ListView? = null
     private var mTokenAdapter: TokenAdapter? = null
     private var mTokenField: EditText? = null
-
-    private var mDatabase: MumlaDatabase? = null
-
-    override fun onAttach(context: Context) {
-        super.onAttach(context)
-
-        mTokens = ArrayList(getAccessTokens())
-        mTokenAdapter = TokenAdapter(context, mTokens ?: throw NullPointerException("mTokens"))
-        mDatabase = context.container.database
-    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -65,14 +54,13 @@ class AccessTokenFragment : HumlaServiceFragment() {
     ): View? {
         val view = inflater.inflate(R.layout.fragment_tokens, container, false)
 
-        // NPE-exact: the original dereferenced every lookup unconditionally.
-        val tokenList = view.findViewById(R.id.tokenList) as ListView?
-            ?: throw NullPointerException("tokenList")
+        val tokenList = view.findViewById<ListView>(R.id.tokenList)
         mTokenList = tokenList
-        tokenList.adapter = mTokenAdapter
+        val adapter = TokenAdapter(requireContext())
+        mTokenAdapter = adapter
+        tokenList.adapter = adapter
 
-        val tokenField = view.findViewById(R.id.tokenField) as EditText?
-            ?: throw NullPointerException("tokenField")
+        val tokenField = view.findViewById<EditText>(R.id.tokenField)
         mTokenField = tokenField
         tokenField.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) {
@@ -83,108 +71,53 @@ class AccessTokenFragment : HumlaServiceFragment() {
             }
         }
 
-        val addButton = view.findViewById(R.id.tokenAddButton) as ImageButton?
-            ?: throw NullPointerException("tokenAddButton")
-        addButton.setOnClickListener { addToken() }
+        view.findViewById<ImageButton>(R.id.tokenAddButton).setOnClickListener { addToken() }
 
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.tokens.collect { tokens -> adapter.submit(tokens) }
+            }
+        }
         return view
     }
 
     private fun addToken() {
-        // NPE-exact: the original dereferenced every field unconditionally.
-        val tokenField = mTokenField ?: throw NullPointerException("mTokenField")
-        val tokens = mTokens ?: throw NullPointerException("mTokens")
-        val adapter = mTokenAdapter ?: throw NullPointerException("mTokenAdapter")
-        val tokenList = mTokenList ?: throw NullPointerException("mTokenList")
-        val database = mDatabase ?: throw NullPointerException("mDatabase")
-
+        val tokenField = mTokenField ?: return
         val tokenText = tokenField.text.toString().trim()
-
-        if (tokenText == "") {
+        if (tokenText.isEmpty()) {
             return
         }
-
         tokenField.setText("")
+        viewModel.add(tokenText)
+        mTokenList?.smoothScrollToPosition((mTokenAdapter?.count ?: 1) - 1)
+    }
 
-        Log.i(TAG, "Adding a token")
+    override fun onDestroyView() {
+        mTokenList = null
+        mTokenAdapter = null
+        mTokenField = null
+        super.onDestroyView()
+    }
 
-        tokens.add(tokenText)
-        adapter.notifyDataSetChanged()
+    private inner class TokenAdapter(context: Context) :
+        ArrayAdapter<String>(context, android.R.layout.simple_list_item_1, ArrayList()) {
 
-        tokenList.smoothScrollToPosition(tokens.size - 1)
-        database.addAccessToken(getServerId(), tokenText)
-        val service = getService()
-        if (service != null && service.isConnected()) {
-            // TOCTOU: teardown between check and send throws.
-            try {
-                service.HumlaSession().sendAccessTokens(tokens)
-            } catch (e: se.lublin.humla.util.HumlaDisconnectedException) {
-                Log.w(TAG, "add-token send with torn-down session", e)
-            } catch (e: IllegalStateException) {
-                Log.w(TAG, "add-token send with torn-down session", e)
-            }
+        fun submit(tokens: List<String>) {
+            clear()
+            addAll(tokens)
+            notifyDataSetChanged()
         }
-    }
-
-    private fun getServerId(): Long {
-        // NPE-exact: the original dereferenced getArguments() unconditionally.
-        val args = arguments ?: throw NullPointerException("arguments")
-        return args.getLong("server")
-    }
-
-    private fun getAccessTokens(): List<String> {
-        // NPE-exact: new ArrayList(null) threw NPE in the original.
-        val args = arguments ?: throw NullPointerException("arguments")
-        return args.getStringArrayList("access_tokens") ?: throw NullPointerException("access_tokens")
-    }
-
-    private inner class TokenAdapter(context: Context, objects: List<String>) :
-        ArrayAdapter<String>(context, android.R.layout.simple_list_item_1, objects) {
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            var view = convertView
-            if (convertView == null) {
-                // NPE-exact: the original dereferenced getActivity() unconditionally.
-                val host = activity ?: throw NullPointerException("activity")
-                view = host.layoutInflater.inflate(R.layout.token_row, parent, false)
+            val view = convertView
+                ?: LayoutInflater.from(context).inflate(R.layout.token_row, parent, false)
+            val token = getItem(position) ?: return view
+
+            view.findViewById<TextView>(R.id.tokenItemTitle).text = token
+            view.findViewById<ImageButton>(R.id.tokenItemDelete).setOnClickListener {
+                viewModel.remove(token)
             }
-            // NPE-exact: inflate never returns null here; the original dereferenced view.
-            val row = view ?: throw NullPointerException("view")
-
-            // NPE-exact: the original passed getItem straight into setText/removeAccessToken.
-            val token = getItem(position) ?: throw NullPointerException("item")
-
-            val title = row.findViewById(R.id.tokenItemTitle) as TextView?
-                ?: throw NullPointerException("tokenItemTitle")
-            title.text = token
-
-            val deleteButton = row.findViewById(R.id.tokenItemDelete) as ImageButton?
-                ?: throw NullPointerException("tokenItemDelete")
-            deleteButton.setOnClickListener {
-                // NPE-exact: the original dereferenced every field unconditionally.
-                val tokens = mTokens ?: throw NullPointerException("mTokens")
-                val database = mDatabase ?: throw NullPointerException("mDatabase")
-                tokens.removeAt(position)
-                notifyDataSetChanged()
-                database.removeAccessToken(getServerId(), token)
-                val service = getService()
-                if (service != null && service.isConnected()) {
-                    // Same TOCTOU as the add path above.
-                    try {
-                        service.HumlaSession().sendAccessTokens(tokens)
-                    } catch (e: se.lublin.humla.util.HumlaDisconnectedException) {
-                        Log.w(TAG, "delete-token send with torn-down session", e)
-                    } catch (e: IllegalStateException) {
-                        Log.w(TAG, "delete-token send with torn-down session", e)
-                    }
-                }
-            }
-
-            return row
+            return view
         }
-    }
-
-    companion object {
-        private val TAG: String = AccessTokenFragment::class.java.name
     }
 }

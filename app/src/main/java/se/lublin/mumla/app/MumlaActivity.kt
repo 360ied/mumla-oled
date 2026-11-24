@@ -89,6 +89,7 @@ import se.lublin.mumla.servers.ServerEditFragment
 import se.lublin.mumla.service.IMumlaService
 import se.lublin.mumla.feature.ChatLogFeature
 import se.lublin.mumla.service.MumlaService
+import se.lublin.mumla.app.MumlaViewModelFactory
 import se.lublin.mumla.util.CrashReporter
 import se.lublin.mumla.util.CrashReportSeenStore
 import se.lublin.mumla.util.HumlaServiceFragment
@@ -1142,13 +1143,8 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                 if (connectedServer == null) {
                     FavouriteServerListFragment::class.java
                 } else {
-                    args.putLong("server", connectedServer.id)
-                    // NPE-exact: the original dereferenced mDatabase unconditionally.
-                    val database = mDatabase ?: throw NullPointerException("mDatabase")
-                    args.putStringArrayList(
-                        "access_tokens",
-                        ArrayList(database.getAccessTokens(connectedServer.id))
-                    )
+                    // The screen's ViewModel loads the tokens itself.
+                    args.putLong(MumlaViewModelFactory.ARG_SERVER, connectedServer.id)
                     AccessTokenFragment::class.java
                 }
             }
