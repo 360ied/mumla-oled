@@ -356,7 +356,29 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeStartStreams(
     if (output != AAUDIO_OK) {
         logError("start output", output);
     }
-    return input == AAUDIO_OK && output == AAUDIO_OK ? JNI_TRUE : JNI_FALSE;
+    const bool ok = input == AAUDIO_OK && output == AAUDIO_OK;
+    if (!ok) {
+        // Atomic start: a partial start would leave one direction running
+        // with callbacks live until Kotlin's failPipeline stops it. Request
+        // stop on the succeeded side here so this entry never returns with
+        // live streams on failure; failPipeline still does the full
+        // stop/wait/close.
+        if (input == AAUDIO_OK) {
+            const aaudio_result_t stopped = AAudioStream_requestStop(
+                static_cast<AAudioStream*>(ctx->inputStream));
+            if (stopped != AAUDIO_OK) {
+                logError("stop input after partial start", stopped);
+            }
+        }
+        if (output == AAUDIO_OK) {
+            const aaudio_result_t stopped = AAudioStream_requestStop(
+                static_cast<AAudioStream*>(ctx->outputStream));
+            if (stopped != AAUDIO_OK) {
+                logError("stop output after partial start", stopped);
+            }
+        }
+    }
+    return ok ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
