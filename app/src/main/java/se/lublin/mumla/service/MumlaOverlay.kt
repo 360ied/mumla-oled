@@ -18,6 +18,7 @@
 package se.lublin.mumla.service
 
 import se.lublin.mumla.container
+import se.lublin.mumla.feature.OverlayHost
 import android.content.Context
 import android.graphics.Insets
 import android.graphics.PixelFormat
@@ -37,6 +38,7 @@ import se.lublin.humla.model.IChannel
 import se.lublin.humla.model.IUser
 import se.lublin.humla.util.HumlaException
 import se.lublin.humla.util.HumlaObserver
+import se.lublin.humla.util.IHumlaObserver
 import se.lublin.mumla.R
 import se.lublin.mumla.Settings
 import se.lublin.mumla.channel.ChannelAdapter
@@ -44,7 +46,24 @@ import se.lublin.mumla.channel.ChannelAdapter
 /**
  * A minimal onscreen floating voice HUD displaying active channel members.
  */
-class MumlaOverlay(service: MumlaService) {
+class MumlaOverlay(private val mContext: Context, private val mHost: OverlayHost) {
+
+    /** Interim bridge: the bound service still owns the live session. */
+    constructor(service: MumlaService) : this(service, object : OverlayHost {
+        override val settings: Settings = service.container.settings
+        override fun sessionChannel(): IChannel? = try {
+            service.getSessionChannel()
+        } catch (e: IllegalStateException) {
+            null
+        }
+        override fun selfSession(): Int? = try {
+            service.getSessionId()
+        } catch (e: IllegalStateException) {
+            null
+        }
+        override fun registerObserver(observer: IHumlaObserver) = service.registerObserver(observer)
+        override fun unregisterObserver(observer: IHumlaObserver) = service.unregisterObserver(observer)
+    })
     private val mObserver: HumlaObserver = object : HumlaObserver() {
         override fun onUserTalkStateUpdated(user: IUser?) {
             val channelAdapter = mChannelAdapter
@@ -84,13 +103,7 @@ class MumlaOverlay(service: MumlaService) {
         }
 
         override fun onUserJoinedChannel(user: IUser?, newChannel: IChannel?, oldChannel: IChannel?) {
-            val selfSession: Int
-            try {
-                selfSession = mService.getSessionId()
-            } catch (e: IllegalStateException) {
-                Log.d(TAG, "exception in onUserJoinedChannel: $e")
-                return
-            }
+            val selfSession = mHost.selfSession() ?: return
 
             val channelAdapter = mChannelAdapter
             if (channelAdapter != null && user != null) {
@@ -125,15 +138,14 @@ class MumlaOverlay(service: MumlaService) {
         }
     }
 
-    private val mService: MumlaService = service
-    private val mSettings: Settings = service.container.settings
+    private val mSettings: Settings = mHost.settings
 
     // Fail-soft snapshot: getSessionChannel() throws IllegalStateException when
     // unsynchronized or teardown-racing (cf. MumlaService's own try/catch
     // around the same call). Observers must never throw out of fan-out.
     private fun sessionChannelOrNull(): IChannel? {
         return try {
-            mService.getSessionChannel()
+            mHost.sessionChannel()
         } catch (e: IllegalStateException) {
             null
         }
@@ -152,19 +164,19 @@ class MumlaOverlay(service: MumlaService) {
     private var mInitialParamY: Int = 0
 
     init {
-        mWindowManager = mService.getSystemService(Context.WINDOW_SERVICE) as WindowManager?
+        mWindowManager = mContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager?
             ?: throw NullPointerException("WindowManager")
-        mOverlayView = View.inflate(service, R.layout.overlay, null)
+        mOverlayView = View.inflate(mContext, R.layout.overlay, null)
         mOverlayList = mOverlayView.findViewById(R.id.overlay_list)
             ?: throw NullPointerException("overlay_list")
-        mOverlayList.layoutManager = LinearLayoutManager(service)
+        mOverlayList.layoutManager = LinearLayoutManager(mContext)
         mOverlayList.itemAnimator = null
 
         mOverlayView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             if (!mShown || mSettings.isOverlayPinned) {
                 return@addOnLayoutChangeListener
             }
-            val dm = mService.resources.displayMetrics
+            val dm = mContext.resources.displayMetrics
             val viewWidth = mOverlayView.width
             val viewHeight = mOverlayView.height
             if (viewWidth > 0 && viewHeight > 0) {
@@ -190,7 +202,7 @@ class MumlaOverlay(service: MumlaService) {
         // unconditionally (CCE on mismatch).
         val overlayLayout = mOverlayView as OverlayLayout?
             ?: throw NullPointerException("mOverlayView")
-        val touchSlop = ViewConfiguration.get(service).scaledTouchSlop
+        val touchSlop = ViewConfiguration.get(mContext).scaledTouchSlop
 
         overlayLayout.setOnDispatchTouchEventListener(object : OverlayLayout.OnDispatchTouchEventListener {
             private var mIsDragging = false
@@ -220,7 +232,7 @@ class MumlaOverlay(service: MumlaService) {
                             val newX = (mInitialParamX + deltaX).toInt()
                             val newY = (mInitialParamY + deltaY).toInt()
 
-                            val dm = mService.resources.displayMetrics
+                            val dm = mContext.resources.displayMetrics
                             val viewWidth = if (mOverlayView.width > 0) mOverlayView.width else (ESTIMATED_WIDTH_DP * dm.density).toInt()
                             val viewHeight = if (mOverlayView.height > 0) mOverlayView.height else (ESTIMATED_HEIGHT_DP * dm.density).toInt()
                             val maxX = maxOf(0, dm.widthPixels - viewWidth)
@@ -270,7 +282,7 @@ class MumlaOverlay(service: MumlaService) {
     }
 
     private fun applyLayoutParameters() {
-        val dm = mService.resources.displayMetrics
+        val dm = mContext.resources.displayMetrics
         // Single-snapshot triple: pin, gravity and placement must agree
         // under a concurrent settings write.
         val layout = mSettings.overlayLayout()
@@ -319,9 +331,9 @@ class MumlaOverlay(service: MumlaService) {
             return resolveEdgeMarginPx(insetTop, 0, DEFAULT_TOP_MARGIN_DP, dm.density)
         }
         var statusBarHeight = 0
-        val resourceId = mService.resources.getIdentifier("status_bar_height", "dimen", "android")
+        val resourceId = mContext.resources.getIdentifier("status_bar_height", "dimen", "android")
         if (resourceId > 0) {
-            statusBarHeight = mService.resources.getDimensionPixelSize(resourceId)
+            statusBarHeight = mContext.resources.getDimensionPixelSize(resourceId)
         }
         return resolveEdgeMarginPx(0, statusBarHeight, DEFAULT_TOP_MARGIN_DP, dm.density)
     }
@@ -332,15 +344,15 @@ class MumlaOverlay(service: MumlaService) {
             return resolveEdgeMarginPx(insetBottom, 0, DEFAULT_BOTTOM_MARGIN_DP, dm.density)
         }
         var navBarHeight = 0
-        val resourceId = mService.resources.getIdentifier("navigation_bar_height", "dimen", "android")
+        val resourceId = mContext.resources.getIdentifier("navigation_bar_height", "dimen", "android")
         if (resourceId > 0) {
-            navBarHeight = mService.resources.getDimensionPixelSize(resourceId)
+            navBarHeight = mContext.resources.getDimensionPixelSize(resourceId)
         }
         return resolveEdgeMarginPx(0, navBarHeight, DEFAULT_BOTTOM_MARGIN_DP, dm.density)
     }
 
     private fun restorePosition() {
-        val dm = mService.resources.displayMetrics
+        val dm = mContext.resources.displayMetrics
         val defaultX = (DEFAULT_POS_X_DP * dm.density).toInt()
         val defaultY = (DEFAULT_POS_Y_DP * dm.density).toInt()
 
@@ -381,16 +393,16 @@ class MumlaOverlay(service: MumlaService) {
             return
         }
         applyLayoutParameters()
-        val adapter = ChannelAdapter(mService, sessionChannelOrNull())
+        val adapter = ChannelAdapter(mContext, sessionChannelOrNull())
         mChannelAdapter = adapter
         mOverlayList.adapter = adapter
-        mService.registerObserver(mObserver)
+        mHost.registerObserver(mObserver)
         try {
             mWindowManager.addView(mOverlayView, mOverlayParams)
             mShown = true
         } catch (e: Exception) {
             Log.e(TAG, "exception showing overlay: $e")
-            mService.unregisterObserver(mObserver)
+            mHost.unregisterObserver(mObserver)
             mOverlayList.adapter = null
             mChannelAdapter = null
             mShown = false
@@ -402,7 +414,7 @@ class MumlaOverlay(service: MumlaService) {
             return
         }
         mShown = false
-        mService.unregisterObserver(mObserver)
+        mHost.unregisterObserver(mObserver)
         mOverlayList.adapter = null
         val channelAdapter = mChannelAdapter
         if (channelAdapter != null) {

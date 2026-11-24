@@ -18,6 +18,7 @@
 package se.lublin.mumla.feature
 
 import android.content.Context
+import se.lublin.humla.client.ClientError
 import se.lublin.mumla.R
 
 /** Shared connection wording: the chat log and TTS announce the same lines. */
@@ -32,4 +33,12 @@ object ConnectionLines {
     }
 
     fun reconnected(context: Context): String = context.getString(R.string.reconnected)
+}
+
+/** Mirrors the service's HumlaException messages; Trust stays a dialog. */
+fun ClientError.displayMessage(): String? = when (this) {
+    is ClientError.Connection -> message ?: "Connection error"
+    is ClientError.Rejected -> "Rejected: $reason"
+    is ClientError.Removed -> reason ?: "Removed"
+    is ClientError.Trust -> null
 }

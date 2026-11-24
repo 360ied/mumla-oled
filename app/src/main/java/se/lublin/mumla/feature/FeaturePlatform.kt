@@ -1,0 +1,176 @@
+/*
+ * Copyright (C) 2026 Brian Zhu
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package se.lublin.mumla.feature
+
+import android.app.Notification
+import android.content.BroadcastReceiver
+import se.lublin.humla.model.IChannel
+import se.lublin.humla.model.IMessage
+import se.lublin.humla.util.IHumlaObserver
+
+/**
+ * Android edges behind small interfaces: a feature's test passes a fake, the
+ * container passes [se.lublin.mumla.service.AndroidFeaturePlatform]. Defaults
+ * are inert so a test only overrides the edge it exercises.
+ */
+interface FeaturePlatform {
+    fun toast(resId: Int) = Unit
+    fun toast(text: String) = Unit
+    fun hasBluetoothConnectGrant(): Boolean = true
+    fun canDrawOverlays(): Boolean = true
+    fun requestOverlayPermission() = Unit
+    fun setBluetoothHeadset(enabled: Boolean) = Unit
+    fun setOverlayShown(enabled: Boolean) = Unit
+    fun newSoundBank(voiceRoute: Boolean): SoundBank = NoopSoundBank
+    fun newTts(engine: String?, onInit: (Int) -> Unit): TtsSpeaker = NoopTtsSpeaker
+    fun newConnectionNotification(actions: NotificationActions): ConnectionNotificationView =
+        NoopConnectionNotification
+    fun newMessageNotifications(): MessageNotificationsView = NoopMessageNotifications
+    fun newHotCorner(gravity: Int, listener: HotCornerListener): HotCornerView = NoopHotCorner
+    fun newOverlay(host: OverlayHost): OverlayView = NoopOverlay
+    fun newProximityLock(): WakeLockLike? = null
+    fun newTalkReceiver(sink: (String?) -> Unit): BroadcastReceiver? = null
+    fun registerTalkReceiver(receiver: BroadcastReceiver) = Unit
+    fun unregisterTalkReceiver(receiver: BroadcastReceiver) = Unit
+}
+
+interface SoundBank {
+    fun play(on: Boolean)
+    fun release()
+}
+
+interface TtsSpeaker {
+    fun speak(text: String)
+    fun shutdown()
+}
+
+interface MessageNotificationsView {
+    fun show(message: IMessage)
+    fun dismiss()
+}
+
+interface ConnectionNotificationView {
+    fun connecting(serverName: String, host: String, port: Int): Notification
+    fun connected(
+        serverName: String,
+        channelName: String?,
+        muted: Boolean,
+        deafened: Boolean,
+        overlayShown: Boolean,
+        hostInfo: String?,
+    ): Notification
+    fun reconnecting(
+        serverName: String?,
+        error: String?,
+        attempt: Int,
+        delaySec: Int,
+        hostInfo: String?,
+    ): Notification
+    fun show(): Notification
+    fun hide()
+}
+
+interface NotificationActions {
+    fun onMuteToggled()
+    fun onMediaKeyMuteToggled()
+    fun onDeafenToggled()
+    fun onOverlayToggled()
+    fun onCancelReconnect()
+    fun onDisconnect()
+}
+
+interface HotCornerListener {
+    fun onDown()
+    fun onUp()
+    fun onCancel()
+}
+
+interface HotCornerView {
+    fun isShown(): Boolean
+    fun setShown(shown: Boolean)
+    fun updateTalkState(talking: Boolean)
+    fun setGravity(gravity: Int)
+    fun refreshGestureExclusionDeferred()
+}
+
+/** The overlay HUD's view over the container's session-state mirror. */
+interface OverlayHost {
+    val settings: se.lublin.mumla.Settings
+    fun sessionChannel(): IChannel?
+    fun selfSession(): Int?
+    fun registerObserver(observer: IHumlaObserver)
+    fun unregisterObserver(observer: IHumlaObserver)
+}
+
+interface OverlayView {
+    fun isShown(): Boolean
+    fun show()
+    fun hide()
+    fun updatePosition()
+    fun setPushToTalkShown(showPtt: Boolean)
+}
+
+interface WakeLockLike {
+    fun isHeld(): Boolean
+    fun acquire()
+    fun release()
+}
+
+private object NoopSoundBank : SoundBank {
+    override fun play(on: Boolean) = Unit
+    override fun release() = Unit
+}
+
+private object NoopTtsSpeaker : TtsSpeaker {
+    override fun speak(text: String) = Unit
+    override fun shutdown() = Unit
+}
+
+private object NoopMessageNotifications : MessageNotificationsView {
+    override fun show(message: IMessage) = Unit
+    override fun dismiss() = Unit
+}
+
+private object NoopConnectionNotification : ConnectionNotificationView {
+    override fun connecting(serverName: String, host: String, port: Int): Notification = Notification()
+    override fun connected(
+        serverName: String, channelName: String?, muted: Boolean, deafened: Boolean,
+        overlayShown: Boolean, hostInfo: String?,
+    ): Notification = Notification()
+    override fun reconnecting(
+        serverName: String?, error: String?, attempt: Int, delaySec: Int, hostInfo: String?,
+    ): Notification = Notification()
+    override fun show(): Notification = Notification()
+    override fun hide() = Unit
+}
+
+private object NoopHotCorner : HotCornerView {
+    override fun isShown(): Boolean = false
+    override fun setShown(shown: Boolean) = Unit
+    override fun updateTalkState(talking: Boolean) = Unit
+    override fun setGravity(gravity: Int) = Unit
+    override fun refreshGestureExclusionDeferred() = Unit
+}
+
+private object NoopOverlay : OverlayView {
+    override fun isShown(): Boolean = false
+    override fun show() = Unit
+    override fun hide() = Unit
+    override fun updatePosition() = Unit
+    override fun setPushToTalkShown(showPtt: Boolean) = Unit
+}

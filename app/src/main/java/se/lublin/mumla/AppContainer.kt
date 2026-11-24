@@ -47,15 +47,36 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.runBlocking
 import se.lublin.humla.Constants
 import se.lublin.humla.HumlaRuntime
+import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.LocalFactsStore
+import se.lublin.humla.model.IChannel
 import se.lublin.humla.route.RoutePreferences
+import se.lublin.humla.state.ChannelHandle
 import se.lublin.humla.state.SessionEvent
+import se.lublin.humla.util.IHumlaObserver
 import se.lublin.humla.voice.VoiceSettings
 import se.lublin.humla.voice.VoiceSettingsMapper
 import se.lublin.mumla.app.MumlaApplication
 import se.lublin.mumla.db.MumlaRoomDatabase
+import se.lublin.mumla.feature.AvatarRequestsFeature
+import se.lublin.mumla.feature.BluetoothPermissionGuardFeature
 import se.lublin.mumla.feature.ChatEventFormatter
 import se.lublin.mumla.feature.ChatLogFeature
+import se.lublin.mumla.feature.ConnectionNotificationFeature
+import se.lublin.mumla.feature.FeaturePlatform
+import se.lublin.mumla.feature.HotCornerFeature
+import se.lublin.mumla.feature.MessageNotificationsFeature
+import se.lublin.mumla.feature.NotificationActions
+import se.lublin.mumla.feature.OverlayHost
+import se.lublin.mumla.feature.OverlayFeature
+import se.lublin.mumla.feature.PttSoundsFeature
+import se.lublin.mumla.feature.ProximityFeature
+import se.lublin.mumla.feature.ReconnectNoticeFeature
+import se.lublin.mumla.feature.ScoFailureFeature
+import se.lublin.mumla.feature.TalkBroadcastFeature
+import se.lublin.mumla.feature.TalkKeysFeature
+import se.lublin.mumla.feature.TextToSpeechFeature
+import se.lublin.mumla.service.AndroidFeaturePlatform
 import java.time.Clock
 
 /**
@@ -130,6 +151,243 @@ open class AppContainer(
         edges = runtimeEdges,
     )
 
+    /** One current-value snapshot flow, shared by every feature. */
+    open val settingsSnapshot: StateFlow<PrefSnapshot> = settingsRepository.state
+        .map { it.snapshot }
+        .stateIn(appScope, SharingStarted.Eagerly, settingsRepository.state.value.snapshot)
+
+    // Hand-off flows: one feature's output reaches another without a call.
+    // Emitted with tryEmit on the main thread and collected on the main
+    // thread without slow work inline.
+    private val _talkKeys = MutableSharedFlow<TalkKeyEvent>(extraBufferCapacity = 64)
+    val talkKeys: SharedFlow<TalkKeyEvent> = _talkKeys.asSharedFlow()
+
+    private val _speech = MutableSharedFlow<SpeechLine>(extraBufferCapacity = 64)
+    val speech: SharedFlow<SpeechLine> = _speech.asSharedFlow()
+
+    private val _appLog = MutableSharedFlow<AppLogLine>(extraBufferCapacity = 64)
+    val appLog: SharedFlow<AppLogLine> = _appLog.asSharedFlow()
+
+    fun emitTalkKey(event: TalkKeyEvent) = emitHandoff(_talkKeys, event)
+    fun emitSpeech(line: SpeechLine) = emitHandoff(_speech, line)
+    fun emitAppLog(line: AppLogLine) = emitHandoff(_appLog, line)
+
+    private fun <T> emitHandoff(flow: MutableSharedFlow<T>, value: T) {
+        if (!flow.tryEmit(value)) {
+            val error = IllegalStateException("hand-off flow is full")
+            if (BuildConfig.DEBUG) throw error
+            Log.e(TAG, "Dropping a hand-off emission", error)
+        }
+    }
+
+    private val _configuration = MutableStateFlow(Configuration(context.resources.configuration))
+    open val configuration: StateFlow<Configuration> = _configuration.asStateFlow()
+
+    open fun updateConfiguration(next: Configuration) {
+        _configuration.value = Configuration(next)
+    }
+
+    open val featurePlatform: FeaturePlatform =
+        AndroidFeaturePlatform(context.applicationContext, settings)
+
+    /** The overlay HUD reads the process-lifetime session-state mirror. */
+    open val overlayHost: OverlayHost = object : OverlayHost {
+        override val settings: Settings get() = this@AppContainer.settings
+        override fun sessionChannel(): IChannel? {
+            val state = runtime.sessionState.value
+            val id = state.server.self?.channelId ?: return null
+            return ChannelHandle(id, runtime.sessionState, runtime.talkActivity)
+        }
+        override fun selfSession(): Int? = runtime.sessionState.value.server.selfSession
+        override fun registerObserver(observer: IHumlaObserver) =
+            runtime.callbacks.registerObserver(observer)
+        override fun unregisterObserver(observer: IHumlaObserver) =
+            runtime.callbacks.unregisterObserver(observer)
+    }
+
+    // Intent functions: features take functions, never the client itself.
+    private fun currentSession() = runtime.client.currentSession.value
+    private val setPtt: (Boolean) -> Unit = { currentSession()?.setPtt(it) }
+    private val togglePtt: () -> Unit = { currentSession()?.togglePtt() }
+    private val isTalking: () -> Boolean =
+        { currentSession()?.state?.value?.local?.pttPressed ?: false }
+    private val setSelfMuteDeaf: (Boolean, Boolean) -> Unit =
+        { muted, deafened -> currentSession()?.setSelfMuteDeaf(muted, deafened) }
+    private val requestTexture: (Int) -> Unit = { currentSession()?.requestTexture(it) }
+
+    private fun toggleSelfMute(): Boolean? {
+        if (runtime.client.state.value !is ClientState.Connected) return null
+        val self = runtime.sessionState.value.server.self ?: return null
+        val muted = !self.selfMuted
+        setSelfMuteDeaf(muted, self.selfDeafened && muted)
+        return muted
+    }
+
+    private fun toggleDeafen() {
+        if (runtime.client.state.value !is ClientState.Connected) return
+        val self = runtime.sessionState.value.server.self ?: return
+        val deafened = !self.selfDeafened
+        setSelfMuteDeaf(deafened, deafened)
+    }
+
+    open val notificationActions: NotificationActions = object : NotificationActions {
+        override fun onMuteToggled() {
+            toggleSelfMute()
+        }
+        override fun onMediaKeyMuteToggled() {
+            val muted = toggleSelfMute()
+            if (muted != null && settings.isMediaKeyMuteTtsEnabled) {
+                emitSpeech(
+                    SpeechLine(
+                        context.getString(if (muted) R.string.tts_muted else R.string.tts_unmuted),
+                    ),
+                )
+            }
+        }
+        override fun onDeafenToggled() = toggleDeafen()
+        override fun onOverlayToggled() = overlay.setShown(!overlay.isShown())
+        override fun onCancelReconnect() = runtime.client.cancelReconnect()
+        override fun onDisconnect() = runtime.client.disconnect()
+    }
+
+    // Features: built once, started with appScope, never closed.
+    open val chatLog: ChatLogFeature = ChatLogFeature(
+        context = context,
+        clientState = runtime.client.state,
+        events = runtime.events,
+        voiceEvents = runtime.voiceEvents,
+        appLog = appLog,
+        callbacks = runtime.callbacks,
+        formatter = chatFormatter,
+    )
+
+    open val connectionNotification = ConnectionNotificationFeature(
+        context = context,
+        clientState = runtime.client.state,
+        sessionState = runtime.sessionState,
+        events = runtime.events,
+        talkActivity = runtime.talkActivity,
+        settings = settingsSnapshot,
+        platform = featurePlatform,
+        actions = notificationActions,
+        overlayShown = { overlay.isShown() },
+    )
+
+    open val messageNotifications = MessageNotificationsFeature(
+        events = runtime.events,
+        clientState = runtime.client.state,
+        settings = settingsSnapshot,
+        platform = featurePlatform,
+    )
+
+    open val tts = TextToSpeechFeature(
+        context = context,
+        events = runtime.events,
+        clientState = runtime.client.state,
+        sessionState = runtime.sessionState,
+        speech = speech,
+        settings = settingsSnapshot,
+        platform = featurePlatform,
+        emitAppLog = this::emitAppLog,
+    )
+
+    open val pttSounds = PttSoundsFeature(
+        clientState = runtime.client.state,
+        talkActivity = runtime.talkActivity,
+        routeState = runtime.routeState,
+        settings = settingsSnapshot,
+        platform = featurePlatform,
+    )
+
+    open val talkKeysFeature = TalkKeysFeature(
+        talkKeys = talkKeys,
+        clientState = runtime.client.state,
+        settings = settingsSnapshot,
+        setPtt = setPtt,
+        togglePtt = togglePtt,
+        isTalking = isTalking,
+    )
+
+    open val hotCorner = HotCornerFeature(
+        clientState = runtime.client.state,
+        talkActivity = runtime.talkActivity,
+        configuration = configuration,
+        settings = settingsSnapshot,
+        platform = featurePlatform,
+        emitTalkKey = this::emitTalkKey,
+    )
+
+    open val overlay = OverlayFeature(
+        clientState = runtime.client.state,
+        sessionState = runtime.sessionState,
+        talkActivity = runtime.talkActivity,
+        configuration = configuration,
+        settings = settingsSnapshot,
+        platform = featurePlatform,
+        overlayHost = overlayHost,
+        setOverlaySetting = { enabled -> featurePlatform.setOverlayShown(enabled) },
+    )
+
+    open val proximity = ProximityFeature(
+        clientState = runtime.client.state,
+        routeState = runtime.routeState,
+        settings = settingsSnapshot,
+        platform = featurePlatform,
+    )
+
+    open val talkBroadcast = TalkBroadcastFeature(
+        clientState = runtime.client.state,
+        settings = settingsSnapshot,
+        platform = featurePlatform,
+        setPtt = setPtt,
+        togglePtt = togglePtt,
+    )
+
+    open val bluetoothPermissionGuard = BluetoothPermissionGuardFeature(
+        settings = settingsSnapshot,
+        platform = featurePlatform,
+    )
+
+    open val scoFailure = ScoFailureFeature(
+        routeEvents = runtime.routeEvents,
+        platform = featurePlatform,
+    )
+
+    open val avatarRequests = AvatarRequestsFeature(
+        sessionState = runtime.sessionState,
+        requestTexture = requestTexture,
+    )
+
+    open val reconnectNotice = ReconnectNoticeFeature(
+        clientState = runtime.client.state,
+        settings = settingsSnapshot,
+        platform = featurePlatform,
+    )
+
+    /** Explicit notification actions reach the process-lifetime feature. */
+    open fun onNotificationAction(action: String) {
+        connectionNotification.handleAction(action)
+    }
+
+    init {
+        // Interim: received text still arrives through the observer bridge.
+        runtime.callbacks.registerObserver(chatLog.receivedTextObserver)
+        chatLog.start(appScope)
+        connectionNotification.start(appScope)
+        messageNotifications.start(appScope)
+        tts.start(appScope)
+        pttSounds.start(appScope)
+        talkKeysFeature.start(appScope)
+        hotCorner.start(appScope)
+        overlay.start(appScope)
+        proximity.start(appScope)
+        talkBroadcast.start(appScope)
+        bluetoothPermissionGuard.start(appScope)
+        scoFailure.start(appScope)
+        avatarRequests.start(appScope)
+        reconnectNotice.start(appScope)
+    }
+
     private val initialVoiceSettings: VoiceSettings
         get() = settingsRepository.state.value.snapshot.toVoiceSettings()
 
@@ -166,54 +424,6 @@ open class AppContainer(
     private fun hasBluetoothConnectGrant(): Boolean =
         ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) ==
             PackageManager.PERMISSION_GRANTED
-
-    // Hand-off flows: one feature's output reaches another without a call.
-    // Emitted with tryEmit on the main thread and collected on the main
-    // thread without slow work inline.
-    private val _talkKeys = MutableSharedFlow<TalkKeyEvent>(extraBufferCapacity = 64)
-    val talkKeys: SharedFlow<TalkKeyEvent> = _talkKeys.asSharedFlow()
-
-    private val _speech = MutableSharedFlow<SpeechLine>(extraBufferCapacity = 64)
-    val speech: SharedFlow<SpeechLine> = _speech.asSharedFlow()
-
-    private val _appLog = MutableSharedFlow<AppLogLine>(extraBufferCapacity = 64)
-    val appLog: SharedFlow<AppLogLine> = _appLog.asSharedFlow()
-
-    fun emitTalkKey(event: TalkKeyEvent) = emitHandoff(_talkKeys, event)
-    fun emitSpeech(line: SpeechLine) = emitHandoff(_speech, line)
-    fun emitAppLog(line: AppLogLine) = emitHandoff(_appLog, line)
-
-    private fun <T> emitHandoff(flow: MutableSharedFlow<T>, value: T) {
-        if (!flow.tryEmit(value)) {
-            val error = IllegalStateException("hand-off flow is full")
-            if (BuildConfig.DEBUG) throw error
-            Log.e(TAG, "Dropping a hand-off emission", error)
-        }
-    }
-
-    private val _configuration = MutableStateFlow(Configuration(context.resources.configuration))
-    open val configuration: StateFlow<Configuration> = _configuration.asStateFlow()
-
-    open fun updateConfiguration(next: Configuration) {
-        _configuration.value = Configuration(next)
-    }
-
-    /** Features are built once and started with appScope; they never close. */
-    open val chatLog: ChatLogFeature = ChatLogFeature(
-        context = context,
-        clientState = runtime.client.state,
-        events = runtime.events,
-        voiceEvents = runtime.voiceEvents,
-        appLog = appLog,
-        callbacks = runtime.callbacks,
-        formatter = chatFormatter,
-    )
-
-    init {
-        // Interim: received text still arrives through the observer bridge.
-        runtime.callbacks.registerObserver(chatLog.receivedTextObserver)
-        chatLog.start(appScope)
-    }
 
     companion object {
         private const val TAG = "AppContainer"

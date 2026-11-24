@@ -10,9 +10,6 @@ app/src/main/java/se/lublin/mumla/db/MumlaRoomDatabase.kt  2
 app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.kt  1
 app/src/main/java/se/lublin/mumla/preference/CrashReportsFragment.kt  2
 app/src/main/java/se/lublin/mumla/servers/ServerAdapter.kt  1
-app/src/main/java/se/lublin/mumla/service/MumlaConnectionNotification.kt  1
-app/src/main/java/se/lublin/mumla/service/MumlaMessageNotification.kt  1
-app/src/main/java/se/lublin/mumla/service/MumlaService.kt  7
 app/src/main/java/se/lublin/mumla/util/CrashReporter.kt  6
 app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.kt  4
 libraries/humla/src/main/java/se/lublin/humla/model/Server.kt  5

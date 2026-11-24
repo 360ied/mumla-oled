@@ -17,7 +17,6 @@
 
 package se.lublin.humla.util
 
-import java.util.Optional
 import se.lublin.humla.model.Server
 
 /**
@@ -31,10 +30,8 @@ import se.lublin.humla.model.Server
  * audio pipeline params → live sends → SCO route). Returns whether a
  * reconnect is needed.
  *
- * Side-effect-only prefs (theme, overlay, TTS engine) travel as presence
- * signals for the app layer's appliers; `HumlaService.apply` ignores them.
- * `ttsEngine` is tri-state (unchanged vs system-default vs engine package),
- * mirroring `Settings.setTtsEngine`.
+ * Step 6 removed the side-effect-only presence signals: features collect the
+ * settings snapshot directly, so only connect-target fields remain.
  */
 data class CertRef(
     val data: ByteArray,
@@ -74,10 +71,6 @@ data class ConfigDelta(
     val trustStore: TrustStoreRef? = null,
     val accessTokens: List<String>? = null,
     val clientName: String? = null,
-    val theme: String? = null,
-    val overlayShown: Boolean? = null,
-    val overlayPlacement: String? = null,
-    val ttsEngine: Optional<String>? = null,
 ) {
     /** Whether any core (service-applied) field is set. */
     fun hasCore(): Boolean =
@@ -91,9 +84,7 @@ data class ConfigDelta(
         "ConfigDelta(server=$server, certificate=$certificate, forceTcp=$forceTcp, " +
             "trustStore=$trustStore, " +
             "accessTokens=<${accessTokens?.size ?: 0} tokens>, " +
-            "clientName=$clientName, theme=$theme, " +
-            "overlayShown=$overlayShown, overlayPlacement=$overlayPlacement, " +
-            "ttsEngine=$ttsEngine)"
+            "clientName=$clientName)"
 
     /**
      * Java-friendly incremental builder (data-class `copy()` has no Java
@@ -108,10 +99,6 @@ data class ConfigDelta(
         var trustStore: TrustStoreRef? = null
         var accessTokens: List<String>? = null
         var clientName: String? = null
-        var theme: String? = null
-        var overlayShown: Boolean? = null
-        var overlayPlacement: String? = null
-        var ttsEngine: Optional<String>? = null
 
         fun build(): ConfigDelta = ConfigDelta(
             // server is aliased, not copied: Server is a mutable shared
@@ -130,10 +117,6 @@ data class ConfigDelta(
             trustStore = trustStore,
             accessTokens = accessTokens?.toList(),
             clientName = clientName,
-            theme = theme,
-            overlayShown = overlayShown,
-            overlayPlacement = overlayPlacement,
-            ttsEngine = ttsEngine,
         )
     }
 }

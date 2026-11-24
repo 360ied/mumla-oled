@@ -207,6 +207,7 @@ class ChatLogFeatureTest {
         })
         f.scope.launch {
             f.events.emit(SessionEventRecord(SessionEvent.UserJoinedServer(2, "Alice"), goldenState()))
+        kotlinx.coroutines.yield()
         }
         assertEquals(
             "<font color=\"#33b5e5\">Alice</font> connected.",
@@ -219,7 +220,8 @@ class ChatLogFeatureTest {
     @Test fun appLogLinesReachTheChatLog() {
         val f = Fixture()
         f.start()
-        f.scope.launch { f.appLog.emit(AppLogLine("Could not start TTS", warning = true)) }
+        f.scope.launch { f.appLog.emit(AppLogLine("Could not start TTS", warning = true))
+        kotlinx.coroutines.yield() }
         assertEquals("Could not start TTS", f.feature.currentMessages().last().body)
         f.close()
     }

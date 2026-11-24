@@ -26,7 +26,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import se.lublin.humla.Constants
-import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.ConnectTarget
 import se.lublin.humla.model.IMessage
@@ -38,7 +37,6 @@ import se.lublin.humla.util.HumlaCallbacks
 import se.lublin.humla.util.HumlaObserver
 import se.lublin.humla.util.IHumlaObserver
 import se.lublin.mumla.AppLogLine
-import se.lublin.mumla.R
 import se.lublin.mumla.service.IChatMessage
 
 /**
@@ -118,7 +116,7 @@ class ChatLogFeature(
                 if (!wasReconnecting) {
                     append(
                         ChatLine(
-                            ConnectionLines.disconnected(appContext, state.lastError.toCause()),
+                            ConnectionLines.disconnected(appContext, state.lastError.displayMessage()),
                             warning = true,
                         ),
                     )
@@ -126,21 +124,13 @@ class ChatLogFeature(
                 wasReconnecting = true
             }
             is ClientState.Failed -> {
-                val cause = state.error.toCause()
+                val cause = state.error.displayMessage()
                 if (cause != null) {
                     append(ChatLine(ConnectionLines.disconnected(appContext, cause), warning = true))
                 }
                 wasReconnecting = false
             }
         }
-    }
-
-    /** Mirrors the service's HumlaException messages; Trust stays a dialog. */
-    private fun ClientError.toCause(): String? = when (this) {
-        is ClientError.Connection -> message ?: "Connection error"
-        is ClientError.Rejected -> "Rejected: $reason"
-        is ClientError.Removed -> reason ?: "Removed"
-        is ClientError.Trust -> null
     }
 
     private fun switchServer(target: ConnectTarget) {

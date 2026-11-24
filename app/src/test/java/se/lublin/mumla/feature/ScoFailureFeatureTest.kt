@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-package se.lublin.mumla.service
+package se.lublin.mumla.feature
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -23,7 +23,7 @@ import se.lublin.humla.audio.BluetoothScoManager
 import se.lublin.mumla.R
 
 /**
- * Pins the SCO-failure Toast bucketing: only the permission denial maps to
+ * Pins the SCO-failure Toast bucketing owned by the feature: only the permission denial maps to
  * the permission string; every other REASON_* and null share the generic
  * one, so a future reason is never silently mis-bucketed.
  */
@@ -33,7 +33,7 @@ class ScoFailureMessageTest {
     fun permissionReasonMapsToPermissionString() {
         assertEquals(
             R.string.bluetooth_sco_permission,
-            MumlaService.scoFailureMessage(BluetoothScoManager.REASON_PERMISSION),
+            ScoFailureFeature.scoFailureMessage(BluetoothScoManager.REASON_PERMISSION),
         )
     }
 
@@ -41,19 +41,19 @@ class ScoFailureMessageTest {
     fun otherReasonsMapToGenericString() {
         assertEquals(
             R.string.bluetooth_sco_failed,
-            MumlaService.scoFailureMessage(BluetoothScoManager.REASON_NO_DEVICE),
+            ScoFailureFeature.scoFailureMessage(BluetoothScoManager.REASON_NO_DEVICE),
         )
         assertEquals(
             R.string.bluetooth_sco_failed,
-            MumlaService.scoFailureMessage(BluetoothScoManager.REASON_TIMEOUT),
+            ScoFailureFeature.scoFailureMessage(BluetoothScoManager.REASON_TIMEOUT),
         )
         assertEquals(
             R.string.bluetooth_sco_failed,
-            MumlaService.scoFailureMessage(BluetoothScoManager.REASON_REFUSED),
+            ScoFailureFeature.scoFailureMessage(BluetoothScoManager.REASON_REFUSED),
         )
         assertEquals(
             R.string.bluetooth_sco_failed,
-            MumlaService.scoFailureMessage(BluetoothScoManager.REASON_ERROR),
+            ScoFailureFeature.scoFailureMessage(BluetoothScoManager.REASON_ERROR),
         )
     }
 
@@ -61,7 +61,7 @@ class ScoFailureMessageTest {
     fun nullReasonMapsToGenericString() {
         assertEquals(
             R.string.bluetooth_sco_failed,
-            MumlaService.scoFailureMessage(null),
+            ScoFailureFeature.scoFailureMessage(null),
         )
     }
 
@@ -69,7 +69,7 @@ class ScoFailureMessageTest {
     fun unknownReasonMapsToGenericString() {
         assertEquals(
             R.string.bluetooth_sco_failed,
-            MumlaService.scoFailureMessage("some-future-reason"),
+            ScoFailureFeature.scoFailureMessage("some-future-reason"),
         )
     }
 }

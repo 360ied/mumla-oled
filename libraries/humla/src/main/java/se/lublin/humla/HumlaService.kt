@@ -18,13 +18,16 @@
 
 package se.lublin.humla
 
+import android.app.Notification
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.wifi.WifiManager
 import android.os.Binder
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -41,6 +44,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
 import org.minidns.hla.ResolverApi
@@ -160,6 +164,7 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         const val RECONNECT_DELAY_MAX = ReconnectPolicy.RECONNECT_DELAY_MAX
 
         private const val WAKELOCK_GRACE_MS = 15000L
+        private const val NOTIFICATION_ID = 1
 
         @JvmStatic
         fun init(context: Context?) {
@@ -333,19 +338,27 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         appRuntime = runtime()
         mCallbacks = appRuntime.callbacks
 
-        // Per-instance route hook: the runtime's own collector only fans out
-        // hints into HumlaCallbacks and cannot reach a service override.
-        lifecycleScope.launch {
-            try {
-                appRuntime.routeState.collect { rs ->
-                    when (rs) {
-                        is RouteState.Ready, is RouteState.Fallback, is RouteState.Idle ->
-                            onAudioRouteChanged()
-                        is RouteState.Settling -> Unit
+        // The connection notification comes from an application-lifetime
+        // feature. Start in the foreground immediately (Android's five-second
+        // rule), post every update, and remove it on Idle or Failed: a bound
+        // service outlives the connection.
+        val foreground = foregroundNotification()
+        if (foreground != null) {
+            postForeground(foreground.value)
+            lifecycleScope.launch {
+                try {
+                    combine(appRuntime.client.state, foreground) { state, notification ->
+                        state to notification
+                    }.collect { (state, notification) ->
+                        when (state) {
+                            is ClientState.Idle, is ClientState.Failed ->
+                                stopForeground(STOP_FOREGROUND_REMOVE)
+                            else -> postForeground(notification)
+                        }
                     }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                 }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
             }
         }
 
@@ -642,7 +655,15 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
     protected open fun runtime(): HumlaRuntime =
         throw IllegalStateException("runtime() must be implemented by the app service")
 
-    protected open fun onAudioRouteChanged() {
+    /** The app's connection-notification feature; null in plain JVM tests. */
+    protected open fun foregroundNotification(): StateFlow<Notification>? = null
+
+    private fun postForeground(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun isTrustStorePathAllowed(path: String?): Boolean {
@@ -906,10 +927,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         } catch (e: Exception) {
             throw IllegalStateException(e)
         }
-    }
-
-    open override fun getTransmitMode(): Int {
-        return VoiceSettingsMapper.transmitModeFor(appRuntime.voiceSettings.value.inputMode)
     }
 
     open override fun getCodec(): HumlaUDPMessageType? {

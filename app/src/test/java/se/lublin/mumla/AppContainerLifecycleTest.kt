@@ -20,6 +20,7 @@ package se.lublin.mumla
 import org.robolectric.RuntimeEnvironment
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -207,7 +208,40 @@ class AppContainerLifecycleTest {
             "features must see events from the second service's connection",
             container.chatLog.currentMessages().any { it.body?.contains("carol") == true },
         )
+        // The process-lifetime route still answered SessionStarted after the
+        // first service was destroyed and re-created.
+        withTimeout(5_000) {
+            while (container.runtime.routeState.value is RouteState.Idle) {
+                Shadows.shadowOf(Looper.getMainLooper()).idle()
+                kotlinx.coroutines.delay(10)
+            }
+        }
+        assertTrue(container.runtime.routeState.value !is RouteState.Idle)
+
+        val shadow = Shadows.shadowOf(second)
+        withTimeout(5_000) {
+            while (!shadow.isLastForegroundNotificationAttached()) {
+                Shadows.shadowOf(Looper.getMainLooper()).idle()
+                kotlinx.coroutines.delay(10)
+            }
+        }
+        assertTrue("the feature's notification must be posted", shadow.isLastForegroundNotificationAttached())
+
         container.runtime.client.disconnect()
+        withTimeout(5_000) {
+            while (shadow.isLastForegroundNotificationAttached() ||
+                container.connectionNotification.visible.value
+            ) {
+                Shadows.shadowOf(Looper.getMainLooper()).idle()
+                kotlinx.coroutines.delay(10)
+            }
+        }
+        assertFalse("foreground notification must be removed", shadow.isLastForegroundNotificationAttached())
+        assertTrue("service must leave the foreground", shadow.isForegroundStopped())
+        assertFalse("connection notification must be gone", container.connectionNotification.visible.value)
+        // The bound service itself is still alive and usable after the
+        // connection ends; step 7 moves that decision to ConnectionService.
+        assertTrue(second.getMessageLog().isNotEmpty())
         secondController.destroy()
     }
 
