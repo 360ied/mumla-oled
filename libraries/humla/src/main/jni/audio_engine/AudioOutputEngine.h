@@ -88,9 +88,8 @@ struct RenderResult {
 };
 
 /**
- * Native audio output engine: jitter buffering, Opus decode, in-band FEC
- * recovery, loss concealment, loss-boundary crossfading, fading, mixing and
- * soft saturation.
+ * Native audio output engine: jitter buffering, Opus decode, loss
+ * concealment, onset/finish fading, mixing and soft saturation.
  *
  * Single-threaded by contract: the render thread drives the instance
  * (`queuePacket`, `render`, `removeUser`, `clear`, `setJitterMarginFrames`).
@@ -134,9 +133,6 @@ public:
     // MAX_PACKET_BYTES (2 MiB). The count is settled by the pool stress test
     // (32 voices under heavy jitter adaptation for 60 simulated seconds).
     static constexpr size_t JITTER_SLOT_COUNT = 1024;
-    // Equal-power crossfade applied at real<->concealment boundaries so loss
-    // gaps do not click: 96 samples = 2 ms at 48 kHz.
-    static constexpr int XFADE_SAMPLES = 96;
     static constexpr double kPi = 3.14159265358979323846;
 
     using DecoderFactory = std::function<std::unique_ptr<IOutputDecoder>()>;
@@ -207,21 +203,11 @@ private:
     void recordTalk(Voice* voice, int32_t session, OutputTalkState state);
     // Appends one decoded/concealed chunk into the voice scratch area,
     // stashing any overflow in the voice carryover buffer; filled advances.
-    // When the chunk type (concealed vs real, FEC recovery counts as real)
-    // differs from the previously appended chunk, the boundary is blended
-    // with the precomputed equal-power crossfade instead of stepping.
+    // Chunks join without blending: Opus keeps its output continuous across
+    // concealment and the next real decode itself.
     static void appendVoiceChunk(Voice* voice, const float* src, int count,
                                  float* scratch, size_t numSamples,
-                                 size_t& filled, bool concealed,
-                                 const float* xfadeIn, const float* xfadeOut);
-    // Overwrites a previously reserved FEC-debt slot (see render) with a
-    // recovered or concealed chunk, blending the boundary as above. The slot
-    // always holds exactly FRAME_SIZE samples; filled is unchanged.
-    static void writeChunkAt(Voice* voice, float* scratch, size_t pos,
-                             const float* src, int count, bool concealed,
-                             const float* xfadeIn, const float* xfadeOut);
-    // Snapshots the last emitted voice samples for cross-quantum blending.
-    static void snapshotTail(Voice* voice, const float* scratch, size_t filled);
+                                 size_t& filled);
     // Soft-knee bus saturation, documented in the .cpp.
     static float saturateSample(float m);
     int jitterBufferedCount(JitterBuffer* jitter) const;
@@ -260,8 +246,6 @@ private:
     float m_frameScratch[MAX_DECODE_SAMPLES] = {};
     float m_fadeIn[FRAME_SIZE] = {};
     float m_fadeOut[FRAME_SIZE] = {};
-    float m_xfadeIn[XFADE_SAMPLES] = {};
-    float m_xfadeOut[XFADE_SAMPLES] = {};
     int32_t m_deadSessions[MAX_VOICES] = {};
     size_t m_deadSessionCount = 0;
 

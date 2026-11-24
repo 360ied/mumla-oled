@@ -35,11 +35,10 @@ struct VoiceStreamContext;
 // samples / FRAME_SIZE, so a render call must cover whole frames.
 constexpr size_t kStreamFrameSamples =
     static_cast<size_t>(mumla::audio::AudioOutputEngine::FRAME_SIZE);
-// 5a's 20 ms render quantum: two whole frames per engine call. In-band FEC
-// recovery needs the lost frame and its successor decoded in the same call,
-// because an unrecovered FEC debt slot is concealed at the end of the call.
-// One-frame calls would conceal every loss.
-constexpr size_t kStreamChunkSamples = 2 * kStreamFrameSamples;
+// One whole frame per engine call: the smallest quantum the startup gate
+// accepts, so the carry buffer adds at most 10 ms of output latency. Loss
+// handling is per frame (inline concealment) and needs no larger window.
+constexpr size_t kStreamChunkSamples = kStreamFrameSamples;
 
 /**
  * Debug lifecycle pins (5a.3a render, 5a.4 capture, 5b callbacks).

@@ -29,10 +29,15 @@ None. The three step-5b spikes were replaced by decisions (see
 | `connectEpoch` in `HumlaClient` | A generation counter the design meant to remove; exists because cancelled attempts can surface `TransportException`. Replace with cancellation-first error mapping (e.g. `ensureActive()` before handling); the step-1 validation now fails the stale-callback tests when either guard is removed (see [testing](testing.md#murmur-interop)) |
 | Writable `talkState` on ephemeral handles | Documented interim behind the stuck-indicator regression; ends in 5a.3a for remote and self, through the service-lifetime `talkActivity` publisher that `VoiceEngine` takes over in 5a.3b (see [migration](migration.md#5a3a--native-render)) |
 | `HumlaNative` failure reporting and fake native layer | [HumlaNative](../../libraries/humla/src/main/java/se/lublin/humla/HumlaNative.kt) owns the single `System.loadLibrary("humlaaudio")` from 5a.1 and every `external` class goes through it, but its two remaining spec duties need 5a.3b machinery (an item of that sub-step): reporting a load failure as `VoiceEvent.PipelineError` on release builds (the event type arrives with the `VoiceEngine` facade) and JVM tests injecting a fake native layer instead of catching `UnsatisfiedLinkError` (they use zero-handle guards today) |
-| FEC recovery for every single loss | Today, and in 5b by design, a missing frame is recovered from its successor's in-band FEC only when both fall in the same 20 ms render call, so a loss in a chunk's second frame is concealed even when the successor is already in the jitter buffer. When a miss is found, the output engine could check the jitter buffer for the next packet and decode its FEC at once instead of deferring to a slot that cannot cross render calls, recovering every single loss. This changes output-engine behavior that 5a pinned with golden outputs, so it is its own item, measured against the [admission bar](README.md#admission-bar), not part of 5b's backend swap |
 | Legacy server version plumbing | `VoiceFormat.legacyServerVersion` and the native `setFormat` parameter it feeds are unread now that the 1.2.2 workaround is gone (see [issue 35](issues/35-legacy-server-version-unread.md)) |
 
 ## Resolved
+
+Items resolved while fixing audio quality (2026-11-23):
+
+| Item | Resolution | Where |
+|---|---|---|
+| FEC recovery for every single loss | Dropped with FEC itself. libopus runs plain concealment when asked to decode FEC for a shorter span than the packet's frame (`opus_decoder.c`), so with the default 20 ms packets the deferred-debt path only ever played PLC; upstream clients never encode or decode FEC. The encoder now leaves FEC off and the output engine conceals each missing frame at once. The 20 ms render quantum, kept only for FEC, returns to one 10 ms frame per call, removing up to 10 ms of output latency. The real/concealment crossfade is removed too: it replayed the next chunk's first 2 ms over the previous chunk's tail and stepped back in time at the joint, which a real-Opus host test now pins | [voice](voice.md#output-engine) |
 
 Items resolved while rethinking step 5b (2026-11-23):
 
