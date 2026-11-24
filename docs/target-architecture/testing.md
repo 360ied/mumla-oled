@@ -290,8 +290,8 @@ When testing on a device, the steps most likely to show problems only
 there are:
 - **step 6**, voice after the service was destroyed and re-created in one
   process (disconnect, leave the app, reopen, connect again), and the
-  notification, overlay, hot corner, and PTT sounds now driven by
-  features;
+  notification, overlay, hot corner, and PTT sounds driven by features
+  (the developer's on-device pass for the step is done, 2026-11-24);
 - **step 4**, Bluetooth headset routing (connect, flap, failure at
   connect, mute while the route settles);
 - **step 5b**, AAudio glitches (xrun counts are logged), echo
