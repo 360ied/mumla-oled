@@ -730,8 +730,9 @@ Performed by the Kotlin **voice control thread**, in command order:
   the engines keep their state (voices and jitter buffers survive). In 5b
   both streams are stopped and closed as at Stop, then reopened with the
   route's [stream parameters](route.md#stream-parameters), and the capture
-  effects (echo canceller, noise suppressor, gain control) are attached to
-  the new input session before the streams start.
+  echo canceller is attached to the new input session before the streams
+  start (no platform noise suppressor or gain control: native capture runs
+  RNNoise and the adaptive leveler).
 
 The control thread is the only caller of start and stop, so they never race
 each other, and it is never the main thread.

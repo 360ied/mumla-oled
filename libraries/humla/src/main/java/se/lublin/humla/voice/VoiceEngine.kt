@@ -39,8 +39,6 @@ import android.content.Context
 import android.media.AudioManager
 import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.AudioEffect
-import android.media.audiofx.AutomaticGainControl
-import android.media.audiofx.NoiseSuppressor
 import android.os.SystemClock
 import se.lublin.humla.BuildConfig
 import se.lublin.humla.HumlaNative
@@ -899,18 +897,16 @@ class VoiceEngine @JvmOverloads constructor(
         if (sessionId <= AAUDIO_SESSION_ID_NONE) return emptyList()
         val id = sessionId.toInt()
         val names = mutableListOf<String>()
+        // Echo cancellation only. Native capture already runs RNNoise and the
+        // adaptive leveler; stacking the platform noise suppressor and gain
+        // control under them degrades speech (double suppression, competing
+        // gain loops) and raises the noise floor the VAD thresholds expect.
+        // With the leveler off the user has chosen manual gain (amplitude
+        // boost), so platform AGC is not substituted either.
         tryEffect(
             "AEC", names,
             { AcousticEchoCanceler.isAvailable() },
         ) { AcousticEchoCanceler.create(id) }
-        tryEffect(
-            "NS", names,
-            { NoiseSuppressor.isAvailable() },
-        ) { NoiseSuppressor.create(id) }
-        tryEffect(
-            "AGC", names,
-            { AutomaticGainControl.isAvailable() },
-        ) { AutomaticGainControl.create(id) }
         return names
     }
 
