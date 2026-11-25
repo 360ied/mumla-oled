@@ -27,6 +27,7 @@ replay_pid*.log
 
 # for working with agents
 bug_report/
+.review/
 
 # editor / vim
 [._]*.s[a-v][a-z]
