@@ -32,9 +32,9 @@ import org.mockito.Mockito.mock
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.emptyConnectTarget
-import se.lublin.humla.model.IMessage
 import se.lublin.mumla.PrefSnapshot
 import se.lublin.mumla.Settings
+import se.lublin.mumla.service.IChatMessage
 import se.lublin.mumla.service.ipc.TalkBroadcastReceiver
 
 /** A PrefSnapshot with today's defaults; tests override only what they drive. */
@@ -146,9 +146,9 @@ class FakeTts : TtsSpeaker {
 }
 
 class FakeMessageNotifications : MessageNotificationsView {
-    val shown = ArrayList<IMessage>()
+    val shown = ArrayList<IChatMessage.TextMessage>()
     var dismissed = 0
-    override fun show(message: IMessage) {
+    override fun show(message: IChatMessage.TextMessage) {
         shown.add(message)
     }
     override fun dismiss() {

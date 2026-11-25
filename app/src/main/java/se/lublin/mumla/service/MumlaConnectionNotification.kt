@@ -177,25 +177,25 @@ class MumlaConnectionNotification {
             session.setMetadata(metadata)
 
             val muteCustomAction = PlaybackStateCompat.CustomAction.Builder(
-                MumlaService.ACTION_MUTE,
+                NotificationActionReceiver.ACTION_MUTE,
                 service.getString(R.string.mute),
                 getMuteActionIcon(muted)
             )
                 .build()
             val deafenCustomAction = PlaybackStateCompat.CustomAction.Builder(
-                MumlaService.ACTION_DEAFEN,
+                NotificationActionReceiver.ACTION_DEAFEN,
                 service.getString(R.string.deafen),
                 getDeafenActionIcon(deafened)
             )
                 .build()
             val overlayCustomAction = PlaybackStateCompat.CustomAction.Builder(
-                MumlaService.ACTION_TOGGLE_OVERLAY,
+                NotificationActionReceiver.ACTION_TOGGLE_OVERLAY,
                 service.getString(R.string.overlay),
                 getOverlayActionIcon(overlayShown)
             )
                 .build()
             val disconnectCustomAction = PlaybackStateCompat.CustomAction.Builder(
-                MumlaService.ACTION_DISCONNECT,
+                NotificationActionReceiver.ACTION_DISCONNECT,
                 service.getString(R.string.disconnect),
                 R.drawable.ic_action_delete_dark
             )
@@ -378,28 +378,28 @@ class MumlaConnectionNotification {
             builder.addAction(
                 R.drawable.ic_action_delete_dark,
                 service.getString(R.string.cancel_reconnect),
-                createActionPendingIntent(MumlaService.ACTION_CANCEL_RECONNECT, REQUEST_CODE_CANCEL_RECONNECT)
+                createActionPendingIntent(NotificationActionReceiver.ACTION_CANCEL_RECONNECT, REQUEST_CODE_CANCEL_RECONNECT)
             )
         } else if (mActionsShown) {
             builder.addAction(
                 getMuteActionIcon(mMuted),
                 service.getString(R.string.mute),
-                createActionPendingIntent(MumlaService.ACTION_MUTE, REQUEST_CODE_MUTE)
+                createActionPendingIntent(NotificationActionReceiver.ACTION_MUTE, REQUEST_CODE_MUTE)
             )
             builder.addAction(
                 getDeafenActionIcon(mDeafened),
                 service.getString(R.string.deafen),
-                createActionPendingIntent(MumlaService.ACTION_DEAFEN, REQUEST_CODE_DEAFEN)
+                createActionPendingIntent(NotificationActionReceiver.ACTION_DEAFEN, REQUEST_CODE_DEAFEN)
             )
             builder.addAction(
                 getOverlayActionIcon(mOverlayShown),
                 service.getString(R.string.overlay),
-                createActionPendingIntent(MumlaService.ACTION_TOGGLE_OVERLAY, REQUEST_CODE_OVERLAY)
+                createActionPendingIntent(NotificationActionReceiver.ACTION_TOGGLE_OVERLAY, REQUEST_CODE_OVERLAY)
             )
             builder.addAction(
                 R.drawable.ic_action_delete_dark,
                 service.getString(R.string.disconnect),
-                createActionPendingIntent(MumlaService.ACTION_DISCONNECT, REQUEST_CODE_DISCONNECT)
+                createActionPendingIntent(NotificationActionReceiver.ACTION_DISCONNECT, REQUEST_CODE_DISCONNECT)
             )
         }
 
@@ -428,13 +428,13 @@ class MumlaConnectionNotification {
         private val mSettings: Settings = settings
 
         override fun onCustomAction(action: String?, extras: android.os.Bundle?) {
-            if (MumlaService.ACTION_DISCONNECT == action) {
+            if (NotificationActionReceiver.ACTION_DISCONNECT == action) {
                 mListener.onDisconnect()
-            } else if (MumlaService.ACTION_MUTE == action) {
+            } else if (NotificationActionReceiver.ACTION_MUTE == action) {
                 mListener.onMuteToggled()
-            } else if (MumlaService.ACTION_DEAFEN == action) {
+            } else if (NotificationActionReceiver.ACTION_DEAFEN == action) {
                 mListener.onDeafenToggled()
-            } else if (MumlaService.ACTION_TOGGLE_OVERLAY == action) {
+            } else if (NotificationActionReceiver.ACTION_TOGGLE_OVERLAY == action) {
                 mListener.onOverlayToggled()
             }
         }

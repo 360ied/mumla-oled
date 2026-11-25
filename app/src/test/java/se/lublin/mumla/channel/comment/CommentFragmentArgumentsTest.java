@@ -17,7 +17,6 @@
 
 package se.lublin.mumla.channel.comment;
 
-import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -44,13 +43,8 @@ import se.lublin.mumla.R;
  * <p>JUnit 4 style is mandatory here: {@link RobolectricTestRunner} is
  * incompatible with the module's {@code TestCase} convention.
  *
- * <p>Driver note: {@code isEditing()} is host-free, but {@code onCreate()}
- * cannot be driven on a bare instance — {@code super.onCreate()} walks the
- * child {@code FragmentManager}, which needs an attached host under
- * androidx.fragment 1.8.9. The {@code onCreate} rows therefore attach the
- * fragment to {@link CommentDialogStubHost} via a synchronous transaction.
- * Attaching a {@code DialogFragment} drives dialog creation, so the host is
- * themed exactly like the teardown test for parity.
+ * <p>The dialogs read their text from state through a ViewModel, so the host
+ * no longer implements any service-provider interface.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 34)
@@ -59,7 +53,6 @@ public class CommentFragmentArgumentsTest {
     private static Bundle userBundle(boolean editing) {
         Bundle args = new Bundle();
         args.putInt(UserCommentFragment.ARG_SESSION, 1);
-        args.putString(AbstractCommentFragment.ARG_COMMENT, "<p>x</p>");
         args.putBoolean(AbstractCommentFragment.ARG_EDITING, editing);
         return args;
     }
@@ -67,7 +60,6 @@ public class CommentFragmentArgumentsTest {
     private static Bundle channelBundle(boolean editing) {
         Bundle args = new Bundle();
         args.putInt(ChannelDescriptionFragment.ARG_CHANNEL, 1);
-        args.putString(AbstractCommentFragment.ARG_COMMENT, "<p>x</p>");
         args.putBoolean(AbstractCommentFragment.ARG_EDITING, editing);
         return args;
     }
@@ -78,9 +70,9 @@ public class CommentFragmentArgumentsTest {
      * No host teardown needed: Robolectric discards the per-test sandbox automatically.
      */
     private static void attach(AbstractCommentFragment fragment) {
-        ActivityController<CommentDialogStubHost> controller =
-                Robolectric.buildActivity(CommentDialogStubHost.class);
-        CommentDialogStubHost host = controller.get();
+        ActivityController<FragmentActivity> controller =
+                Robolectric.buildActivity(FragmentActivity.class);
+        FragmentActivity host = controller.get();
         host.setTheme(R.style.Theme_Mumla);
         controller.setup();
         host.getSupportFragmentManager().beginTransaction()
@@ -173,19 +165,5 @@ public class CommentFragmentArgumentsTest {
         IllegalStateException e = assertThrows(IllegalStateException.class,
                 () -> attach(fragment));
         assertTrue(e.getMessage() != null && e.getMessage().contains("editing"));
-    }
-
-    @Test
-    public void userAttachToNonProviderHostThrows() {
-        FragmentActivity host = Robolectric.buildActivity(FragmentActivity.class)
-                .setup().get();
-        UserCommentFragment fragment = new UserCommentFragment();
-        fragment.setArguments(userBundle(false));
-        RuntimeException e = assertThrows(RuntimeException.class, () ->
-                host.getSupportFragmentManager().beginTransaction()
-                        .add(fragment, "comment").commitNow());
-        assertEquals(RuntimeException.class, e.getClass());
-        assertTrue(e.getMessage() != null && e.getMessage().contains("HumlaServiceProvider"));
-        assertTrue(e.getCause() instanceof ClassCastException);
     }
 }

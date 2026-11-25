@@ -36,7 +36,7 @@ import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SessionEventRecord
 import se.lublin.humla.state.emptySessionState
 import se.lublin.humla.voice.TalkActivity
-import se.lublin.mumla.service.MumlaService
+import se.lublin.mumla.service.NotificationActionReceiver
 
 /** Notification variants, permission re-show, actions and backpressure. */
 @RunWith(RobolectricTestRunner::class)
@@ -117,9 +117,15 @@ class ConnectionNotificationFeatureTest {
 
     @Test fun explicitActionsReachTheContainer() {
         val f = Fixture()
-        f.feature.handleAction(MumlaService.ACTION_MUTE)
-        f.feature.handleAction(MumlaService.ACTION_DISCONNECT)
-        assertEquals(listOf("mute", "disconnect"), f.actions.calls)
+        f.feature.handleAction(NotificationActionReceiver.ACTION_MUTE)
+        f.feature.handleAction(NotificationActionReceiver.ACTION_DEAFEN)
+        f.feature.handleAction(NotificationActionReceiver.ACTION_TOGGLE_OVERLAY)
+        f.feature.handleAction(NotificationActionReceiver.ACTION_DISCONNECT)
+        f.feature.handleAction(NotificationActionReceiver.ACTION_CANCEL_RECONNECT)
+        // Unknown and missing actions are ignored.
+        f.feature.handleAction("se.lublin.mumla.UNKNOWN")
+        f.feature.handleAction(null)
+        assertEquals(listOf("mute", "deafen", "overlay", "disconnect", "cancel"), f.actions.calls)
     }
 
     @Test fun slowNotificationManagerNeverStallsTheEmitter() = runFeature { scope ->

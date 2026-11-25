@@ -26,16 +26,20 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.FileProvider
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.io.File
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.launch
 import se.lublin.humla.audio.NativeCrashTest
-import se.lublin.humla.util.HumlaException
-import se.lublin.humla.util.HumlaObserver
 import se.lublin.mumla.R
+import se.lublin.mumla.app.MumlaViewModelFactory
 import se.lublin.mumla.util.CrashReporter
 import se.lublin.mumla.util.CrashReportStore
 
@@ -43,11 +47,15 @@ import se.lublin.mumla.util.CrashReportStore
  * Crash reports screen: list (timestamp + reason), per-report View / Share /
  * Delete, Delete-all, plus hidden crash-test buttons (one per capture path).
  *
- * Single inheritance rules out extending HumlaServiceFragment, so service
- * state is reached by composition via the host SettingsActivity.
+ * Crash-test availability comes from the app-scoped client state through a
+ * small ViewModel; nothing binds a service.
  */
 class CrashReportsFragment : MumlaPreferenceFragment() {
-    private var observer: HumlaObserver? = null
+
+    private val viewModel: CrashReportsViewModel by viewModels {
+        MumlaViewModelFactory(requireActivity().application)
+    }
+
     private val anrHandler by lazy { Handler(Looper.getMainLooper()) }
     private var detailDialog: AlertDialog? = null
     private var confirmDialog: AlertDialog? = null
@@ -77,7 +85,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         wireTestButtons()
         // Warm the native loader off the main thread: the first
         // isAvailable() call dlopens humlaaudio, which is disk I/O.
-        // Later refreshServiceState() calls on the UI thread are then cheap.
+        // Later refreshCrashTestState() calls on the UI thread are then cheap.
         try {
             Thread({
                 try {
@@ -88,17 +96,12 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         } catch (_: Throwable) {
         }
         refreshList()
-        refreshServiceState()
-    }
-
-    override fun onStart() {
-        super.onStart()
-        registerObserver()
-    }
-
-    override fun onStop() {
-        unregisterObserver()
-        super.onStop()
+        refreshCrashTestState()
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.crashTestsEnabled.collect { refreshCrashTestState() }
+            }
+        }
     }
 
     override fun onPause() {
@@ -117,62 +120,8 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
 
     override fun onResume() {
         super.onResume()
-        // Fail-closed: host flag gates, fragment argument is a hint only
-        // (arguments survive process-death recreation, so the arg alone must
-        // never gate; process death therefore relocks).
-        refreshServiceState()
+        refreshCrashTestState()
         refreshList()
-        if (observer == null) {
-            registerObserver()
-        }
-    }
-
-    fun onServiceStateChanged() {
-        if (!isAdded) {
-            return
-        }
-        // Late bind: onStart registration can run before the host bind
-        // completes, so retry here when the connection arrives.
-        if (observer == null) {
-            registerObserver()
-        }
-        refreshServiceState()
-    }
-
-    private fun host(): SettingsActivity? {
-        return activity as? SettingsActivity
-    }
-
-    private fun registerObserver() {
-        try {
-            val svc = host()?.getCrashService() ?: return
-            if (observer != null) {
-                return
-            }
-            val obs = object : HumlaObserver() {
-                override fun onConnected() {
-                    activity?.runOnUiThread { refreshServiceState() }
-                }
-
-                override fun onDisconnected(e: HumlaException?) {
-                    activity?.runOnUiThread { refreshServiceState() }
-                }
-            }
-            observer = obs
-            svc.registerObserver(obs)
-        } catch (e: Throwable) {
-            Log.w(TAG, "Failed to register crash service observer", e)
-        }
-    }
-
-    private fun unregisterObserver() {
-        try {
-            val obs = observer ?: return
-            observer = null
-            host()?.getCrashService()?.unregisterObserver(obs)
-        } catch (e: Throwable) {
-            Log.w(TAG, "Failed to unregister crash service observer", e)
-        }
     }
 
     private fun refreshList() {
@@ -212,22 +161,20 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         }
     }
 
-    private fun refreshServiceState() {
+    /** Buttons are enabled exactly while the client state is Idle or Failed. */
+    private fun refreshCrashTestState() {
         try {
-            val connected = host()?.isCrashConnected() == true
-            val bound = host()?.isCrashBound() == true
+            val enabled = viewModel.crashTestsEnabled.value
             val available = try {
                 NativeCrashTest.isAvailable()
             } catch (_: Throwable) {
                 false
             }
-            val enabled = bound && !connected
             for (key in arrayOf("crash_test_java", "crash_test_native", "crash_test_anr")) {
                 val pref = findPreference<Preference>(key) ?: continue
                 pref.isEnabled = enabled && (key != "crash_test_native" || available)
                 pref.summary = when {
-                    !bound -> getString(R.string.crash_test_unbound)
-                    connected -> getString(R.string.crash_test_disabled_call)
+                    !enabled -> getString(R.string.crash_test_disabled_call)
                     key == "crash_test_native" && !available ->
                         getString(R.string.crash_test_disabled_native)
                     else -> getString(R.string.crash_test_summary)
@@ -380,8 +327,8 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         // Re-check at click time (TOCTOU): neither a call connected after the
         // screen opened nor one connected while the dialog is open may die —
         // the positive button re-checks immediately before acting.
-        if (host()?.isCrashConnected() == true) {
-            refreshServiceState()
+        if (!viewModel.crashTestsEnabled.value) {
+            refreshCrashTestState()
             Toast.makeText(requireContext(), R.string.crash_test_disabled_call, Toast.LENGTH_SHORT).show()
             return
         }
@@ -392,7 +339,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                 false
             }
             if (!available) {
-                refreshServiceState()
+                refreshCrashTestState()
                 return
             }
         }
@@ -400,10 +347,10 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             .setMessage(R.string.crash_confirm)
             .setPositiveButton(R.string.confirm) { d, _ ->
                 d.dismiss()
-                // Service can transition while the dialog is open
+                // The state can transition while the dialog is open
                 // (auto-reconnect/backoff); abort instead of killing a call.
-                if (host()?.isCrashConnected() == true) {
-                    refreshServiceState()
+                if (!viewModel.crashTestsEnabled.value) {
+                    refreshCrashTestState()
                     Toast.makeText(requireContext(), R.string.crash_test_disabled_call, Toast.LENGTH_SHORT).show()
                     return@setPositiveButton
                 }
@@ -427,7 +374,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                 // Missing symbol on a stale .so must not masquerade as the
                 // wrong capture path: report and re-gate the buttons.
                 Log.w(TAG, "Native crash hook failed", e)
-                refreshServiceState()
+                refreshCrashTestState()
                 try {
                     Toast.makeText(requireContext(), R.string.crash_test_disabled_native, Toast.LENGTH_SHORT).show()
                 } catch (_: Throwable) {

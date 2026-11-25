@@ -40,10 +40,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import se.lublin.humla.Constants
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.model.IUser
-import se.lublin.humla.model.Message
-import se.lublin.humla.model.ServerSettings
 import se.lublin.humla.net.HumlaTCPMessageType
 import se.lublin.humla.net.Inbound
 import se.lublin.humla.net.ProtobufMessages
@@ -51,13 +47,10 @@ import se.lublin.humla.net.Transport
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.protocol.HumlaTCPMessageListener
-import se.lublin.humla.state.ChannelHandle
 import se.lublin.humla.state.ChannelInfo
 import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.SyncPhase
-import se.lublin.humla.state.UserHandle
-import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.state.UserInfo
 import se.lublin.humla.state.applyChannelRemove
 import se.lublin.humla.state.applyChannelState
@@ -82,7 +75,6 @@ import se.lublin.humla.state.applyVoiceTargetIntent
 import se.lublin.humla.state.WhisperTarget
 import se.lublin.humla.state.emptySessionState
 import se.lublin.humla.state.VoiceTargetMode
-import se.lublin.humla.util.IHumlaObserver
 
 /**
  * One connection. Created by the client for each attempt and never reused.
@@ -99,21 +91,15 @@ class Session internal constructor(
     parentScope: CoroutineScope,
     val transport: Transport,
     val localFacts: LocalFacts,
-    private val talkActivity: StateFlow<TalkActivity>,
     private val voiceLink: VoiceLink,
-    private val observer: IHumlaObserver,
     private val localFactsStore: LocalFactsStore,
-    private val mainPoster: (Runnable) -> Unit,
-    private val denyFormatter: (SessionEvent.PermissionDenied) -> String,
     private val eventSink: (SessionEvent, SessionState) -> Unit = { _, _ -> },
     private val workDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clock: Clock = Clock.systemUTC(),
 ) {
-    // Interim step-3 bridge (deleted in step 4 with VoicePolicy): the live
-    // AudioHandler still needs CodecVersion/ServerConfig/UserState updates
-    // for its mic gate and bandwidth degradation. Session broadcasts to
-    // registered TCP handlers after applying each transition.
+    // Protocol-message bridge: Session broadcasts the applied messages to
+    // registered TCP handlers after each transition.
     private val scope = CoroutineScope(
         parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]) + workDispatcher,
     )
@@ -364,14 +350,6 @@ class Session internal constructor(
         }
     }
 
-    private fun postObserver(r: Runnable) {
-        try {
-            mainPoster(r)
-        } catch (e: Exception) {
-            // Poster torn down (service destroyed); drop the callback.
-        }
-    }
-
     private suspend fun handleMessage(type: HumlaTCPMessageType, message: MessageLite) {
         when (type) {
             HumlaTCPMessageType.Version -> {
@@ -400,25 +378,7 @@ class Session internal constructor(
                     // still the empty initial value; the dump fans out once
                     // on ServerSync below.
                 } else {
-                    // Decided inside update (never a post-read): whether the
-                    // channel is new, plus the post-image seed so the posted
-                    // handle reads valid scalars even if removed first.
-                    var wasAbsent = false
-                    var addedInfo: ChannelInfo? = null
-                    _state.update { current ->
-                        val next = applyChannelState(current, msg).state
-                        wasAbsent = !current.server.channels.containsKey(id)
-                        addedInfo = next.server.channels[id]
-                        next
-                    }
-                    val seed = addedInfo
-                    val handle = if (seed != null) ChannelHandle(id, state, talkActivity, seed = seed) else ChannelHandle(id, state, talkActivity)
-                    val added = wasAbsent && seed != null
-                    postObserver(
-                        Runnable {
-                            if (added) observer.onChannelAdded(handle) else observer.onChannelStateUpdated(handle)
-                        },
-                    )
+                    _state.update { current -> applyChannelState(current, msg).state }
                 }
             }
             HumlaTCPMessageType.ChannelRemove -> {
@@ -428,31 +388,10 @@ class Session internal constructor(
                     if (id == 0 || !syncingState.server.channels.containsKey(id)) return
                     syncingState = applyChannelRemove(syncingState, msg).state
                 } else {
-                    var removedInfos: List<ChannelInfo> = emptyList()
-                    var known = false
+                    if (id == 0) return
                     _state.update { current ->
-                        known = current.server.channels.containsKey(id)
-                        if (id == 0 || !known) return@update current
-                        val next = applyChannelRemove(current, msg).state
-                        val removedIds = current.server.channels.keys - next.server.channels.keys
-                        fun depthOf(start: Int): Int {
-                            var depth = 0
-                            var node: Int? = start
-                            val seen = HashSet<Int>()
-                            while (node != null && removedIds.contains(node) && seen.add(node)) {
-                                node = current.server.channels[node]?.parentId
-                                depth++
-                            }
-                            return depth
-                        }
-                        removedInfos = removedIds.mapNotNull { current.server.channels[it] }
-                            .sortedByDescending { depthOf(it.id) }
-                        next
-                    }
-                    if (id == 0 || !known) return
-                    for (info in removedInfos) {
-                        val seeded = ChannelHandle(info.id, state, talkActivity, seed = info)
-                        postObserver(Runnable { observer.onChannelRemoved(seeded) })
+                        if (!current.server.channels.containsKey(id)) return@update current
+                        applyChannelRemove(current, msg).state
                     }
                 }
             }
@@ -472,9 +411,6 @@ class Session internal constructor(
                         emitAll(result.events)
                     }
                 } else {
-                    var createdInfo: UserInfo? = null
-                    var oldChannelId: Int? = null
-                    var newChannelId: Int? = null
                     var outcomeEvents: List<SessionEvent> = emptyList()
                     _state.update { current ->
                         val result = applyUserState(
@@ -482,41 +418,9 @@ class Session internal constructor(
                             liveMutedIds, liveIgnoredIds,
                         )
                         outcomeEvents = result.events
-                        // A nameless packet for an unknown session creates
-                        // nothing (transition early-returns); only fan out
-                        // onUserConnected when the user actually exists now.
-                        val info = result.state.server.users[session]
-                        createdInfo = info?.takeIf { current.server.users[session] == null }
-                        oldChannelId = current.server.users[session]?.channelId
-                        newChannelId = info?.channelId
                         result.state
                     }
                     emitAll(outcomeEvents)
-                    val seed = createdInfo
-                    val handle = if (seed != null) UserHandle(session, state, talkActivity, seed = seed) else UserHandle(session, state, talkActivity)
-                    val isNew = seed != null
-                    postObserver(
-                        Runnable {
-                            if (isNew) {
-                                observer.onUserConnected(handle)
-                            } else {
-                                observer.onUserStateUpdated(handle)
-                                if (newChannelId != oldChannelId) {
-                                    val newChannel = if (newChannelId != null) {
-                                        ChannelHandle(newChannelId, state, talkActivity)
-                                    } else {
-                                        null
-                                    }
-                                    val oldChannel = if (oldChannelId != null) {
-                                        ChannelHandle(oldChannelId, state, talkActivity)
-                                    } else {
-                                        null
-                                    }
-                                    observer.onUserJoinedChannel(handle, newChannel, oldChannel)
-                                }
-                            }
-                        },
-                    )
                 }
             }
             HumlaTCPMessageType.UserRemove -> {
@@ -527,7 +431,7 @@ class Session internal constructor(
                     val actor = if (msg.hasActor()) msg.actor else null
                     val reason = if (msg.hasReason()) msg.reason else null
                     failOnce(ClientError.Removed(actor, reason, msg.ban))
-                    // Apply removal to state as well (HumlaService cleared on disconnect).
+                    // Apply removal to state as well (a disconnect clears it too).
                     if (!synced) {
                         syncingState = applyUserRemove(syncingState, msg).state
                     } else {
@@ -550,27 +454,15 @@ class Session internal constructor(
                     syncingState = result.state
                     if (result.events.isNotEmpty()) emitAll(result.events)
                 } else {
-                    var oldInfo: UserInfo? = null
                     var outcomeEvents: List<SessionEvent> = emptyList()
                     _state.update { current ->
-                        oldInfo = current.server.users[session]
+                        val oldInfo = current.server.users[session]
                         val actorName = if (msg.hasActor()) current.server.users[msg.actor]?.name else null
                         val result = applyUserRemove(current, msg, oldInfo?.name, actorName)
                         outcomeEvents = result.events
                         result.state
                     }
                     emitAll(outcomeEvents)
-                    val reason = outcomeEvents.filterIsInstance<SessionEvent.UserLeft>().firstOrNull()?.reason
-                    val seed = oldInfo
-                    postObserver(
-                        Runnable {
-                            if (seed != null) {
-                                observer.onUserRemoved(UserHandle(session, state, talkActivity, seed = seed), reason)
-                            } else {
-                                observer.onUserRemoved(null, reason)
-                            }
-                        },
-                    )
                 }
             }
             HumlaTCPMessageType.ServerSync -> {
@@ -594,20 +486,11 @@ class Session internal constructor(
                     syncingState = published
                     synced = true
                     emitAll(result.events)
-                    // Fan out the initial dump for screens still on observers.
-                    for (id in syncingState.server.channels.keys) {
-                        val handle = ChannelHandle(id, state, talkActivity)
-                        postObserver(Runnable { observer.onChannelAdded(handle) })
-                    }
-                    for (sessionId in syncingState.server.users.keys) {
-                        val handle = UserHandle(sessionId, state, talkActivity)
-                        postObserver(Runnable { observer.onUserConnected(handle) })
-                    }
                     try {
                         transport.startKeepalive()
                     } catch (e: Exception) {
                     }
-                    // Restored self-mute, as MumlaService.onConnectionSynchronized does.
+                    // Restore the persisted self-mute/deafen at sync.
                     if (localFacts.selfMuted || localFacts.selfDeafened) {
                         setSelfMuteDeaf(localFacts.selfMuted, localFacts.selfDeafened)
                     }
@@ -634,15 +517,7 @@ class Session internal constructor(
                 if (!synced) {
                     syncingState = applyPermissionQuery(syncingState, msg).state
                 } else {
-                    var known = false
-                    _state.update { current ->
-                        known = current.server.channels.containsKey(msg.channelId)
-                        applyPermissionQuery(current, msg).state
-                    }
-                    if (known) {
-                        val handle = ChannelHandle(msg.channelId, state, talkActivity)
-                        postObserver(Runnable { observer.onChannelPermissionsUpdated(handle) })
-                    }
+                    _state.update { current -> applyPermissionQuery(current, msg).state }
                 }
             }
             HumlaTCPMessageType.PermissionDenied -> {
@@ -662,12 +537,6 @@ class Session internal constructor(
                     val event = denied
                     if (event != null) {
                         emitAll(listOf(event))
-                        val text = try {
-                            denyFormatter(event)
-                        } catch (e: Exception) {
-                            "Permission denied"
-                        }
-                        postObserver(Runnable { observer.onPermissionDenied(text) })
                     }
                 }
             }
@@ -688,8 +557,6 @@ class Session internal constructor(
                     val event = received
                     if (event != null) {
                         emitAll(listOf(event))
-                        val built = buildMessage(event)
-                        postObserver(Runnable { observer.onMessageLogged(built) })
                     }
                 }
             }
@@ -705,7 +572,7 @@ class Session internal constructor(
             }
             else -> Unit
         }
-        // Interim AudioHandler bridge (step 4 deletes with VoicePolicy).
+        // Protocol-message bridge for registered TCP handlers.
         if (type == HumlaTCPMessageType.CodecVersion ||
             type == HumlaTCPMessageType.ServerSync ||
             type == HumlaTCPMessageType.ServerConfig ||
@@ -714,35 +581,6 @@ class Session internal constructor(
         ) {
             broadcastTcp(type, message)
         }
-    }
-
-    private fun buildMessage(event: SessionEvent.TextMessageReceived): se.lublin.humla.model.IMessage {
-        val channels = ArrayList<IChannel>(event.channels.size)
-        for (id in event.channels) {
-            if (_state.value.server.channels.containsKey(id)) {
-                channels.add(ChannelHandle(id, state, talkActivity))
-            }
-        }
-        val trees = ArrayList<IChannel>(event.trees.size)
-        for (id in event.trees) {
-            if (_state.value.server.channels.containsKey(id)) {
-                trees.add(ChannelHandle(id, state, talkActivity))
-            }
-        }
-        val users = ArrayList<IUser>(event.users.size)
-        for (session in event.users) {
-            if (_state.value.server.users.containsKey(session)) {
-                users.add(UserHandle(session, state, talkActivity))
-            }
-        }
-        return Message(
-            event.actor ?: -1,
-            event.actorName,
-            channels,
-            trees,
-            users,
-            event.message,
-        )
     }
 
     /** Ends the session: cancels its scope; Transport.close stops socket/threads. */
@@ -785,15 +623,7 @@ class Session internal constructor(
         // child launch, and a racing echo or second intent must not re-pair
         // these events with a newer state.
         val snapshot = _state.value
-        scope.launch {
-            emitAll(events, snapshot)
-            val s = snapshot
-            val selfSession = s.server.selfSession
-            if (selfSession != null && s.server.users.containsKey(selfSession)) {
-                val handle = UserHandle(selfSession, state, talkActivity)
-                postObserver(Runnable { observer.onUserStateUpdated(handle) })
-            }
-        }
+        scope.launch { emitAll(events, snapshot) }
     }
 
     fun setPtt(pressed: Boolean) {
@@ -1086,120 +916,5 @@ class Session internal constructor(
 
     fun setComment(session: Int, comment: String?) = setUserComment(session, comment)
 
-    // Old IHumlaSession reads, for HumlaService delegation.
-    fun getTCPLatency(): Long = stats.value.tcpLatencyMicros ?: throw IllegalStateException("No TCP latency yet")
-
-    fun getUDPLatency(): Long = stats.value.udpLatencyMicros ?: throw IllegalStateException("No UDP latency yet")
-
-    fun getMaxBandwidth(): Int = state.value.server.info.maxBandwidth ?: -1
-
-    fun getCurrentBandwidth(): Int = stats.value.currentBandwidth ?: -1
-
-    fun getServerVersion(): Int {
-        val v2 = state.value.server.info.versionV2 ?: throw IllegalStateException("Not synced")
-        return Constants.toLegacyVersion(v2)
-    }
-
-    fun getServerVersionV2(): Long {
-        return state.value.server.info.versionV2 ?: throw IllegalStateException("Not synced")
-    }
-
-    fun getServerRelease(): String? = state.value.server.info.release
-
-    fun getServerOSName(): String? = state.value.server.info.os
-
-    fun getServerOSVersion(): String? = state.value.server.info.osVersion
-
-    fun getSessionId(): Int {
-        return state.value.server.selfSession ?: throw IllegalStateException("Not synced")
-    }
-
-    fun getSessionUser(): IUser? {
-        val s = state.value
-        val session = s.server.selfSession ?: return null
-        if (!s.server.users.containsKey(session)) return null
-        return UserHandle(session, state, talkActivity)
-    }
-
-    fun getSessionChannel(): IChannel? {
-        return getSessionUser()?.channel
-    }
-
-    fun getUser(session: Int): IUser? {
-        val s = state.value
-        if (!s.server.users.containsKey(session)) return null
-        return UserHandle(session, state, talkActivity)
-    }
-
-    fun getChannel(id: Int): IChannel? {
-        val s = state.value
-        if (!s.server.channels.containsKey(id)) return null
-        return ChannelHandle(id, state, talkActivity)
-    }
-
-    fun getRootChannel(): IChannel? = getChannel(0)
-
-    fun getPermissions(): Int = state.value.server.rootPermissions
-
-    fun getServerSettings(): ServerSettings? {
-        val info = state.value.server.info
-        val settings = info.settings ?: return null
-        val msg = Mumble.ServerConfig.newBuilder()
-            .setAllowHtml(settings.allowHtml)
-            .setMessageLength(settings.messageLength)
-            .setImageMessageLength(settings.imageMessageLength)
-            .setMaxBandwidth(info.maxBandwidth ?: -1)
-            .setMaxUsers(settings.maxUsers)
-            .setWelcomeText(info.welcomeText ?: "")
-            .build()
-        return ServerSettings(msg)
-    }
-
-    fun sendUserTextMessage(session: Int, message: String?): Message? {
-        if (state.value.server.phase != SyncPhase.SYNCED) throw IllegalStateException("Not synced")
-        if (message == null) return null
-        sendText(emptyList(), emptyList(), listOf(session), message)
-        val s = state.value
-        val selfSession = s.server.selfSession ?: throw IllegalStateException("Not synced")
-        val selfName = s.server.users[selfSession]?.name
-        val users = ArrayList<IUser>()
-        if (s.server.users.containsKey(session)) users.add(UserHandle(session, state, talkActivity))
-        return Message(selfSession, selfName, emptyList(), emptyList(), users, message)
-    }
-
-    fun sendChannelTextMessage(channel: Int, message: String?, tree: Boolean): Message? {
-        if (state.value.server.phase != SyncPhase.SYNCED) throw IllegalStateException("Not synced")
-        if (message == null) return null
-        if (tree) {
-            sendText(emptyList(), listOf(channel), emptyList(), message)
-        } else {
-            sendText(listOf(channel), emptyList(), emptyList(), message)
-        }
-        val s = state.value
-        val selfSession = s.server.selfSession ?: throw IllegalStateException("Not synced")
-        val selfName = s.server.users[selfSession]?.name
-        val targetChannels = ArrayList<IChannel>()
-        if (s.server.channels.containsKey(channel)) targetChannels.add(ChannelHandle(channel, state, talkActivity))
-        // Mirror the wire split (tree ids vs channel ids), not both.
-        return if (tree) {
-            Message(selfSession, selfName, emptyList(), targetChannels, emptyList(), message)
-        } else {
-            Message(selfSession, selfName, targetChannels, emptyList(), emptyList(), message)
-        }
-    }
-
-    fun getVoiceTargetId(): Int = state.value.local.voiceTargetId
-
-    fun getVoiceTargetMode(): VoiceTargetMode = VoiceTargetMode.fromInt(state.value.local.voiceTargetId)
-
-    fun getWhisperTarget(): WhisperTarget? {
-        val id = state.value.local.voiceTargetId
-        if (id in 1..30) return state.value.local.whisperTargets[id]
-        return null
-    }
-
-    fun isListeningToChannel(channelId: Int): Boolean {
-        val self = state.value.server.self ?: return false
-        return self.listeningChannels.contains(channelId)
-    }
+    // Legacy reads kept while the screens finish moving to state and stats.
 }

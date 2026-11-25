@@ -31,8 +31,8 @@ object ProtobufMessages {
      * Overhead per packet: 20 (IP) + 8 (UDP) + 4 (crypt) + 1 (type) + 2 (session)
      * + 12 (positional, worst case) + framesPerPacket (frame headers); packets
      * per second are 800/framesPerPacket (10 ms frames). Ported as-is from
-     * HumlaConnection, including the single conditional +12 (upstream adds a
-     * second +12 for TCP mode; see the incidental note in HumlaService).
+     * the original handler, including the single conditional +12 (upstream
+     * adds a second +12 for TCP mode, which this port does not).
      */
     @JvmStatic
     fun calculateAudioBandwidth(bitrate: Int, framesPerPacket: Int): Int {

@@ -19,9 +19,10 @@ package se.lublin.mumla.feature
 
 import android.app.Notification
 import android.content.BroadcastReceiver
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.model.IMessage
-import se.lublin.humla.util.IHumlaObserver
+import kotlinx.coroutines.flow.StateFlow
+import se.lublin.humla.state.SessionState
+import se.lublin.humla.voice.TalkActivity
+import se.lublin.mumla.service.IChatMessage
 
 /**
  * Android edges behind small interfaces: a feature's test passes a fake, the
@@ -60,7 +61,7 @@ interface TtsSpeaker {
 }
 
 interface MessageNotificationsView {
-    fun show(message: IMessage)
+    fun show(message: IChatMessage.TextMessage)
     fun dismiss()
 }
 
@@ -122,10 +123,12 @@ interface OverlayHost {
     fun overlayPosX(defaultX: Int): Int
     fun overlayPosY(defaultY: Int): Int
     fun setOverlayPosition(x: Int, y: Int)
-    fun sessionChannel(): IChannel?
-    fun selfSession(): Int?
-    fun registerObserver(observer: IHumlaObserver)
-    fun unregisterObserver(observer: IHumlaObserver)
+
+    /** The process session-state mirror; the overlay collects it while shown. */
+    fun sessionState(): StateFlow<SessionState>
+
+    /** The live talk levels; the overlay collects them while shown. */
+    fun talkActivity(): StateFlow<TalkActivity>
 }
 
 interface OverlayView {
@@ -153,7 +156,7 @@ private object NoopTtsSpeaker : TtsSpeaker {
 }
 
 private object NoopMessageNotifications : MessageNotificationsView {
-    override fun show(message: IMessage) = Unit
+    override fun show(message: IChatMessage.TextMessage) = Unit
     override fun dismiss() = Unit
 }
 

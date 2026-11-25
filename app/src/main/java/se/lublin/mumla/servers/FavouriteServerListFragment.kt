@@ -31,7 +31,9 @@ import android.widget.AdapterView
 import android.widget.AdapterView.OnItemClickListener
 import android.widget.GridView
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.launch
 import se.lublin.humla.model.Server
 import se.lublin.mumla.R
 import se.lublin.mumla.db.MumlaDatabase
@@ -98,6 +100,7 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
         // replace path, this handles teardown.
         mServerAdapter?.shutdown()
         mServerAdapter = null
+        mServerGrid = null
         super.onDestroyView()
     }
 
@@ -151,33 +154,38 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
         MaterialAlertDialogBuilder(requireContext())
             .setMessage(R.string.confirm_delete_server)
             .setPositiveButton(R.string.delete) { _, _ ->
-                // NPE-exact: the original dereferenced both fields unconditionally.
-                val database = mDatabase ?: throw NullPointerException("mDatabase")
-                val adapter = mServerAdapter ?: throw NullPointerException("mServerAdapter")
-                database.removeServer(server)
-                adapter.remove(server)
+                lifecycleScope.launch {
+                    // NPE-exact: the original dereferenced both fields unconditionally.
+                    val database = mDatabase ?: throw NullPointerException("mDatabase")
+                    val adapter = mServerAdapter ?: throw NullPointerException("mServerAdapter")
+                    database.removeServer(server)
+                    adapter.remove(server)
+                }
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
     fun updateServers() {
-        val servers = getServers()
-        // The old adapter's ping pool dies with it: updateServers builds a
-        // new 50-thread pool every onResume, so the previous one must be
-        // released or threads leak per resume.
-        mServerAdapter?.shutdown()
-        // NPE-exact: the original passed getActivity() straight through.
-        val adapter = FavouriteServerAdapter(activity ?: throw NullPointerException("activity"), servers, this)
-        mServerAdapter = adapter
-        val grid = mServerGrid ?: throw NullPointerException("mServerGrid")
-        grid.adapter = adapter
-    }
-
-    fun getServers(): List<Server> {
-        // NPE-exact: the original dereferenced mDatabase unconditionally.
-        val database = mDatabase ?: throw NullPointerException("mDatabase")
-        return database.getServers()
+        // The view's scope: a read still in flight at onDestroyView is
+        // cancelled, so it never builds a ping pool for a dead grid.
+        viewLifecycleOwner.lifecycleScope.launch {
+            val database = mDatabase ?: throw NullPointerException("mDatabase")
+            val servers = database.getServers()
+            // The old adapter's ping pool dies with it: updateServers builds a
+            // new 50-thread pool every onResume, so the previous one must be
+            // released or threads leak per resume.
+            mServerAdapter?.shutdown()
+            // NPE-exact: the original passed getActivity() straight through.
+            val adapter = FavouriteServerAdapter(
+                activity ?: throw NullPointerException("activity"),
+                servers,
+                this@FavouriteServerListFragment,
+            )
+            mServerAdapter = adapter
+            val grid = mServerGrid ?: throw NullPointerException("mServerGrid")
+            grid.adapter = adapter
+        }
     }
 
     override fun onItemClick(arg0: AdapterView<*>?, arg1: View?, arg2: Int, arg3: Long) {

@@ -46,7 +46,7 @@ object VoiceSettingsMapper {
         else -> throw IllegalArgumentException("Unknown transmit mode: $transmitMode")
     }
 
-    /** Reverse of [inputModeFor], for the interim IHumlaSession read. */
+    /** Reverse of [inputModeFor], used by settings round-trip tests. */
     fun transmitModeFor(inputMode: InputMode): Int = when (inputMode) {
         InputMode.PUSH_TO_TALK -> Constants.TRANSMIT_PUSH_TO_TALK
         InputMode.CONTINUOUS -> Constants.TRANSMIT_CONTINUOUS

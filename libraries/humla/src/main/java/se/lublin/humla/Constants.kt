@@ -30,7 +30,7 @@ object Constants {
 
     // Derived values are @JvmField (not const): const initializers cannot call
     // functions such as shl/or/toVersionV2. Plain literals above stay const so
-    // Java switch case labels (HumlaService transmit mode) keep compiling.
+    // Java switch case labels (the transmit-mode switch) keep compiling.
     @JvmField
     val PROTOCOL_VERSION: Int = (PROTOCOL_MAJOR shl 16) or (PROTOCOL_MINOR shl 8) or PROTOCOL_PATCH
     @JvmField

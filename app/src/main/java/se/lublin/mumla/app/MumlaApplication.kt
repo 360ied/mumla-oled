@@ -23,7 +23,6 @@ import android.content.res.Configuration
 import androidx.appcompat.app.AppCompatDelegate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import se.lublin.humla.HumlaService
 import se.lublin.mumla.AppContainer
 import se.lublin.mumla.R
 import se.lublin.mumla.Settings
@@ -43,8 +42,8 @@ open class MumlaApplication : Application() {
         applyLanguage(settings)
         // Theme and locale follow the settings flow. Only re-apply on actual
         // theme/language change: unrelated pref writes must not poke the
-        // night-mode delegate or locale manager. The legacy listener bridge
-        // stays for the screens that still register until step 7.
+        // night-mode delegate or locale manager. Screens collect the same
+        // flow for their own theme changes.
         container.appScope.launch(Dispatchers.Main.immediate) {
             var lastTheme: String? = settings.theme
             var lastLanguage: String? = settings.language
@@ -61,7 +60,6 @@ open class MumlaApplication : Application() {
                 }
             }
         }
-        HumlaService.init(this)
     }
 
     /** Test seam: a test application can build the real container with fake edges. */

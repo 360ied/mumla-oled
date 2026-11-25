@@ -41,21 +41,16 @@ import se.lublin.humla.audio.ScoLink
 import se.lublin.humla.client.HumlaClient
 import se.lublin.humla.client.LocalFactsStore
 import se.lublin.humla.client.NetworkMonitor
-import se.lublin.humla.model.TalkState
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.TransportFactory
 import se.lublin.humla.net.VoiceEvent
-import se.lublin.humla.route.AppliedRoute
 import se.lublin.humla.route.RouteControl
-import se.lublin.humla.route.RouteEvent
 import se.lublin.humla.route.RoutePreferences
+import se.lublin.humla.route.RouteEvent
 import se.lublin.humla.route.RouteState
 import se.lublin.humla.route.RouteThread
-import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SessionEventRecord
-import se.lublin.humla.state.UserHandle
 import se.lublin.humla.state.emptySessionState
-import se.lublin.humla.util.HumlaCallbacks
 import se.lublin.humla.voice.EngineNative
 import se.lublin.humla.voice.NativeVoiceEngine
 import se.lublin.humla.voice.PolicyCollector
@@ -64,6 +59,8 @@ import se.lublin.humla.voice.TalkActivityPublisher
 import se.lublin.humla.voice.VoiceEngine
 import se.lublin.humla.voice.VoiceSettings
 import java.time.Clock
+import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
+import org.minidns.hla.ResolverApi
 
 /**
  * The library's public assembly point. The container builds one runtime for
@@ -72,14 +69,12 @@ import java.time.Clock
  * public; the route controller, platform adapters, policy collector, and
  * voice engine stay library-internal.
  *
- * Interim (until step 7): the runtime owns HumlaCallbacks, the main-thread
- * poster, the session-state mirror, and the observer-bridge collectors,
- * because the client outlives every service instance.
+ * The runtime keeps the session-state mirror: features and ViewModels collect
+ * it instead of observers, and it survives reconnects.
  */
 class HumlaRuntime private constructor(
     val client: HumlaClient,
     val sessionState: StateFlow<se.lublin.humla.state.SessionState>,
-    val callbacks: HumlaCallbacks,
     val routeState: StateFlow<RouteState>,
     val routeEvents: SharedFlow<RouteEvent>,
     val voiceEvents: SharedFlow<VoiceEvent>,
@@ -95,7 +90,6 @@ class HumlaRuntime private constructor(
         val voiceSettings: StateFlow<VoiceSettings>,
         val routePreferences: StateFlow<RoutePreferences>,
         val localFacts: LocalFactsStore,
-        val denyFormatter: (SessionEvent.PermissionDenied) -> String,
         val clock: Clock = Clock.systemUTC(),
     )
 
@@ -136,6 +130,24 @@ class HumlaRuntime private constructor(
     companion object {
         private const val TAG = "HumlaRuntime"
 
+        /**
+         * Today's MiniDNS setup (link properties and the 800 ms resolver
+         * timeout), applied once when the runtime is built at process start,
+         * before any lookup.
+         */
+        private fun initMiniDns(appContext: Context) {
+            try {
+                AndroidUsingLinkProperties.setup(appContext)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not configure MiniDNS link properties: $e")
+            }
+            try {
+                ResolverApi.INSTANCE.client.dataSource.setTimeout(800)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not configure MiniDNS resolver timeout: $e")
+            }
+        }
+
         fun create(
             context: Context,
             scope: CoroutineScope,
@@ -143,7 +155,7 @@ class HumlaRuntime private constructor(
             edges: Edges = Edges.production(),
         ): HumlaRuntime {
             val appContext = context.applicationContext
-            val callbacks = HumlaCallbacks()
+            initMiniDns(appContext)
             val talkPublisher = TalkActivityPublisher()
             val mirror = MutableStateFlow(emptySessionState())
             val networkFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
@@ -215,11 +227,6 @@ class HumlaRuntime private constructor(
                 override val available = networkFlow.asSharedFlow()
             }
 
-            // Every IHumlaObserver callback runs on the main thread: Session
-            // posts through this, and so do the bridge collectors below,
-            // which collect on scope's Dispatchers.Default.
-            val mainExecutor = appContext.mainExecutor
-            fun postMain(r: Runnable) = mainExecutor.execute(r)
             client = HumlaClient(
                 parentScope = scope,
                 transports = edges.transports,
@@ -228,11 +235,7 @@ class HumlaRuntime private constructor(
                 voiceLink = voiceEngine,
                 network = networkMonitor,
                 localFactsStore = inputs.localFacts,
-                talkActivity = talkPublisher.talkActivity,
                 clock = inputs.clock,
-                observer = callbacks,
-                mainPoster = ::postMain,
-                denyFormatter = inputs.denyFormatter,
             )
 
             // Mirror: one flow across reconnects so live handles survive.
@@ -274,94 +277,9 @@ class HumlaRuntime private constructor(
                 }
             }
 
-            // Observer-bridge collectors: route, SCO, and talk hints. These
-            // live with the runtime, not a service instance.
-            scope.launch {
-                try {
-                    var lastScoActive: Boolean? = null
-                    routeControl.state.collect { rs ->
-                        val scoActive = rs is RouteState.Ready && rs.route == AppliedRoute.VOICE_SCO
-                        when (rs) {
-                            is RouteState.Ready, is RouteState.Fallback, is RouteState.Idle ->
-                                postMain { callbacks.onAudioRouteChanged() }
-                            is RouteState.Settling -> Unit
-                        }
-                        if (lastScoActive != null && lastScoActive != scoActive) {
-                            postMain { callbacks.onBluetoothScoChanged(scoActive) }
-                        }
-                        lastScoActive = scoActive
-                    }
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                }
-            }
-            scope.launch {
-                try {
-                    // Diff per emission: StateFlow already dedups identical
-                    // snapshots, and we only fan out sessions whose hint
-                    // actually changed instead of every user on every tick.
-                    var lastUsers: Map<Int, TalkState>? = null
-                    var lastSelfTalking: Boolean? = null
-                    talkPublisher.talkActivity.collect { activity ->
-                        val selfSession = try {
-                            client.currentSession.value?.getSessionId()
-                        } catch (e: IllegalStateException) {
-                            null
-                        }
-                        val users = mirror.value.server.users.keys
-                        val current = HashMap<Int, TalkState>(users.size)
-                        for (session in users) {
-                            current[session] = if (session == selfSession) {
-                                if (activity.selfTalking) TalkState.TALKING else TalkState.PASSIVE
-                            } else {
-                                activity.users[session] ?: TalkState.PASSIVE
-                            }
-                        }
-                        val previous = lastUsers
-                        val selfChanged = lastSelfTalking != activity.selfTalking
-                        lastUsers = current
-                        lastSelfTalking = activity.selfTalking
-                        // First emission publishes all; later ones only deltas.
-                        // Membership changes (join/leave) surface because the
-                        // current key set differs from the previous one.
-                        for (session in users) {
-                            if (previous == null || selfChanged || previous[session] != current[session]) {
-                                val hint = if (session == selfSession) {
-                                UserHandle(
-                                    session,
-                                    mirror.asStateFlow(),
-                                    talkPublisher.talkActivity,
-                                    talkStateOverride = if (activity.selfTalking) {
-                                        TalkState.TALKING
-                                    } else {
-                                        TalkState.PASSIVE
-                                    },
-                                )
-                            } else {
-                                UserHandle(session, mirror.asStateFlow(), talkPublisher.talkActivity)
-                            }
-                            postMain { callbacks.onUserTalkStateUpdated(hint) }
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                }
-            }
-            scope.launch {
-                try {
-                    routeControl.events.collect { ev ->
-                        if (ev is RouteEvent.ScoFailed) postMain { callbacks.onBluetoothScoFailed(ev.reason) }
-                    }
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                }
-            }
-
             return HumlaRuntime(
                 client = client,
                 sessionState = mirror.asStateFlow(),
-                callbacks = callbacks,
                 routeState = routeControl.state,
                 routeEvents = routeControl.events,
                 voiceEvents = voiceEngine.events,

@@ -1,6 +1,9 @@
 # Step 7 — Screens and service cut-over
 
-Part of the [migration](../migration.md). **Status: not started.**
+Part of the [migration](../migration.md). **Status: done.**
+This is the step's plan as it was executed, kept as a record;
+[`PROGRESS.md`](../PROGRESS.md) summarises what landed, and the living
+specs hold the current design.
 
 Step 6 left `MumlaService` with four jobs: service lifetime, the binder
 delegations, the connect half of `ConfigDelta`, and the error-shown flag.

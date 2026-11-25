@@ -62,7 +62,7 @@ with snapshot releases as the field test.
 
 | File | Specifies |
 |---|---|
-| [state.md](state.md) | `SessionState` schema, message and intent transitions, self-mute semantics, events, compatibility handles |
+| [state.md](state.md) | `SessionState` schema, message and intent transitions, self-mute semantics, events, reading state |
 | [client.md](client.md) | `HumlaClient` states and reconnect policy; `Session` lifecycle, intents, teardown |
 | [transport.md](transport.md) | TCP control channel, TLS, keepalive and UDP health, crypt setup, tunnel mode |
 | [voice.md](voice.md) | Native voice path: engine refactor, packet codec, I/O layer, realtime rules, `VoicePolicy`, Kotlin facade |
@@ -82,6 +82,7 @@ Records kept for their reasoning; none of them is current.
 |---|---|
 | [history/whales-list.md](history/whales-list.md) | The satisficing W1–W6 list this specification replaced, with a map from each whale to the step that addressed it |
 | [history/step5a-retrospective/](history/step5a-retrospective/README.md) | Why the first step-5a attempt shipped dead voice and was reset; the spec edits it led to |
+| [history/lost-handle-semantics/](history/lost-handle-semantics/README.md) | Why replacing model objects with handles (step 2), then handles with IDs and values (step 7), each lost a property callers relied on; the reading-state rules that came from it |
 
 ## Overview
 

@@ -59,12 +59,8 @@ class SessionTest {
             parentScope = scope.backgroundScope,
             transport = transport,
             localFacts = localFacts,
-            talkActivity = MutableStateFlow(TalkActivity.initial()),
             voiceLink = voice,
-            observer = NoopObserver,
             localFactsStore = InMemoryLocalFactsStore(),
-            mainPoster = { r -> r.run() },
-            denyFormatter = { "denied" },
             workDispatcher = dispatcher,
             ioDispatcher = dispatcher,
         )

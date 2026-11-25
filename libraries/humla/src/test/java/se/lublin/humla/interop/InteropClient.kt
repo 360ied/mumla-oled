@@ -23,7 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.emptyFlow
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.ConnectTarget
@@ -41,8 +41,6 @@ import se.lublin.humla.net.VoiceCommand
 import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.voice.VoiceEngine
 import se.lublin.humla.net.VoiceLink
-import se.lublin.humla.util.IHumlaObserver
-import se.lublin.humla.voice.TalkActivity
 
 private const val AWAIT_TIMEOUT_NANOS = 30_000_000_000L
 private const val POLL_MILLIS = 100L
@@ -119,15 +117,15 @@ object InteropClient {
     }
 
     @JvmStatic
-    fun create(observer: IHumlaObserver): HumlaClientHandle = create(observer, Voice.FORCED_TCP)
+    fun create(): HumlaClientHandle = create(Voice.FORCED_TCP)
 
     @JvmStatic
-    fun create(observer: IHumlaObserver, voice: Voice): HumlaClientHandle {
+    fun create(voice: Voice): HumlaClientHandle {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         // Unconfined: harness commands apply synchronously like the unit
         // tests, so no second thread exists even in the harness. The tunnel
         // sink routes to the current session's transport (present only in
-        // tunnel mode), exactly like production HumlaService.
+        // tunnel mode), exactly like the production voice link.
         val link = VoiceEngine(
             tunnelSink = {},
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
@@ -153,14 +151,10 @@ object InteropClient {
             voiceLink = voiceLink,
             network = network,
             localFactsStore = InMemoryLocalFactsStore(),
-            talkActivity = MutableStateFlow(TalkActivity.initial()),
             clock = Clock.systemUTC(),
-            observer = observer,
-            mainPoster = { r -> r.run() },
-            denyFormatter = { "denied" },
         )
         // Tunnel sink routes to the current session's transport (present
-        // only in tunnel mode), exactly like production HumlaService. Wired
+        // only in tunnel mode), exactly like the production voice link. Wired
         // after the client exists; the send thread calls it for tunnelled
         // voice (non-realtime).
         link.setTunnelSink { packet ->
@@ -176,6 +170,39 @@ object InteropClient {
         (AWAIT_TIMEOUT_NANOS - (System.nanoTime() - startNanos)).coerceAtLeast(0L)
 
     /** Awaits a Connected session, failing with detail on Failed/timeout. */
+    /**
+     * Collects the client's semantic events for a text message with [body].
+     * Call before sending, then await; cancel in a finally.
+     */
+    @JvmStatic
+    fun watchText(client: HumlaClient, body: String): TextWaiter {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        scope.launch {
+            try {
+                client.events.collect { record ->
+                    val event = record.event
+                    if (event is se.lublin.humla.state.SessionEvent.TextMessageReceived &&
+                        event.message == body
+                    ) {
+                        latch.countDown()
+                    }
+                }
+            } catch (ignored: kotlinx.coroutines.CancellationException) {
+            }
+        }
+        return TextWaiter(scope, latch)
+    }
+
+    class TextWaiter internal constructor(
+        private val scope: CoroutineScope,
+        private val latch: java.util.concurrent.CountDownLatch,
+    ) {
+        fun await(seconds: Long): Boolean = latch.await(seconds, java.util.concurrent.TimeUnit.SECONDS)
+
+        fun cancel() = scope.cancel()
+    }
+
     @JvmStatic
     fun awaitConnected(client: HumlaClient, what: String): Session {
         val start = System.nanoTime()

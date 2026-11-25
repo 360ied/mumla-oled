@@ -33,4 +33,14 @@ class NotificationActionReceiver : BroadcastReceiver() {
         val appContext = context?.applicationContext ?: return
         appContext.container.onNotificationAction(action)
     }
+
+    companion object {
+        // The notification's explicit actions; the feature and its view build
+        // and consume them, so they live here with the receiver.
+        const val ACTION_DISCONNECT = "se.lublin.mumla.action.DISCONNECT"
+        const val ACTION_MUTE = "se.lublin.mumla.action.MUTE"
+        const val ACTION_DEAFEN = "se.lublin.mumla.action.DEAFEN"
+        const val ACTION_TOGGLE_OVERLAY = "se.lublin.mumla.action.TOGGLE_OVERLAY"
+        const val ACTION_CANCEL_RECONNECT = "se.lublin.mumla.action.CANCEL_RECONNECT"
+    }
 }

@@ -19,11 +19,12 @@ package se.lublin.mumla.channel;
 
 import junit.framework.TestCase;
 
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import java.nio.charset.StandardCharsets;
 
-import se.lublin.humla.model.IUser;
-
+/**
+ * The cache is value-keyed: session, the UserInfo texture cache key, and the
+ * texture bytes. No live handle takes part.
+ */
 public class AvatarCacheTest extends TestCase {
 
     private AvatarCache mCache;
@@ -34,50 +35,43 @@ public class AvatarCacheTest extends TestCase {
         mCache = new AvatarCache(1024);
     }
 
-    public void testNullUserReturnsNull() {
-        assertNull(mCache.get(null));
-    }
-
     public void testZeroCacheKeyReturnsNull() {
-        IUser user = mock(IUser.class);
-        when(user.getSession()).thenReturn(10);
-        when(user.getTextureCacheKey()).thenReturn(0);
         // Zero key short-circuits before texture is read.
-        assertNull(mCache.get(user));
+        assertNull(mCache.get(10, 0, null));
+        assertNull(mCache.getEntry(10));
     }
 
-    public void testUserWithoutTextureReturnsNull() {
-        IUser user = mock(IUser.class);
-        when(user.getSession()).thenReturn(11);
-        when(user.hasTexture()).thenReturn(false);
-        when(user.getTextureCacheKey()).thenReturn(4242);
-        assertNull(mCache.get(user));
+    public void testNoTextureReturnsNull() {
+        assertNull(mCache.get(11, 4242, null));
         // No-texture path evicts instead of recording a negative entry.
         assertNull(mCache.getEntry(11));
     }
 
-    public void testNegativeCachingForUnparseableTexture() {
-        IUser user = mock(IUser.class);
-        byte[] texture = "corrupt_png_stream".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        when(user.getSession()).thenReturn(20);
-        when(user.hasTexture()).thenReturn(true);
-        when(user.getTexture()).thenReturn(texture);
-        when(user.getTextureCacheKey()).thenReturn(12345);
-
-        // First call fails decode and puts negative entry
-        assertNull(mCache.get(user));
-        AvatarCache.Entry entry = mCache.getEntry(user.getSession());
-        assertNotNull(entry);
-        assertEquals(user.getTextureCacheKey(), entry.getCacheKey());
-        assertNull(entry.getBitmap());
-
-        // Subsequent call returns null from cache hit
-        assertNull(mCache.get(user));
+    public void testEmptyTextureReturnsNull() {
+        assertNull(mCache.get(12, 4242, new byte[0]));
+        assertNull(mCache.getEntry(12));
     }
 
-    public void testRemoveAndClear() {
+    public void testNegativeCachingForUnparseableTexture() {
+        byte[] texture = "corrupt_png_stream".getBytes(StandardCharsets.UTF_8);
+        // First call fails decode and puts a negative entry.
+        assertNull(mCache.get(20, 12345, texture));
+        AvatarCache.Entry entry = mCache.getEntry(20);
+        assertNotNull(entry);
+        assertEquals(12345, entry.getCacheKey());
+        assertNull(entry.getBitmap());
+
+        // Subsequent call returns null from the cache hit.
+        assertNull(mCache.get(20, 12345, texture));
+    }
+
+    public void testRemoveClearsOneSession() {
         mCache.remove(42);
+        assertNull(mCache.getEntry(42));
         assertEquals(0, mCache.size());
+    }
+
+    public void testClearAndMaxSize() {
         mCache.clear();
         assertEquals(0, mCache.size());
         assertEquals(1024, mCache.maxSize());

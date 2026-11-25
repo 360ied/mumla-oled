@@ -28,7 +28,6 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import se.lublin.humla.model.IMessage
 import se.lublin.mumla.R
 import se.lublin.mumla.app.DrawerAdapter
 import se.lublin.mumla.app.MumlaActivity
@@ -42,7 +41,7 @@ import se.lublin.mumla.util.NotificationSanitizer
  */
 class MumlaMessageNotification(context: Context) {
     private val mContext: Context = context
-    private val mUnreadMessages = ArrayList<IMessage>()
+    private val mUnreadMessages = ArrayList<IChatMessage.TextMessage>()
     private var sChannelCreated = false
 
     /**
@@ -50,7 +49,7 @@ class MumlaMessageNotification(context: Context) {
      * If the notification is already shown, append the message to the existing notification.
      * @param message The message to notify the user about.
      */
-    fun show(message: IMessage) {
+    fun show(message: IChatMessage.TextMessage) {
         // POST_NOTIFICATIONS is API 33+: below TIRAMISU notifications are
         // enabled by default with no grant to check (the permission string
         // is unknown there and would always check DENIED, wrongly
@@ -80,7 +79,7 @@ class MumlaMessageNotification(context: Context) {
             val line = mContext.getString(
                 R.string.notification_message,
                 NotificationSanitizer.sanitizeActor(m.actorName),
-                NotificationSanitizer.sanitizeBody(m.message)
+                NotificationSanitizer.sanitizeBody(m.body)
             )
             style.addLine(line)
         }
@@ -116,7 +115,7 @@ class MumlaMessageNotification(context: Context) {
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setContentTitle(NotificationSanitizer.sanitizeActor(message.actorName))
-            .setContentText(NotificationSanitizer.sanitizeBody(message.message))
+            .setContentText(NotificationSanitizer.sanitizeBody(message.body))
             .setVibrate(VIBRATION_PATTERN)
             .setStyle(style)
 

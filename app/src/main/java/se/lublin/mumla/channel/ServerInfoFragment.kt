@@ -18,31 +18,28 @@
 package se.lublin.mumla.channel
 
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.RemoteException
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
-import se.lublin.humla.Constants
-import se.lublin.humla.IHumlaService
-import se.lublin.humla.net.HumlaUDPMessageType
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.launch
 import se.lublin.mumla.R
-import se.lublin.mumla.util.HumlaServiceFragment
+import se.lublin.mumla.app.MumlaViewModelFactory
 
 /**
  * A fragment that displays known information from the remote server.
  * Created by andrew on 28/08/13.
  */
-class ServerInfoFragment : HumlaServiceFragment() {
-    private val mExecutorService = Executors.newSingleThreadScheduledExecutor()
-    private val mHandler = Handler(Looper.getMainLooper())
-    private var mPollFuture: ScheduledFuture<*>? = null
+class ServerInfoFragment : Fragment() {
+
+    private val viewModel: ServerInfoViewModel by viewModels {
+        MumlaViewModelFactory(requireActivity().application)
+    }
 
     private var mProtocolView: TextView? = null
     private var mOSVersionView: TextView? = null
@@ -59,39 +56,36 @@ class ServerInfoFragment : HumlaServiceFragment() {
         savedInstanceState: Bundle?
     ): View? {
         val view = inflater.inflate(R.layout.fragment_server_info, container, false)
-        // Nullable casts: the fields are TextView? and use sites NPE-guard;
-        // a non-null `as` would throw TypeCastException instead of NPE here.
-        mProtocolView = view.findViewById(R.id.server_info_protocol) as TextView?
-        mOSVersionView = view.findViewById(R.id.server_info_os_version) as TextView?
-        mTCPLatencyView = view.findViewById(R.id.server_info_tcp_latency) as TextView?
-        mUDPLatencyView = view.findViewById(R.id.server_info_udp_latency) as TextView?
-        mHostView = view.findViewById(R.id.server_info_host) as TextView?
-        mMaxBandwidthView = view.findViewById(R.id.server_info_max_bandwidth) as TextView?
-        mCurrentBandwidthView = view.findViewById(R.id.server_info_current_bandwidth) as TextView?
-        mCodecView = view.findViewById(R.id.server_info_codec) as TextView?
+        mProtocolView = view.findViewById(R.id.server_info_protocol)
+        mOSVersionView = view.findViewById(R.id.server_info_os_version)
+        mTCPLatencyView = view.findViewById(R.id.server_info_tcp_latency)
+        mUDPLatencyView = view.findViewById(R.id.server_info_udp_latency)
+        mHostView = view.findViewById(R.id.server_info_host)
+        mMaxBandwidthView = view.findViewById(R.id.server_info_max_bandwidth)
+        mCurrentBandwidthView = view.findViewById(R.id.server_info_current_bandwidth)
+        mCodecView = view.findViewById(R.id.server_info_codec)
         return view
     }
 
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.state.collect { render(it) }
+            }
+        }
+    }
+
     /**
-     * Updates the info from the service.
-     *
-     * All session reads are best-effort: values that are not yet known
-     * (pre-sync version, pre-ping latency) are reported via
-     * IllegalStateException, and UDP latency stays unknown permanently on
-     * TCP-only or UDP-blocked connections. A poll posted before
-     * onDestroyView may also run after the views are gone. Any of these
-     * skips the update and the 1 Hz poll retries; only RemoteException
-     * propagates to the caller.
+     * Renders one state emission. Values that are not (yet) known keep the
+     * previous text, exactly like the old poll's skip-and-retry: UDP latency
+     * stays unknown permanently on TCP-only or UDP-blocked connections.
      */
-    @Throws(RemoteException::class)
-    fun updateData() {
-        val service = getService()
-        if (service == null || !service.isConnected()) {
+    private fun render(state: ServerInfoUiState) {
+        if (!state.connected) {
             return
         }
-
-        // View-teardown race: a poll posted before onDestroyView can run
-        // after the views were nulled. Skip silently; the poll is cancelled.
+        // View-teardown race: an emission can land after the views were nulled.
         val protocolView = mProtocolView ?: return
         val osVersionView = mOSVersionView ?: return
         val tcpLatencyView = mTCPLatencyView ?: return
@@ -101,97 +95,24 @@ class ServerInfoFragment : HumlaServiceFragment() {
         val maxBandwidthView = mMaxBandwidthView ?: return
         val currentBandwidthView = mCurrentBandwidthView ?: return
 
-        val session = try {
-            service.HumlaSession()
-        } catch (e: se.lublin.humla.util.HumlaDisconnectedException) {
-            Log.w(TAG, "updateData with torn-down session", e)
-            return
-        } catch (e: IllegalStateException) {
-            Log.w(TAG, "updateData with torn-down session", e)
-            return
+        state.release?.let { release ->
+            protocolView.text = getString(R.string.server_info_protocol, release)
         }
-
-        // Missing values keep their previous text; the next poll retries.
-        val release: String
-        val osName: String?
-        val osVersion: String?
-        val tcpLatencyMicros: Long?
-        val udpLatencyMicros: Long?
-        val maxBandwidth: Int
-        val currentBandwidth: Int?
-        val codecType: HumlaUDPMessageType?
-        try {
-            var r = session.getServerRelease()
-            if (r.isNullOrEmpty()) {
-                val v2 = session.getServerVersionV2()
-                r = if (v2 != 0L) {
-                    Constants.formatVersion(v2)
-                } else {
-                    Constants.formatLegacyVersion(session.getServerVersion())
-                }
-            }
-            release = r
-            osName = session.getServerOSName()
-            osVersion = session.getServerOSVersion()
-            tcpLatencyMicros = readLatency(session::getTCPLatency)
-            udpLatencyMicros = readLatency(session::getUDPLatency)
-            maxBandwidth = session.getMaxBandwidth()
-            currentBandwidth = try {
-                session.getCurrentBandwidth()
-            } catch (e: IllegalStateException) {
-                null
-            }
-            codecType = try {
-                session.getCodec()
-            } catch (e: IllegalStateException) {
-                null
-            }
-        } catch (e: IllegalStateException) {
-            Log.w(TAG, "updateData with incomplete session state", e)
-            return
+        osVersionView.text = getString(R.string.server_info_version, state.osName, state.osVersion)
+        setLatencyText(tcpLatencyView, state.tcpLatencyMicros)
+        setLatencyText(udpLatencyView, state.udpLatencyMicros)
+        val host = state.host
+        val port = state.port
+        if (host != null && port != null) {
+            hostView.text = getString(R.string.server_info_host, host, port)
         }
-
-        protocolView.text = getString(R.string.server_info_protocol, release)
-        osVersionView.text = getString(R.string.server_info_version, osName, osVersion)
-        setLatencyText(tcpLatencyView, tcpLatencyMicros)
-        setLatencyText(udpLatencyView, udpLatencyMicros)
-        // TODO SRV note also getHost,Port?
-        val targetServer = service.getTargetServer()
-        if (targetServer == null) {
-            Log.w(TAG, "updateData with no target server")
-        } else {
-            hostView.text = getString(
-                R.string.server_info_host,
-                targetServer.getSrvHost(),
-                targetServer.getSrvPort()
-            )
+        maxBandwidthView.text =
+            getString(R.string.server_info_max_bandwidth, (state.maxBandwidth ?: -1).toFloat() / 1000f)
+        state.currentBandwidth?.let { current ->
+            currentBandwidthView.text =
+                getString(R.string.server_info_current_bandwidth, current.toFloat() / 1000f)
         }
-
-        var codecName = "<null>"
-        if (codecType != null) {
-            codecName = when (codecType) {
-                HumlaUDPMessageType.UDPVoiceOpus -> "Opus"
-                HumlaUDPMessageType.UDPVoiceCELTBeta -> "CELT 0.11.0 (Unsupported)"
-                HumlaUDPMessageType.UDPVoiceCELTAlpha -> "CELT 0.7.0 (Unsupported)"
-                HumlaUDPMessageType.UDPVoiceSpeex -> "Speex (Unsupported)"
-                else -> "???"
-            }
-        }
-
-        maxBandwidthView.text = getString(R.string.server_info_max_bandwidth, maxBandwidth.toFloat() / 1000f)
-        if (currentBandwidth != null) {
-            currentBandwidthView.text = getString(R.string.server_info_current_bandwidth, currentBandwidth.toFloat() / 1000f)
-        }
-        codecView.text = getString(R.string.server_info_codec, codecName)
-    }
-
-    /** Null when the latency is not (or never) known; never throws. */
-    private fun readLatency(read: () -> Long): Long? {
-        return try {
-            read()
-        } catch (e: IllegalStateException) {
-            null
-        }
+        codecView.text = getString(R.string.server_info_codec, state.codecName ?: "<null>")
     }
 
     private fun setLatencyText(view: TextView, latencyMicros: Long?) {
@@ -202,49 +123,7 @@ class ServerInfoFragment : HumlaServiceFragment() {
         }
     }
 
-    override fun onServiceBound(service: IHumlaService) {
-        // wow this is ugly
-        // Defensive cancel: HumlaServiceFragment guarantees single-bind, but
-        // a provider bug double-binding would otherwise leak the first
-        // scheduler while overwriting the field (rebind idempotence).
-        val prior = mPollFuture
-        if (prior != null) {
-            prior.cancel(true)
-        }
-        mPollFuture = mExecutorService.scheduleAtFixedRate({
-            mHandler.post {
-                try {
-                    if (isVisible) updateData()
-                } catch (e: RemoteException) {
-                    e.printStackTrace()
-                } catch (e: RuntimeException) {
-                    // Transient session state or a view-teardown race must
-                    // never kill the main thread; the next poll retries.
-                    Log.w(TAG, "Server info poll skipped", e)
-                }
-            }
-        }, 0, POLL_RATE.toLong(), TimeUnit.MILLISECONDS)
-    }
-
-    override fun onServiceUnbound() {
-        val pollFuture = mPollFuture
-        if (pollFuture != null) {
-            pollFuture.cancel(true)
-            mPollFuture = null
-        }
-    }
-
-    // Teardown-only: navigating away destroys the view while the fragment is
-    // retained, so stop polling detached views here (slice 6/7 replaces the
-    // executor with a StateFlow; until then this mirrors onServiceUnbound).
-    // super.onDestroyView() also detaches the service observer via the
-    // HumlaServiceFragment view-lifecycle mirror (no-op here: already unbound).
     override fun onDestroyView() {
-        val pollFuture = mPollFuture
-        if (pollFuture != null) {
-            pollFuture.cancel(true)
-            mPollFuture = null
-        }
         mProtocolView = null
         mOSVersionView = null
         mTCPLatencyView = null
@@ -254,15 +133,5 @@ class ServerInfoFragment : HumlaServiceFragment() {
         mMaxBandwidthView = null
         mCurrentBandwidthView = null
         super.onDestroyView()
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        mExecutorService.shutdownNow()
-    }
-
-    companion object {
-        private val TAG: String = ServerInfoFragment::class.java.simpleName
-        private const val POLL_RATE = 1000
     }
 }

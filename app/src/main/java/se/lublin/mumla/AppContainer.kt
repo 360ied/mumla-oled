@@ -19,6 +19,7 @@ package se.lublin.mumla
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.media.AudioManager
@@ -30,6 +31,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,22 +42,26 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import se.lublin.humla.Constants
 import se.lublin.humla.HumlaRuntime
 import se.lublin.humla.client.ClientState
+import se.lublin.humla.client.ConnectTarget
 import se.lublin.humla.client.LocalFactsStore
-import se.lublin.humla.model.IChannel
+import se.lublin.humla.model.Server
 import se.lublin.humla.route.RoutePreferences
-import se.lublin.humla.state.ChannelHandle
 import se.lublin.humla.state.SessionEvent
-import se.lublin.humla.util.IHumlaObserver
+import se.lublin.humla.state.SessionState
+import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.voice.VoiceSettings
 import se.lublin.humla.voice.VoiceSettingsMapper
+import se.lublin.mumla.app.ConnectTargets
 import se.lublin.mumla.app.MumlaApplication
 import se.lublin.mumla.db.MumlaRoomDatabase
 import se.lublin.mumla.feature.AvatarRequestsFeature
@@ -78,6 +84,7 @@ import se.lublin.mumla.feature.TalkBroadcastFeature
 import se.lublin.mumla.feature.TalkKeysFeature
 import se.lublin.mumla.feature.TextToSpeechFeature
 import se.lublin.mumla.service.AndroidFeaturePlatform
+import se.lublin.mumla.service.ConnectionService
 import java.time.Clock
 
 /**
@@ -93,7 +100,15 @@ import java.time.Clock
 open class AppContainer(
     private val context: Context,
     val runtimeEdges: HumlaRuntime.Edges = HumlaRuntime.Edges.production(),
+    /**
+     * Test seam for [appScope]: a paused dispatcher makes the connect-path
+     * service waiter deterministic. Production uses Dispatchers.Default.
+     */
+    appScopeDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
+    /** The in-flight connect-path service waiter; a later connect replaces it. */
+    private var serviceWaiter: Job? = null
+
     private val exceptionHandler = CoroutineExceptionHandler { _, error ->
         // Fail loudly in debug; report and keep the process alive in release.
         if (BuildConfig.DEBUG) throw RuntimeException(error)
@@ -101,7 +116,7 @@ open class AppContainer(
     }
 
     open val appScope: CoroutineScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
+        CoroutineScope(SupervisorJob() + appScopeDispatcher + exceptionHandler)
 
     open val settingsStore: DataStore<Preferences> = createSettingsStore(context)
 
@@ -146,7 +161,6 @@ open class AppContainer(
             voiceSettings = voiceSettings,
             routePreferences = routePreferences,
             localFacts = localFactsStore,
-            denyFormatter = denyFormatter,
             clock = Clock.systemUTC(),
         ),
         edges = runtimeEdges,
@@ -203,16 +217,8 @@ open class AppContainer(
         override fun overlayPosY(defaultY: Int) = settings.getOverlayPosY(defaultY)
         override fun setOverlayPosition(x: Int, y: Int) =
             settings.setOverlayPosition(x, y)
-        override fun sessionChannel(): IChannel? {
-            val state = runtime.sessionState.value
-            val id = state.server.self?.channelId ?: return null
-            return ChannelHandle(id, runtime.sessionState, runtime.talkActivity)
-        }
-        override fun selfSession(): Int? = runtime.sessionState.value.server.selfSession
-        override fun registerObserver(observer: IHumlaObserver) =
-            runtime.callbacks.registerObserver(observer)
-        override fun unregisterObserver(observer: IHumlaObserver) =
-            runtime.callbacks.unregisterObserver(observer)
+        override fun sessionState(): StateFlow<SessionState> = runtime.sessionState
+        override fun talkActivity(): StateFlow<TalkActivity> = runtime.talkActivity
     }
 
     // Intent functions: features take functions, never the client itself.
@@ -267,7 +273,6 @@ open class AppContainer(
         events = runtime.events,
         voiceEvents = runtime.voiceEvents,
         appLog = appLog,
-        callbacks = runtime.callbacks,
         formatter = chatFormatter,
     )
 
@@ -374,17 +379,56 @@ open class AppContainer(
         platform = featurePlatform,
     )
 
+    /**
+     * The UI's connect path. It starts the client, then a waiter starts
+     * [ConnectionService] at the first non-terminal client state while the
+     * app is still in the foreground (Android 14+ generally refuses to start
+     * a microphone foreground service from the background). The waiter ends
+     * without starting anything at a Failed that is not the instance present
+     * before the call, so a stale failure starts nothing, and a later connect
+     * cancels an earlier waiter.
+     */
+    /** Builds the target off the main thread, then runs [connect]. */
+    open fun connect(server: Server) {
+        appScope.launch {
+            val target = ConnectTargets.build(context, database, settings, server)
+                ?: return@launch
+            connect(target)
+        }
+    }
+
+    open fun connect(target: ConnectTarget) {
+        val client = runtime.client
+        serviceWaiter?.cancel()
+        val priorFailed = client.state.value as? ClientState.Failed
+        serviceWaiter = appScope.launch {
+            val next = client.state.first { state ->
+                serviceStartDecision(state, priorFailed) != ServiceStart.WAIT
+            }
+            if (serviceStartDecision(next, priorFailed) == ServiceStart.START) {
+                startConnectionService()
+            }
+        }
+        client.connect(target)
+    }
+
+    private fun startConnectionService() {
+        try {
+            context.startForegroundService(Intent(context, ConnectionService::class.java))
+        } catch (e: Exception) {
+            // Android can refuse once the app is in the background; the
+            // connection continues without the service.
+            Log.w(TAG, "ConnectionService start refused; continuing without it", e)
+        }
+    }
+
     /** Explicit notification actions reach the process-lifetime feature. */
     open fun onNotificationAction(action: String) {
         connectionNotification.handleAction(action)
     }
 
     init {
-        // Interim: received text still arrives through the observer bridge.
-        // Start the feature first so its Main child scope exists before any
-        // observer callback can reach receivedTextObserver.
         chatLog.start(appScope)
-        runtime.callbacks.registerObserver(chatLog.receivedTextObserver)
         connectionNotification.start(appScope)
         messageNotifications.start(appScope)
         tts.start(appScope)
@@ -468,7 +512,28 @@ open class AppContainer(
     }
 }
 
-/** Gestures from talk keys, the hot corner, and the service's binder bridge. */
+/** What the connect-path service waiter should do for one client state. */
+internal enum class ServiceStart { START, SKIP, WAIT }
+
+/**
+ * The waiter's rule, kept pure and pinned: a visible attempt starts the
+ * service; a Failed that predates the call is stale and keeps waiting; any
+ * other Failed means the attempt died before Connecting was seen, so nothing
+ * starts.
+ */
+internal fun serviceStartDecision(
+    state: ClientState,
+    priorFailed: ClientState.Failed?,
+): ServiceStart = when (state) {
+    is ClientState.Connecting,
+    is ClientState.Connected,
+    is ClientState.Reconnecting,
+    -> ServiceStart.START
+    is ClientState.Failed -> if (state === priorFailed) ServiceStart.WAIT else ServiceStart.SKIP
+    is ClientState.Idle -> ServiceStart.WAIT
+}
+
+/** Gestures from talk keys and the hot corner. */
 sealed interface TalkKeyEvent {
     data object Down : TalkKeyEvent
     data object Up : TalkKeyEvent

@@ -31,7 +31,8 @@ import se.lublin.mumla.Settings
 import se.lublin.mumla.app.BaseActivity
 import se.lublin.mumla.db.DatabaseCertificate
 import se.lublin.mumla.db.MumlaDatabase
-import se.lublin.mumla.db.MumlaRoomDatabase
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 /**
  * Created by andrew on 11/01/16.
@@ -51,12 +52,12 @@ class CertificateSelectActivity : BaseActivity(), DialogInterface.OnClickListene
         mCertificates = certificates
         certificates.add(NoCertificateItem(getString(R.string.no_certificate), settings))
         val database: MumlaDatabase = this.container.database
-        for (certificate in database.getCertificates()) {
-            certificates.add(CertificateItem(certificate, settings))
+        lifecycleScope.launch {
+            for (certificate in database.getCertificates()) {
+                certificates.add(CertificateItem(certificate, settings))
+            }
+            showCertificateSelectionDialog()
         }
-        database.close()
-
-        showCertificateSelectionDialog()
     }
 
     override fun onClick(dialog: DialogInterface?, which: Int) {

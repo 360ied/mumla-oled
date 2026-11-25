@@ -46,6 +46,7 @@ import se.lublin.humla.net.Inbound
 import se.lublin.humla.net.TransportException
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.state.SessionState
+import se.lublin.humla.state.talkStateOf
 import se.lublin.humla.voice.TalkActivity
 
 /**
@@ -59,13 +60,11 @@ class HumlaClientTest {
     private fun TestScope.harness(
         factory: FakeFactory = FakeFactory(),
         localFactsStore: LocalFactsStore = InMemoryLocalFactsStore(),
-        talkActivity: MutableStateFlow<TalkActivity> = MutableStateFlow(TalkActivity.initial()),
         policySource: Flow<SessionState?>? = null,
     ): ClientHarness = ClientHarness(
         this,
         factory = factory,
         localFactsStore = localFactsStore,
-        talkActivity = talkActivity,
         policySource = policySource,
     ).also { it.step() }
 
@@ -768,23 +767,19 @@ class HumlaClientTest {
     }
 
     @Test
-    fun channelRosterReadsLiveTalkLevels() = runTest {
-        val talk = MutableStateFlow(TalkActivity.initial())
-        val h = harness(talkActivity = talk)
+    fun rowsReadLiveTalkLevelsFromStateAndActivity() = runTest {
+        val h = harness()
         h.connectAndSync()
-        val live = h.session
-        // Channel-roster handles read the same live levels as user handles:
-        // without the forwarded flow they would stay passive here.
-        talk.value = TalkActivity(selfTalking = false, users = persistentMapOf(1 to TalkState.TALKING))
-        assertEquals(
-            TalkState.TALKING,
-            live.getChannel(0)!!.users.single { it.session == 1 }.talkState,
-        )
-        talk.value = TalkActivity.initial()
-        assertEquals(
-            TalkState.PASSIVE,
-            live.getChannel(0)!!.users.single { it.session == 1 }.talkState,
-        )
+        val session = h.session
+        // Rows render from the session state plus the live talk levels; the
+        // same helper the channel list uses.
+        var talk = TalkActivity(selfTalking = false, users = persistentMapOf(1 to TalkState.TALKING))
+        assertEquals(TalkState.TALKING, session.state.value.talkStateOf(1, talk))
+        talk = TalkActivity.initial()
+        assertEquals(TalkState.PASSIVE, session.state.value.talkStateOf(1, talk))
+        // The local session's level lives in selfTalking, never the remote table.
+        talk = TalkActivity(selfTalking = true, users = persistentMapOf())
+        assertEquals(TalkState.TALKING, session.state.value.talkStateOf(1, talk))
         h.client.disconnect()
         h.step()
         h.finish()
@@ -821,12 +816,8 @@ class HumlaClientTest {
             parentScope = backgroundScope,
             transport = FakeTransport(),
             localFacts = LocalFacts.empty(),
-            talkActivity = MutableStateFlow(TalkActivity.initial()),
             voiceLink = h.voice,
-            observer = NoopObserver,
             localFactsStore = InMemoryLocalFactsStore(),
-            mainPoster = { r -> r.run() },
-            denyFormatter = { "denied" },
             workDispatcher = h.dispatcher,
             ioDispatcher = h.dispatcher,
         )

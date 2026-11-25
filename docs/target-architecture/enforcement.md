@@ -184,7 +184,11 @@ not imports.
 ## No service binding
 
 From step 7, `check_architecture.py` fails if a file under `app/src/main`
-contains `bindService(` or `ServiceConnection`. Screens and features
+contains a `bind…Service` identifier (`bindService`, `bindIsolatedService`,
+`bindServiceAsUser`) or `ServiceConnection`. It matches identifiers, not
+call shapes, so a call split across lines is caught, and it counts comments
+and strings like the render-thread check does: reword a mention rather than
+allowlist it. Screens and features
 collect the container's flows; `ConnectionService` holds only the
 foreground lifetime, and its `onBind` returns `null` (see
 [app](app.md#connectionservice)).

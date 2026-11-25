@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -37,7 +38,7 @@ import se.lublin.humla.state.SessionEventRecord
 @Config(sdk = [34])
 class MessageNotificationsFeatureTest {
 
-    private class Fixture(postSink: (suspend (se.lublin.humla.model.IMessage) -> Unit)? = null) {
+    private class Fixture(postSink: (suspend (se.lublin.mumla.service.IChatMessage.TextMessage) -> Unit)? = null) {
         val platform = FakeFeaturePlatform()
         val events = MutableSharedFlow<SessionEventRecord>(extraBufferCapacity = 256)
         val state = MutableStateFlow<ClientState>(ClientState.Idle)
@@ -47,7 +48,7 @@ class MessageNotificationsFeatureTest {
 
     private fun textRecord() = SessionEventRecord(
         SessionEvent.TextMessageReceived(
-            2, "Alice", emptyList(), emptyList(), emptyList(), "hello", 0L,
+            2, "Alice", listOf(0), emptyList(), emptyList(), "hello", 1234L,
         ),
         goldenState(),
     )
@@ -57,7 +58,13 @@ class MessageNotificationsFeatureTest {
         f.feature.start(scope)
         f.events.emit(textRecord())
         kotlinx.coroutines.yield()
-        assertEquals(1, f.platform.messages.shown.size)
+        val shown = f.platform.messages.shown.single()
+        assertEquals("Alice", shown.actorName)
+        assertEquals("hello", shown.body)
+        assertEquals(1234L, shown.receivedTime)
+        // The notification renders only sender and body (as master did), so
+        // the feature resolves no target names.
+        assertTrue(shown.targetNames.isEmpty())
         f.state.value = ClientState.Idle
         assertEquals(1, f.platform.messages.dismissed)
         f.feature.clear()

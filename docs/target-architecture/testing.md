@@ -231,10 +231,15 @@ Added in step 6 (see [migration](steps/6-container-storage-and-features.md#step-
   dispatchers and a real route thread, so the test waits on flows with a
   timeout instead of using virtual time. It lands in step 6's
   `HumlaRuntime` commit, which starts the lifetime rule; the chat-log and
-  connection-notification commits add the feature-events and
-  notification-removal assertions. Step 7 rewrites it for
-  `ConnectionService` (start, foreground, self-stop on `Idle` and
-  `Failed`, no service after an instant failure, disconnect on destroy).
+  connection-notification commits added the feature-events and
+  notification-removal assertions, and step 7 rewrote it for
+  `ConnectionService`: the container's connect path starts the service,
+  which posts the connection notification, a fake-transport session
+  reaches `Connected` with nothing bound, the service stops itself on
+  `Idle` and on `Failed`, an attempt that never shows `Connecting` leaves
+  no running service, destroying a connected service disconnects the
+  client, and a second connect shares the runtime and still answers
+  `SessionStarted`/`SessionEnded`.
 - **ViewModels (step 7).** Each ViewModel takes flows and intent
   functions, like a feature, and its test drives it with plain flows under
   virtual time. The channel list also gets a screen-level Robolectric test

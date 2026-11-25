@@ -193,6 +193,10 @@ dependencies {
     implementation libs.cardview
     implementation libs.documentfile
     implementation libs.fragment
+    implementation libs.fragment.ktx
+    // Step 7: screens collect their ViewModel state with repeatOnLifecycle.
+    implementation libs.lifecycle.runtime.ktx
+    implementation libs.lifecycle.viewmodel.ktx
     implementation libs.recyclerview
     implementation libs.exifinterface
     implementation libs.material

@@ -175,4 +175,32 @@ class ChannelTreeTest : TestCase() {
         assertEquals(2, tree.userCountInSubtree(1))
         assertEquals(2, tree.userCountInSubtree(2))
     }
+
+    @Test
+    fun testUserCountInSubtreeOutsideTheRootedForest() {
+        val channels = persistentMapOf(
+            0 to channel(0, parentId = null, name = "Root"),
+            // A transient parent cycle, unreachable from the root.
+            1 to channel(1, parentId = 2, name = "a"),
+            2 to channel(2, parentId = 1, name = "b"),
+            3 to channel(3, parentId = 2, name = "under cycle"),
+            // Parent not yet known: its own root.
+            4 to channel(4, parentId = 99, name = "orphan"),
+            5 to channel(5, parentId = 4, name = "orphan child"),
+        )
+        val users = persistentMapOf(
+            1 to user(1, "a", 1),
+            2 to user(2, "b", 3),
+            3 to user(3, "c", 5),
+            4 to user(4, "d", 0),
+        )
+        val tree = ChannelTree.build(channels, users)
+        assertEquals(1, tree.userCountInSubtree(0))
+        assertEquals(2, tree.userCountInSubtree(1))
+        assertEquals(2, tree.userCountInSubtree(2))
+        assertEquals(1, tree.userCountInSubtree(3))
+        assertEquals(1, tree.userCountInSubtree(4))
+        assertEquals(1, tree.userCountInSubtree(5))
+        assertEquals(0, tree.userCountInSubtree(42))
+    }
 }

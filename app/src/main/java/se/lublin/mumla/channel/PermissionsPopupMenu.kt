@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Andrew Comminos <andrew@comminos.com>
+ * Copyright (C) 2015 Andrew Comminos
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,41 +18,35 @@
 package se.lublin.mumla.channel
 
 import android.content.Context
-import android.util.Log
 import android.view.Menu
 import android.view.View
 import androidx.appcompat.widget.PopupMenu
-import se.lublin.humla.IHumlaService
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.util.HumlaDisconnectedException
-import se.lublin.humla.util.HumlaObserver
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 /**
- * Encapsulates a menu requiring permissions.
+ * Encapsulates a menu requiring permissions. The permission word is read from
+ * the live state flow the screen hands in, which replaces the old observer:
+ * the menu re-prepares whenever the state updates, and asks for the channel's
+ * permissions when it has none yet.
  * Created by andrew on 19/11/15.
  */
 class PermissionsPopupMenu(
     context: Context,
     anchor: View,
     menuRes: Int,
-    enforcer: IOnMenuPrepareListener,
+    private val enforcer: IOnMenuPrepareListener,
     itemClickListener: PopupMenu.OnMenuItemClickListener,
-    channel: IChannel,
-    service: IHumlaService
+    private val permissions: StateFlow<Int>,
+    private val requestPermissions: () -> Unit,
 ) : PopupMenu.OnDismissListener {
-    private val mContext: Context = context
-    private val mChannel: IChannel = channel
-    private val mService: IHumlaService = service
     private val mMenu: PopupMenu = PopupMenu(context, anchor)
-    private val mPrepareListener: IOnMenuPrepareListener = enforcer
-
-    private val mPermissionsObserver = object : HumlaObserver() {
-        override fun onChannelPermissionsUpdated(channel: IChannel?) {
-            if (mChannel == channel) {
-                mPrepareListener.onMenuPrepare(mMenu.menu, getPermissions())
-            }
-        }
-    }
+    private var scope: CoroutineScope? = null
 
     init {
         mMenu.inflate(menuRes)
@@ -60,46 +54,18 @@ class PermissionsPopupMenu(
         mMenu.setOnMenuItemClickListener(itemClickListener)
     }
 
-    private fun getPermissions(): Int {
-        if (mService.isConnected()) {
-            return if (mChannel.id == 0) {
-                // TOCTOU: popup racing teardown throws on acquisition.
-                try {
-                    mService.HumlaSession().getPermissions()
-                } catch (e: HumlaDisconnectedException) {
-                    Log.d(TAG, "permissions with torn-down session: $e")
-                    0
-                } catch (e: IllegalStateException) {
-                    Log.d(TAG, "permissions with torn-down session: $e")
-                    0
-                }
-            } else {
-                mChannel.permissions
+    fun show() {
+        // A second show without a dismiss replaces the collector, not adds one.
+        scope?.cancel()
+        val menuScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        scope = menuScope
+        menuScope.launch {
+            permissions.collect { current ->
+                enforcer.onMenuPrepare(mMenu.menu, current)
             }
         }
-        return 0
-    }
-
-    companion object {
-        private val TAG: String = PermissionsPopupMenu::class.java.simpleName
-    }
-
-    fun show() {
-        mService.registerObserver(mPermissionsObserver)
-        if (getPermissions() == 0) {
-            // onMenuPrepare will be called once more once permissions have loaded.
-            if (mService.isConnected()) {
-                // Same TOCTOU as getPermissions() above.
-                try {
-                    mService.HumlaSession().requestPermissions(mChannel.id)
-                } catch (e: HumlaDisconnectedException) {
-                    Log.d(TAG, "requestPermissions with torn-down session: $e")
-                } catch (e: IllegalStateException) {
-                    Log.d(TAG, "requestPermissions with torn-down session: $e")
-                }
-            }
-        } else {
-            mPrepareListener.onMenuPrepare(mMenu.menu, getPermissions())
+        if (permissions.value == 0) {
+            requestPermissions()
         }
         mMenu.show()
     }
@@ -109,7 +75,8 @@ class PermissionsPopupMenu(
     }
 
     override fun onDismiss(popupMenu: PopupMenu) {
-        mService.unregisterObserver(mPermissionsObserver)
+        scope?.cancel()
+        scope = null
     }
 
     /**

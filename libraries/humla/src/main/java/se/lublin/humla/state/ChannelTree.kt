@@ -35,7 +35,46 @@ class ChannelTree private constructor(
     fun users(channelId: Int): List<UserInfo> =
         usersByChannel[channelId] ?: emptyList()
 
-    fun userCountInSubtree(channelId: Int): Int {
+    /**
+     * Every subtree count reachable from a parentless channel, in one
+     * post-order pass. Each channel has one parent, so these walks form a
+     * forest; channels caught in a transient parent cycle are not reachable
+     * from any parentless channel and fall back to [walkUserCount].
+     */
+    private val subtreeUserCounts: Map<Int, Int> by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        val childIds = HashSet<Int>()
+        for (list in children.values) for (child in list) childIds.add(child.id)
+        val counts = HashMap<Int, Int>()
+        val stack = ArrayDeque<Int>()
+        // Parallel to stack: true once the channel's children are pushed.
+        val expanded = ArrayDeque<Boolean>()
+        for (rootId in children.keys + usersByChannel.keys) {
+            if (rootId in childIds || rootId in counts) continue
+            stack.add(rootId)
+            expanded.add(false)
+            while (stack.isNotEmpty()) {
+                val id = stack.removeLast()
+                if (!expanded.removeLast()) {
+                    stack.add(id)
+                    expanded.add(true)
+                    for (child in children[id] ?: emptyList()) {
+                        stack.add(child.id)
+                        expanded.add(false)
+                    }
+                } else {
+                    var count = usersByChannel[id]?.size ?: 0
+                    for (child in children[id] ?: emptyList()) count += counts.getValue(child.id)
+                    counts[id] = count
+                }
+            }
+        }
+        counts
+    }
+
+    fun userCountInSubtree(channelId: Int): Int =
+        subtreeUserCounts[channelId] ?: walkUserCount(channelId)
+
+    private fun walkUserCount(channelId: Int): Int {
         var count = 0
         val visited = HashSet<Int>()
         val stack = ArrayDeque<Int>()

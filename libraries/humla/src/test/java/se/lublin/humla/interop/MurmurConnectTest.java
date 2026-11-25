@@ -34,7 +34,6 @@ import java.security.cert.CertificateFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 
@@ -46,13 +45,8 @@ import se.lublin.humla.client.HumlaClient;
 import se.lublin.humla.client.Session;
 import se.lublin.humla.net.HumlaTCPMessageType;
 import se.lublin.humla.protobuf.Mumble;
-import se.lublin.humla.model.IChannel;
-import se.lublin.humla.model.IMessage;
-import se.lublin.humla.model.IUser;
 import se.lublin.humla.net.HandshakeFailure;
 import se.lublin.humla.util.HumlaException;
-import se.lublin.humla.util.IHumlaObserver;
-import se.lublin.humla.util.VoiceTargetMode;
 
 import java.security.cert.X509Certificate;
 
@@ -126,31 +120,6 @@ public class MurmurConnectTest {
         return store.toString();
     }
 
-    private static IHumlaObserver noopObserver() {
-        return new IHumlaObserver() {
-            @Override public void onConnected() {}
-            @Override public void onConnecting() {}
-            @Override public void onDisconnected(HumlaException e) {}
-            @Override public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) {}
-            @Override public void onChannelAdded(IChannel channel) {}
-            @Override public void onChannelStateUpdated(IChannel channel) {}
-            @Override public void onChannelRemoved(IChannel channel) {}
-            @Override public void onChannelPermissionsUpdated(IChannel channel) {}
-            @Override public void onUserConnected(IUser user) {}
-            @Override public void onUserStateUpdated(IUser user) {}
-            @Override public void onUserTalkStateUpdated(IUser user) {}
-            @Override public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) {}
-            @Override public void onUserRemoved(IUser user, String reason) {}
-            @Override public void onPermissionDenied(String reason) {}
-            @Override public void onMessageLogged(IMessage message) {}
-            @Override public void onVoiceTargetChanged(VoiceTargetMode mode) {}
-            @Override public void onBluetoothScoChanged(boolean active) {}
-            @Override public void onLogInfo(String message) {}
-            @Override public void onLogWarning(String message) {}
-            @Override public void onLogError(String message) {}
-        };
-    }
-
     private HumlaClient connect(String username, String password) throws Exception {
         return connect(username, password, InteropClient.Voice.FORCED_TCP);
     }
@@ -161,7 +130,7 @@ public class MurmurConnectTest {
         ConnectTarget target = InteropClient.target(
                 server.host(), server.port(), username, password, trustStore,
                 voice == InteropClient.Voice.FORCED_TCP);
-        HumlaClientHandle handle = InteropClient.create(noopObserver(), voice);
+        HumlaClientHandle handle = InteropClient.create(voice);
         open.add(handle);
         handle.getClient().connect(target);
         return handle;
@@ -196,51 +165,27 @@ public class MurmurConnectTest {
         HumlaClient alice = connect("InteropAlice", null);
         Session aliceSession = InteropClient.awaitConnected(alice, "alice sync");
 
-        final CountDownLatch gotText = new CountDownLatch(1);
-        IHumlaObserver bobObserver = noopObserver();
-        // Wrap to capture text: delegate everything, count down on the hello.
-        IHumlaObserver capturing = new IHumlaObserver() {
-            @Override public void onConnected() { bobObserver.onConnected(); }
-            @Override public void onConnecting() { bobObserver.onConnecting(); }
-            @Override public void onDisconnected(HumlaException e) { bobObserver.onDisconnected(e); }
-            @Override public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) { bobObserver.onTLSHandshakeFailed(chain, failure, verifiedHost); }
-            @Override public void onChannelAdded(IChannel channel) { bobObserver.onChannelAdded(channel); }
-            @Override public void onChannelStateUpdated(IChannel channel) { bobObserver.onChannelStateUpdated(channel); }
-            @Override public void onChannelRemoved(IChannel channel) { bobObserver.onChannelRemoved(channel); }
-            @Override public void onChannelPermissionsUpdated(IChannel channel) { bobObserver.onChannelPermissionsUpdated(channel); }
-            @Override public void onUserConnected(IUser user) { bobObserver.onUserConnected(user); }
-            @Override public void onUserStateUpdated(IUser user) { bobObserver.onUserStateUpdated(user); }
-            @Override public void onUserTalkStateUpdated(IUser user) { bobObserver.onUserTalkStateUpdated(user); }
-            @Override public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) { bobObserver.onUserJoinedChannel(user, newChannel, oldChannel); }
-            @Override public void onUserRemoved(IUser user, String reason) { bobObserver.onUserRemoved(user, reason); }
-            @Override public void onPermissionDenied(String reason) { bobObserver.onPermissionDenied(reason); }
-            @Override public void onMessageLogged(IMessage message) {
-                if (message != null && "interop-hello".equals(message.getMessage())) {
-                    gotText.countDown();
-                }
-            }
-            @Override public void onVoiceTargetChanged(VoiceTargetMode mode) { bobObserver.onVoiceTargetChanged(mode); }
-            @Override public void onBluetoothScoChanged(boolean active) { bobObserver.onBluetoothScoChanged(active); }
-            @Override public void onLogInfo(String message) { bobObserver.onLogInfo(message); }
-            @Override public void onLogWarning(String message) { bobObserver.onLogWarning(message); }
-            @Override public void onLogError(String message) { bobObserver.onLogError(message); }
-        };
         String trustStore = trustStoreForTestCert();
         ConnectTarget bobTarget = InteropClient.target(
                 server.host(), server.port(), "InteropBob", null, trustStore);
-        HumlaClientHandle bobHandle = InteropClient.create(capturing);
+        HumlaClientHandle bobHandle = InteropClient.create();
         open.add(bobHandle);
-        bobHandle.getClient().connect(bobTarget);
-        InteropClient.awaitConnected(bobHandle.getClient(), "bob sync");
+        InteropClient.TextWaiter waiter = InteropClient.watchText(bobHandle.getClient(), "interop-hello");
+        try {
+            bobHandle.getClient().connect(bobTarget);
+            InteropClient.awaitConnected(bobHandle.getClient(), "bob sync");
 
-        // Both clients land in the root channel (id 0) by default.
-        aliceSession.sendText(
-                java.util.Collections.singletonList(0),
-                java.util.Collections.emptyList(),
-                java.util.Collections.emptyList(),
-                "interop-hello");
-        assertTrue("timed out waiting for text message",
-                gotText.await(30, TimeUnit.SECONDS));
+            // Both clients land in the root channel (id 0) by default.
+            aliceSession.sendText(
+                    java.util.Collections.singletonList(0),
+                    java.util.Collections.emptyList(),
+                    java.util.Collections.emptyList(),
+                    "interop-hello");
+            assertTrue("timed out waiting for a text event",
+                    waiter.await(30));
+        } finally {
+            waiter.cancel();
+        }
     }
 
     @Test
@@ -338,7 +283,7 @@ public class MurmurConnectTest {
                 "InteropBob", null, InteropClient.Voice.FORCED_TCP);
         Session bobSession = InteropClient.awaitConnected(
                 bobHandle.getClient(), "bob sync after restart");
-        final int bobId = bobSession.getSessionId();
+        final int bobId = bobSession.getState().getValue().getServer().getSelfSession();
         InteropClient.awaitUser(recovered, "InteropBob", "receiver sees sender after restart");
         final se.lublin.humla.voice.VoiceEngine receiverVoice = aliceHandle.getVoice();
         receiverVoice.setFilterForTests(new int[0], new int[]{bobId});
@@ -476,59 +421,36 @@ public class MurmurConnectTest {
         HumlaClient alice = aliceHandle.getClient();
         Session session = InteropClient.awaitConnected(alice, "alice sync");
 
-        final CountDownLatch gotText = new CountDownLatch(1);
-        IHumlaObserver bobObserver = noopObserver();
-        IHumlaObserver capturing = new IHumlaObserver() {
-            @Override public void onConnected() { bobObserver.onConnected(); }
-            @Override public void onConnecting() { bobObserver.onConnecting(); }
-            @Override public void onDisconnected(HumlaException e) { bobObserver.onDisconnected(e); }
-            @Override public void onTLSHandshakeFailed(X509Certificate[] chain, HandshakeFailure failure, String verifiedHost) { bobObserver.onTLSHandshakeFailed(chain, failure, verifiedHost); }
-            @Override public void onChannelAdded(IChannel channel) { bobObserver.onChannelAdded(channel); }
-            @Override public void onChannelStateUpdated(IChannel channel) { bobObserver.onChannelStateUpdated(channel); }
-            @Override public void onChannelRemoved(IChannel channel) { bobObserver.onChannelRemoved(channel); }
-            @Override public void onChannelPermissionsUpdated(IChannel channel) { bobObserver.onChannelPermissionsUpdated(channel); }
-            @Override public void onUserConnected(IUser user) { bobObserver.onUserConnected(user); }
-            @Override public void onUserStateUpdated(IUser user) { bobObserver.onUserStateUpdated(user); }
-            @Override public void onUserTalkStateUpdated(IUser user) { bobObserver.onUserTalkStateUpdated(user); }
-            @Override public void onUserJoinedChannel(IUser user, IChannel newChannel, IChannel oldChannel) { bobObserver.onUserJoinedChannel(user, newChannel, oldChannel); }
-            @Override public void onUserRemoved(IUser user, String reason) { bobObserver.onUserRemoved(user, reason); }
-            @Override public void onPermissionDenied(String reason) { bobObserver.onPermissionDenied(reason); }
-            @Override public void onMessageLogged(IMessage message) {
-                if (message != null && "tunnel-hello".equals(message.getMessage())) {
-                    gotText.countDown();
-                }
-            }
-            @Override public void onVoiceTargetChanged(VoiceTargetMode mode) { bobObserver.onVoiceTargetChanged(mode); }
-            @Override public void onBluetoothScoChanged(boolean active) { bobObserver.onBluetoothScoChanged(active); }
-            @Override public void onLogInfo(String message) { bobObserver.onLogInfo(message); }
-            @Override public void onLogWarning(String message) { bobObserver.onLogWarning(message); }
-            @Override public void onLogError(String message) { bobObserver.onLogError(message); }
-        };
         String trustStore = trustStoreForTestCert();
         ConnectTarget bobTarget = InteropClient.target(
                 server.host(), server.port(), "InteropBob", null, trustStore, false);
-        HumlaClientHandle bobHandle = InteropClient.create(capturing, InteropClient.Voice.UDP);
+        HumlaClientHandle bobHandle = InteropClient.create(InteropClient.Voice.UDP);
         open.add(bobHandle);
+        InteropClient.TextWaiter waiter = InteropClient.watchText(bobHandle.getClient(), "tunnel-hello");
         bobHandle.getClient().connect(bobTarget);
-        InteropClient.awaitConnected(bobHandle.getClient(), "bob sync");
+        try {
+            InteropClient.awaitConnected(bobHandle.getClient(), "bob sync");
 
-        // Baseline: the transport still presumes UDP (the seed) with no
-        // traffic yet; the false reading below is the real assertion.
-        assertTrue("transport must presume UDP before the giveup, got "
-                        + session.getStats().getValue(),
-                session.getStats().getValue().getUsingUdp());
-        // With no good packets the transport must give up UDP (~20 s after
-        // creation) and switch to tunnel mode; the session survives on the tunnel.
-        InteropClient.awaitUsingUdp(session, false, "tunnel fallback", 60L);
-        assertTrue(alice.getState().getValue() instanceof ClientState.Connected);
-        // Data still flows post-fallback.
-        session.sendText(
-                java.util.Collections.singletonList(0),
-                java.util.Collections.emptyList(),
-                java.util.Collections.emptyList(),
-                "tunnel-hello");
-        assertTrue("timed out waiting for post-fallback text",
-                gotText.await(30, TimeUnit.SECONDS));
+            // Baseline: the transport still presumes UDP (the seed) with no
+            // traffic yet; the false reading below is the real assertion.
+            assertTrue("transport must presume UDP before the giveup, got "
+                            + session.getStats().getValue(),
+                    session.getStats().getValue().getUsingUdp());
+            // With no good packets the transport must give up UDP (~20 s after
+            // creation) and switch to tunnel mode; the session survives on the tunnel.
+            InteropClient.awaitUsingUdp(session, false, "tunnel fallback", 60L);
+            assertTrue(alice.getState().getValue() instanceof ClientState.Connected);
+            // Data still flows post-fallback.
+            session.sendText(
+                    java.util.Collections.singletonList(0),
+                    java.util.Collections.emptyList(),
+                    java.util.Collections.emptyList(),
+                    "tunnel-hello");
+            assertTrue("timed out waiting for post-fallback text",
+                    waiter.await(30));
+        } finally {
+            waiter.cancel();
+        }
     }
 
     @Test
@@ -573,7 +495,7 @@ public class MurmurConnectTest {
                 "InteropBob", null, InteropClient.Voice.FORCED_TCP);
         Session senderSession = InteropClient.awaitConnected(
                 senderHandle.getClient(), "sender sync");
-        final int senderId = senderSession.getSessionId();
+        final int senderId = senderSession.getState().getValue().getServer().getSelfSession();
         InteropClient.awaitUser(receiverSession, "InteropBob", "receiver sees sender");
 
         // No PolicyCollector in the harness: open the native sender filter
@@ -627,7 +549,7 @@ public class MurmurConnectTest {
         assertTrue("notifier must report the sender talking", sawSender);
         // Both directions over the tunnel: reverse Alice -> Bob through the
         // same native path.
-        final int receiverId = receiverSession.getSessionId();
+        final int receiverId = receiverSession.getState().getValue().getServer().getSelfSession();
         InteropClient.awaitUser(senderSession, "InteropAlice", "sender sees receiver");
         senderVoice.setFilterForTests(new int[0], new int[]{receiverId});
         receiverVoice.setFilterForTests(new int[0], new int[0]);
@@ -667,7 +589,7 @@ public class MurmurConnectTest {
                 "InteropBob", null, InteropClient.Voice.UDP);
         Session senderSession = InteropClient.awaitConnected(
                 senderHandle.getClient(), "sender sync");
-        final int senderId = senderSession.getSessionId();
+        final int senderId = senderSession.getState().getValue().getServer().getSelfSession();
         InteropClient.awaitUser(receiverSession, "InteropBob", "receiver sees sender");
         InteropClient.awaitUsingUdp(receiverSession, true, "receiver on UDP", 15L);
         InteropClient.awaitUsingUdp(senderSession, true, "sender on UDP", 15L);
@@ -710,7 +632,7 @@ public class MurmurConnectTest {
         assertTrue("notifier must report the sender talking", sawSender);
         // Both directions over UDP: reverse Alice -> Bob through the same
         // native path (sender gate already open via setFilterForTests).
-        final int receiverId = receiverSession.getSessionId();
+        final int receiverId = receiverSession.getState().getValue().getServer().getSelfSession();
         senderVoice.setFilterForTests(new int[0], new int[]{receiverId});
         receiverVoice.setFilterForTests(new int[0], new int[0]);
         for (int i = 0; i < 30; i++) {
@@ -749,7 +671,7 @@ public class MurmurConnectTest {
                 "InteropBob", null, InteropClient.Voice.FORCED_TCP);
         Session senderSession = InteropClient.awaitConnected(
                 senderHandle.getClient(), "sender sync");
-        final int senderId = senderSession.getSessionId();
+        final int senderId = senderSession.getState().getValue().getServer().getSelfSession();
         InteropClient.awaitUser(receiverSession, "InteropBob", "receiver sees sender");
         final se.lublin.humla.voice.VoiceEngine receiverVoice = receiverHandle.getVoice();
         receiverVoice.setFilterForTests(new int[0], new int[]{senderId});

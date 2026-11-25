@@ -99,52 +99,6 @@ data class PrefSnapshot(
     val overlayPosY: Int?,
     val newsShownVersions: Set<String>,
 ) {
-    /** Legacy PREF_* keys whose value differs from [other] (listener bridge). */
-    fun changedKeysSince(other: PrefSnapshot): List<String> {
-        val out = ArrayList<String>()
-        if (audioInputMethod != other.audioInputMethod) out.add(Settings.PREF_INPUT_METHOD)
-        if (vadThreshold != other.vadThreshold) out.add(Settings.PREF_THRESHOLD)
-        if (talkKey != other.talkKey) out.add(Settings.PREF_PUSH_KEY)
-        if (hotCorner != other.hotCorner) out.add(Settings.PREF_HOT_CORNER_KEY)
-        if (hidePtt != other.hidePtt) out.add(Settings.PREF_PUSH_BUTTON_HIDE_KEY)
-        if (togglePtt != other.togglePtt) out.add(Settings.PREF_PTT_TOGGLE)
-        if (inputQuality != other.inputQuality) out.add(Settings.PREF_INPUT_RATE)
-        if (inputBitrate != other.inputBitrate) out.add(Settings.PREF_INPUT_QUALITY)
-        if (inputVolume != other.inputVolume) out.add(Settings.PREF_AMPLITUDE_BOOST)
-        if (chatNotify != other.chatNotify) out.add(Settings.PREF_CHAT_NOTIFY)
-        if (allowTalkBroadcast != other.allowTalkBroadcast) out.add(Settings.PREF_ALLOW_TALK_BROADCAST)
-        if (notificationStyle != other.notificationStyle) out.add(Settings.PREF_NOTIFICATION_STYLE)
-        if (mediaKeyMute != other.mediaKeyMute) out.add(Settings.PREF_MEDIA_KEY_MUTE)
-        if (mediaKeyMuteTts != other.mediaKeyMuteTts) out.add(Settings.PREF_MEDIA_KEY_MUTE_TTS)
-        if (useTts != other.useTts) out.add(Settings.PREF_USE_TTS)
-        if (ttsEngine != other.ttsEngine) out.add(Settings.PREF_TTS_ENGINE)
-        if (shortTtsMessages != other.shortTtsMessages) out.add(Settings.PREF_SHORT_TTS_MESSAGES)
-        if (theme != other.theme) out.add(Settings.PREF_THEME)
-        if (language != other.language) out.add(Settings.PREF_LANGUAGE)
-        if (pttButtonHeight != other.pttButtonHeight) out.add(Settings.PREF_PTT_BUTTON_HEIGHT)
-        if (certificateId != other.certificateId) out.add(Settings.PREF_CERT_ID)
-        if (defaultUsername != other.defaultUsername) out.add(Settings.PREF_DEFAULT_USERNAME)
-        if (forceTcp != other.forceTcp) out.add(Settings.PREF_FORCE_TCP)
-        if (muted != other.muted) out.add(Settings.PREF_MUTED)
-        if (deafened != other.deafened) out.add(Settings.PREF_DEAFENED)
-        if (firstRun != other.firstRun) out.add(Settings.PREF_FIRST_RUN)
-        if (loadImages != other.loadImages) out.add(Settings.PREF_LOAD_IMAGES)
-        if (audioPerPacket != other.audioPerPacket) out.add(Settings.PREF_FRAMES_PER_PACKET)
-        if (halfDuplex != other.halfDuplex) out.add(Settings.PREF_HALF_DUPLEX)
-        if (handsetMode != other.handsetMode) out.add(Settings.PREF_HANDSET_MODE)
-        if (bluetoothHeadset != other.bluetoothHeadset) out.add(Settings.PREF_BLUETOOTH_HEADSET)
-        if (pttSound != other.pttSound) out.add(Settings.PREF_PTT_SOUND)
-        if (adaptiveLeveler != other.adaptiveLeveler) out.add(Settings.PREF_ADAPTIVE_LEVELER_ENABLED)
-        if (stayAwake != other.stayAwake) out.add(Settings.PREF_STAY_AWAKE)
-        if (showUserCount != other.showUserCount) out.add(Settings.PREF_SHOW_USER_COUNT)
-        if (startUpInPinnedMode != other.startUpInPinnedMode) out.add(Settings.PREF_START_UP_IN_PINNED_MODE)
-        if (overlayShown != other.overlayShown) out.add(Settings.PREF_OVERLAY_SHOWN)
-        if (overlayPlacement != other.overlayPlacement) out.add(Settings.PREF_OVERLAY_PLACEMENT)
-        if (overlayPosX != other.overlayPosX) out.add(Settings.PREF_OVERLAY_POS_X)
-        if (overlayPosY != other.overlayPosY) out.add(Settings.PREF_OVERLAY_POS_Y)
-        if (newsShownVersions != other.newsShownVersions) out.add(Settings.PREF_NEWS_SHOWN_VERSIONS)
-        return out
-    }
 }
 
 /**
@@ -311,64 +265,6 @@ class SettingsRepository(
         val OVERLAY_POS_X = intPreferencesKey("overlay_hud_pos_x")
         val OVERLAY_POS_Y = intPreferencesKey("overlay_hud_pos_y")
         val NEWS_SHOWN_VERSIONS = stringSetPreferencesKey("newsShownVersions")
-    }
-
-    // Legacy listener bridge: diff consecutive snapshots per key and fire the
-    // legacy PREF_* key strings for the screens that still register listeners
-    // (they move to flows in step 7).
-    private val listeners = mutableSetOf<java.util.function.Consumer<String>>()
-    private var collectScope: CoroutineScope? = null
-
-    fun registerListener(listener: java.util.function.Consumer<String>) {
-        val scopeToStart: CoroutineScope? = synchronized(this) {
-            listeners.add(listener)
-            if (collectScope == null) {
-                CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).also { collectScope = it }
-            } else {
-                null
-            }
-        }
-        // Baseline from the current in-memory value: a write landing between
-        // registration and collector start is still diffed, because the
-        // collector's first emission is compared against this baseline.
-        if (scopeToStart != null) {
-            var previous: PrefSnapshot? = _state.value.snapshot
-            scopeToStart.launch {
-                snapshot.collect { current ->
-                    val prev = previous
-                    previous = current
-                    if (prev != null) {
-                        for (key in current.changedKeysSince(prev)) {
-                            fire(key)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Synchronized
-    fun unregisterListener(listener: java.util.function.Consumer<String>) {
-        listeners.remove(listener)
-        if (listeners.isEmpty()) {
-            collectScope?.cancel()
-            collectScope = null
-        }
-    }
-
-    private fun fire(key: String) {
-        val targets: List<java.util.function.Consumer<String>>
-        synchronized(this) { targets = listeners.toList() }
-        // Per-listener isolation like HumlaCallbacks: one throwing consumer
-        // must not starve the rest (legacy dispatch is idempotent, so a
-        // duplicate/early delivery from a re-fire is harmless).
-        for (listener in targets) {
-            try {
-                listener.accept(key)
-            } catch (e: RuntimeException) {
-                Log.w("SettingsRepository", "listener threw for key $key", e)
-            }
-        }
     }
 
     companion object {

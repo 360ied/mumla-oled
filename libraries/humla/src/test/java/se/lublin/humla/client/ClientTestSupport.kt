@@ -62,9 +62,6 @@ import kotlinx.coroutines.test.runCurrent
 import kotlin.coroutines.ContinuationInterceptor
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.model.IMessage
-import se.lublin.humla.model.IUser
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.HumlaTCPMessageType
 import se.lublin.humla.net.Inbound
@@ -82,8 +79,6 @@ import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.state.effectiveSelfMute
 import se.lublin.humla.util.HumlaException
-import se.lublin.humla.util.IHumlaObserver
-import se.lublin.humla.util.VoiceTargetMode
 import se.lublin.humla.voice.PolicyCollector
 import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.voice.VoicePolicy
@@ -331,7 +326,6 @@ internal class ClientHarness(
     val factory: FakeFactory = FakeFactory(),
     val network: FakeNetwork = FakeNetwork(),
     val localFactsStore: LocalFactsStore = InMemoryLocalFactsStore(),
-    val talkActivity: MutableStateFlow<TalkActivity> = MutableStateFlow(TalkActivity.initial()),
     policySource: Flow<SessionState?>? = null,
     val settings: MutableStateFlow<VoiceSettings> = MutableStateFlow(VoiceSettings.initial()),
 ) {
@@ -348,22 +342,18 @@ internal class ClientHarness(
         voiceLink = voice,
         network = network,
         localFactsStore = localFactsStore,
-        talkActivity = talkActivity,
         clock = Clock.fixed(Instant.ofEpochMilli(1_000_000), ZoneOffset.UTC),
-        observer = NoopObserver,
-        mainPoster = { r -> r.run() },
-        denyFormatter = { "denied" },
         clientDispatcher = dispatcher,
         ioDispatcher = dispatcher,
         sessionDispatcher = dispatcher,
     )
 
     // Published-policy harness (issue 34): a real PolicyCollector fed by a
-    // HumlaService mirror of the session source (the current session's state,
+    // Mirror of the session source (the current session's state,
     // or null when there is none, which the collector maps to the muted
     // fallback). Tests inject [policySource] to freeze the source and prove
     // the detector catches the resulting stale policy. The mirror duplicates
-    // HumlaService._sessionState's resetting behavior by construction
+    // The runtime mirror's resetting behavior by construction
     // (flatMapLatest re-emits null on teardown); that shared shape is the
     // accepted difference from production (issue 34, fix direction 4).
     private val policyStates: Flow<SessionState?> =

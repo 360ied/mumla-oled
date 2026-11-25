@@ -719,6 +719,74 @@ class TestFeatureIsolation(unittest.TestCase):
             self.assertEqual(len(errors), 1)
 
 
+class TestServiceBinding(unittest.TestCase):
+    def write(self, root: Path, name: str, text: str):
+        path = root / "app/src/main/java/se/lublin/mumla" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_detects_bind_and_service_connection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "Binder.kt",
+                "val bound = bindService(intent, connection, 0)\n"
+                "val connection = object : ServiceConnection {}\n",
+            )
+            hits = ca.scan_service_binding(root)
+            self.assertEqual(2, len(hits))
+            self.assertTrue(hits[0][0].endswith("Binder.kt"))
+
+    def test_detects_every_bind_variant_and_a_split_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "Binder.kt",
+                "bindIsolatedService(intent, 0, \"id\", executor, conn)\n"
+                "bindServiceAsUser(intent, conn, 0, user)\n"
+                "val bound = bindService\n"
+                "    (intent, conn, 0)\n",
+            )
+            hits = ca.scan_service_binding(root)
+            self.assertEqual([1, 2, 3], [hit[1] for hit in hits])
+
+    def test_comments_and_strings_count(self):
+        # Fail closed: both halves of the pattern treat a mention alike.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "Screen.kt",
+                "// bindService is not used here\n"
+                "val note = \"no ServiceConnection\"\n",
+            )
+            self.assertEqual(2, len(ca.scan_service_binding(root)))
+
+    def test_clean_tree_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "Screen.kt",
+                "val state = container.runtime.client.state\n"
+                "override fun onBind(intent: Intent?): IBinder? = null\n"
+                "context.startForegroundService(intent)\n",
+            )
+            self.assertEqual([], ca.scan_service_binding(root))
+
+    def test_missing_root_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual([], ca.scan_service_binding(Path(tmp)))
+
+    def test_run_all_reports_a_bind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "libraries/humla/src/main/java").mkdir(parents=True)
+            self.write(root, "Binder.kt", "bindService(intent, conn, 0)\n")
+            allowlist = root / "allowlist.txt"
+            allowlist.write_text("", encoding="utf-8")
+            errors, _ = ca.run_all(root, allowlist)
+            self.assertTrue(any("service-binding" in e for e in errors))
+
+
 class TestRunAll(unittest.TestCase):
     def test_missing_source_root_is_error(self):
         with tempfile.TemporaryDirectory() as tmp:

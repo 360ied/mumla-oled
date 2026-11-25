@@ -34,8 +34,8 @@ import se.lublin.humla.state.SessionEventRecord
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.voice.TalkActivity
 import se.lublin.mumla.PrefSnapshot
+import se.lublin.mumla.service.NotificationActionReceiver
 import se.lublin.mumla.R
-import se.lublin.mumla.service.MumlaService
 
 /** Builds the foreground notification and owns the media session's actions. */
 class ConnectionNotificationFeature(
@@ -72,11 +72,11 @@ class ConnectionNotificationFeature(
     /** Explicit PendingIntents from the notification reach the container here. */
     fun handleAction(action: String?) {
         when (action) {
-            MumlaService.ACTION_MUTE -> actions.onMuteToggled()
-            MumlaService.ACTION_DEAFEN -> actions.onDeafenToggled()
-            MumlaService.ACTION_TOGGLE_OVERLAY -> actions.onOverlayToggled()
-            MumlaService.ACTION_DISCONNECT -> actions.onDisconnect()
-            MumlaService.ACTION_CANCEL_RECONNECT -> actions.onCancelReconnect()
+            NotificationActionReceiver.ACTION_MUTE -> actions.onMuteToggled()
+            NotificationActionReceiver.ACTION_DEAFEN -> actions.onDeafenToggled()
+            NotificationActionReceiver.ACTION_TOGGLE_OVERLAY -> actions.onOverlayToggled()
+            NotificationActionReceiver.ACTION_DISCONNECT -> actions.onDisconnect()
+            NotificationActionReceiver.ACTION_CANCEL_RECONNECT -> actions.onCancelReconnect()
         }
     }
 
@@ -92,8 +92,9 @@ class ConnectionNotificationFeature(
                 .collect { queue.offer(Refresh.REBUILD) }
         }
         child.launch {
-            // Media-session metadata follows talk activity from step 7; the
-            // notification itself is state-only, so no slow work here.
+            // The feature table lists talkActivity among this feature's
+            // flows; the notification content is state-only, so a talk tick
+            // never runs slow work here.
             talkActivity.collect { }
         }
         child.launch {

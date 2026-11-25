@@ -30,6 +30,10 @@
     <!-- Image picker only: needed on SDK 32 and below for ACTION_GET_CONTENT reads. -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Doze shield: ConnectionService holds a WIFI_MODE_FULL_HIGH_PERF
+         WifiLock while connected so the radio never power-saves on battery. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
@@ -74,7 +78,7 @@
         </provider>
 
         <service
-            android:name=".service.MumlaService"
+            android:name=".service.ConnectionService"
             android:exported="false"
             android:enabled="true"
             android:foregroundServiceType="microphone" />

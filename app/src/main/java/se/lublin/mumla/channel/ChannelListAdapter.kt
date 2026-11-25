@@ -22,8 +22,6 @@ import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.Drawable.ConstantState
-import android.os.RemoteException
-import android.util.Log
 import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
@@ -33,63 +31,73 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.content.res.AppCompatResources
-import androidx.fragment.app.FragmentManager
 import androidx.recyclerview.widget.RecyclerView
-import se.lublin.humla.HumlaService
-import se.lublin.humla.IHumlaService
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.model.IUser
-import se.lublin.humla.model.Server
 import se.lublin.humla.model.TalkState
-import se.lublin.humla.util.HumlaDisconnectedException
+import se.lublin.humla.state.ChannelInfo
+import se.lublin.humla.state.UserInfo
+import se.lublin.humla.state.isListening
+import se.lublin.humla.state.textureCacheKey
 import se.lublin.mumla.R
-import se.lublin.mumla.db.MumlaDatabase
 import se.lublin.mumla.drawable.CircleDrawable
-import se.lublin.mumla.service.MumlaService
 
 /**
+ * The channel/user tree. Rows are addressed by channel id and user session
+ * and rendered from the latest submitted state; the expanded/collapsed map
+ * stays here, as the live-handle adapter kept it.
  * Created by andrew on 31/07/13.
  */
 class ChannelListAdapter(
     context: Context,
-    service: IHumlaService,
-    database: MumlaDatabase,
-    fragmentManager: FragmentManager,
     showPinnedOnly: Boolean,
-    showChannelUserCount: Boolean
-) : RecyclerView.Adapter<RecyclerView.ViewHolder>(), UserMenu.IUserLocalStateListener {
+    private val onChannelClick: (ChannelInfo) -> Unit,
+    private val onUserClick: (UserInfo) -> Unit,
+    private val onChannelJoin: (ChannelInfo) -> Unit,
+    private val onChannelMenu: (ChannelInfo, View) -> Unit,
+    private val onUserMenu: (UserInfo, View) -> Unit,
+) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
     private val mContext: Context = context
-    private var mService: IHumlaService? = service
-    private val mDatabase: MumlaDatabase = database
-    private var mRootChannels: MutableList<Int>
-    private val mNodes: MutableList<Node> = ArrayList()
+    private val mShowPinnedOnly: Boolean = showPinnedOnly
+
+    private var mState: ChannelListUiState = ChannelListUiState()
+    private var mRows: List<Row> = emptyList()
+
     /**
      * A mapping of user-set channel expansions.
      * If a key is not mapped, default to hiding empty channels.
      */
     private val mExpandedChannels = HashMap<Int, Boolean>()
-    private var mUserClickListener: OnUserClickListener? = null
-    private var mChannelClickListener: OnChannelClickListener? = null
-    private var mShowChannelUserCount: Boolean = showChannelUserCount
-    private val mFragmentManager: FragmentManager = fragmentManager
 
     private val mAvatarCache = AvatarCache()
 
     init {
         setHasStableIds(true)
+    }
 
-        mRootChannels = ArrayList()
-        if (showPinnedOnly) {
-            // NPE-exact: the original dereferenced getTargetServer() unconditionally.
-            val targetServer = service.getTargetServer() ?: throw NullPointerException("targetServer")
-            mRootChannels = database.getPinnedChannels(targetServer.id).toMutableList()
-        } else {
-            mRootChannels.add(0)
+    /** Rebuilds the rows from a new state and repaints what changed. */
+    fun submit(state: ChannelListUiState) {
+        val previousState = mState
+        val previousRows = mRows
+        mState = state
+        mRows = buildRows(state)
+        if (previousState.server.users.keys != state.server.users.keys) {
+            mAvatarCache.retainOnly(state.server.users.keys)
         }
-
-        // Construct channel tree
-        updateChannels()
+        if (previousState.showUserCount != state.showUserCount ||
+            mRows.size != previousRows.size ||
+            mRows.indices.any { mRows[it].stableId != previousRows[it].stableId }
+        ) {
+            // The count column is state-driven, not part of a row's value.
+            notifyDataSetChanged()
+            return
+        }
+        for (position in mRows.indices) {
+            if (mRows[position] != previousRows[position]) {
+                // A payload lets the animator rebind the same holder in place;
+                // without one DefaultItemAnimator cross-fades a second holder.
+                notifyItemChanged(position, REBIND_IN_PLACE)
+            }
+        }
     }
 
     override fun onCreateViewHolder(viewGroup: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
@@ -104,284 +112,143 @@ class ChannelListAdapter(
     }
 
     override fun onBindViewHolder(viewHolder: RecyclerView.ViewHolder, position: Int) {
-        val node = mNodes[position]
-        if (node.isChannel()) {
-            // NPE-exact: isChannel proves mChannel non-null; the original dereferenced it.
-            val channel = node.getChannel() ?: throw NullPointerException("channel")
-            val cvh = viewHolder as ChannelViewHolder
-            cvh.itemView.setOnClickListener {
-                val channelClickListener = mChannelClickListener
-                if (channelClickListener != null) {
-                    channelClickListener.onChannelClick(channel)
-                }
+        when (val row = mRows[position]) {
+            is Row.ChannelRow -> bindChannel(viewHolder as ChannelViewHolder, row)
+            is Row.UserRow -> bindUser(viewHolder as UserViewHolder, row)
+        }
+    }
+
+    private fun bindChannel(holder: ChannelViewHolder, row: Row.ChannelRow) {
+        val channel = row.channel
+        holder.itemView.setOnClickListener { onChannelClick(row.channel) }
+
+        holder.mChannelExpandToggle.setImageResource(
+            if (row.expanded) R.drawable.ic_action_expanded else R.drawable.ic_action_collapsed
+        )
+        holder.mChannelExpandToggle.setOnClickListener {
+            mExpandedChannels[channel.id] = !row.expanded
+            submit(mState) // Same state, new expansion: rebuild and repaint.
+        }
+        holder.mChannelExpandToggle.isEnabled = row.hasChildren
+        holder.mChannelExpandToggle.visibility =
+            if (row.hasChildren) View.VISIBLE else View.INVISIBLE
+
+        holder.mChannelName.text = channel.name
+
+        var nameTypeface = Typeface.NORMAL
+        if (row.isSelfChannel) {
+            nameTypeface = nameTypeface or Typeface.BOLD
+            // Always italicize our current channel if it has a link.
+            if (channel.links.isNotEmpty()) {
+                nameTypeface = nameTypeface or Typeface.ITALIC
             }
+        }
+        // Italicize channels in a link with our current channel.
+        if (row.linkedToSelf) {
+            nameTypeface = nameTypeface or Typeface.ITALIC
+        }
+        holder.mChannelName.setTypeface(null, nameTypeface)
 
-            val expandUsable = channel.subchannels.size > 0 ||
-                channel.subchannelUserCount > 0
-            cvh.mChannelExpandToggle.setImageResource(
-                if (node.isExpanded()) {
-                    R.drawable.ic_action_expanded
-                } else {
-                    R.drawable.ic_action_collapsed
-                }
-            )
-            cvh.mChannelExpandToggle.setOnClickListener {
-                mExpandedChannels[channel.id] = !node.isExpanded()
-                updateChannels() // FIXME: very inefficient.
-                notifyDataSetChanged()
-            }
-            // Dim channel expand toggle when no subchannels exist
-            cvh.mChannelExpandToggle.isEnabled = expandUsable
-            cvh.mChannelExpandToggle.visibility = if (expandUsable) View.VISIBLE else View.INVISIBLE
+        if (mState.showUserCount) {
+            holder.mChannelUserCount.visibility = View.VISIBLE
+            holder.mChannelUserCount.text = String.format("%d", row.userCount)
+        } else {
+            holder.mChannelUserCount.visibility = View.GONE
+        }
 
-            cvh.mChannelName.text = channel.name
+        holder.mChannelListening.visibility = if (row.listening) View.VISIBLE else View.GONE
 
-            var nameTypeface = Typeface.NORMAL
-            val service = mService
-            if (service != null && service.isConnected()) {
-                // Session fetch inside the guard: scrolling during disconnect
-                // throws on acquisition too, not just on getSessionChannel().
-                var ourChan: IChannel? = null
-                try {
-                    val session = service.HumlaSession()
-                    ourChan = session.getSessionChannel()
-                } catch (e: HumlaDisconnectedException) {
-                    Log.d(TAG, "exception in onBindViewHolder: $e")
-                } catch (e: IllegalStateException) {
-                    Log.d(TAG, "exception in onBindViewHolder: $e")
-                }
-                if (ourChan != null) {
-                    if (channel == ourChan) {
-                        nameTypeface = nameTypeface or Typeface.BOLD
-                        // Always italicize our current channel if it has a link.
-                        if (channel.links.size > 0) {
-                            nameTypeface = nameTypeface or Typeface.ITALIC
-                        }
-                    }
-                    // Italicize channels in a link with our current channel.
-                    if (channel.links.any { it == ourChan }) {
-                        nameTypeface = nameTypeface or Typeface.ITALIC
-                    }
-                }
-            }
-            cvh.mChannelName.setTypeface(null, nameTypeface)
+        // Pad the view depending on channel's nested level.
+        val metrics = mContext.resources.displayMetrics
+        val margin = row.depth * TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, 25f, metrics
+        )
+        holder.mChannelHolder.setPadding(
+            margin.toInt(),
+            holder.mChannelHolder.paddingTop,
+            holder.mChannelHolder.paddingRight,
+            holder.mChannelHolder.paddingBottom
+        )
 
-            if (mShowChannelUserCount) {
-                cvh.mChannelUserCount.visibility = View.VISIBLE
-                val userCount = channel.subchannelUserCount
-                cvh.mChannelUserCount.text = String.format("%d", userCount)
-            } else {
-                cvh.mChannelUserCount.visibility = View.GONE
-            }
+        holder.mJoinButton.setOnClickListener { onChannelJoin(row.channel) }
 
-            cvh.mChannelListening.visibility = if (channel.isListening) View.VISIBLE else View.GONE
+        holder.mMoreButton.setOnClickListener { v -> onChannelMenu(row.channel, v) }
 
-            // Pad the view depending on channel's nested level.
-            val metrics = mContext.resources.displayMetrics
-            val margin = node.getDepth() * TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 25f, metrics)
-            cvh.mChannelHolder.setPadding(
-                margin.toInt(),
-                cvh.mChannelHolder.paddingTop,
-                cvh.mChannelHolder.paddingRight,
-                cvh.mChannelHolder.paddingBottom
-            )
+        holder.itemView.setOnLongClickListener {
+            holder.mMoreButton.performClick()
+            true
+        }
+    }
 
-            cvh.mJoinButton.setOnClickListener {
-                val service = mService
-                if (service != null && service.isConnected()) {
-                    // TOCTOU: tap racing teardown throws on acquisition.
-                    try {
-                        service.HumlaSession().joinChannel(channel.id)
-                    } catch (e: HumlaDisconnectedException) {
-                        Log.d(TAG, "join with torn-down session: $e")
-                    } catch (e: IllegalStateException) {
-                        Log.d(TAG, "join with torn-down session: $e")
-                    }
-                }
-            }
+    private fun bindUser(holder: UserViewHolder, row: Row.UserRow) {
+        val user = row.user
+        holder.itemView.setOnClickListener { onUserClick(row.user) }
 
-            cvh.mMoreButton.setOnClickListener { v ->
-                // NPE-exact: the original returned early only on null service.
-                val service = mService ?: return@setOnClickListener
-                val menu = ChannelMenu(mContext, channel, service, mDatabase, mFragmentManager)
-                menu.showPopup(v)
-            }
+        holder.mUserName.text = user.name
+        holder.mUserName.setTypeface(null, if (row.isSelf) Typeface.BOLD else Typeface.NORMAL)
+        holder.mUserTalkHighlight.setImageDrawable(getTalkStateDrawable(user, row.talkState))
 
-            cvh.itemView.setOnLongClickListener {
-                cvh.mMoreButton.performClick()
-                true
-            }
-        } else if (node.isUser()) {
-            // NPE-exact: isUser proves mUser non-null; the original dereferenced it.
-            val user = node.getUser() ?: throw NullPointerException("user")
-            val uvh = viewHolder as UserViewHolder
-            uvh.itemView.setOnClickListener {
-                val userClickListener = mUserClickListener
-                if (userClickListener != null) {
-                    userClickListener.onUserClick(user)
-                }
-            }
+        // Pad the view depending on channel's nested level.
+        val metrics = mContext.resources.displayMetrics
+        val margin = (row.depth + 1) * TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, 25f, metrics
+        )
+        holder.mUserHolder.setPadding(
+            margin.toInt(),
+            holder.mUserHolder.paddingTop,
+            holder.mUserHolder.paddingRight,
+            holder.mUserHolder.paddingBottom
+        )
 
-            uvh.mUserName.text = user.name
+        holder.mMoreButton.setOnClickListener { v -> onUserMenu(row.user, v) }
 
-            val typefaceStyle: Int
-
-            var selfSession = -1
-            try {
-                val service = mService
-                if (service != null) {
-                    selfSession = service.HumlaSession().getSessionId()
-                }
-            } catch (e: HumlaDisconnectedException) {
-                Log.d(TAG, "exception in onBindViewHolder: $e")
-            } catch (e: IllegalStateException) {
-                Log.d(TAG, "exception in onBindViewHolder: $e")
-            }
-
-            val service = mService
-            typefaceStyle = if (service != null && service.isConnected() && user.session == selfSession) {
-                Typeface.BOLD
-            } else {
-                Typeface.NORMAL
-            }
-            uvh.mUserName.setTypeface(null, typefaceStyle)
-
-            uvh.mUserTalkHighlight.setImageDrawable(getTalkStateDrawable(user))
-
-            // Pad the view depending on channel's nested level.
-            val metrics = mContext.resources.displayMetrics
-            val margin = (node.getDepth() + 1) * TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 25f, metrics)
-            uvh.mUserHolder.setPadding(
-                margin.toInt(),
-                uvh.mUserHolder.paddingTop,
-                uvh.mUserHolder.paddingRight,
-                uvh.mUserHolder.paddingBottom
-            )
-
-            uvh.mMoreButton.setOnClickListener { v ->
-                // NPE-exact: the original returned early only on null service.
-                val service = mService ?: return@setOnClickListener
-                // CCE-exact: the original cast to MumlaService unconditionally.
-                val menu = UserMenu(mContext, user, service as MumlaService, mFragmentManager, this)
-                menu.showPopup(v)
-            }
-
-            uvh.itemView.setOnLongClickListener {
-                uvh.mMoreButton.performClick()
-                true
-            }
+        holder.itemView.setOnLongClickListener {
+            holder.mMoreButton.performClick()
+            true
         }
     }
 
     override fun getItemCount(): Int {
-        return mNodes.size
+        return mRows.size
     }
 
     override fun getItemViewType(position: Int): Int {
-        val node = mNodes[position]
-        if (node.isChannel()) {
-            return R.layout.channel_row
-        } else if (node.isUser()) {
-            return R.layout.channel_user_row
-        } else {
-            return 0
+        return when (mRows[position]) {
+            is Row.ChannelRow -> R.layout.channel_row
+            is Row.UserRow -> R.layout.channel_user_row
         }
     }
 
     override fun getItemId(position: Int): Long {
-        try {
-            // NPE-exact: every node carries an id; unboxing null threw NPE in the original.
-            return mNodes[position].getId() ?: throw NullPointerException("id")
-        } catch (e: RemoteException) {
-            e.printStackTrace()
-        }
-        return -1
+        return mRows[position].stableId
     }
 
     /**
-     * Updates the channel tree model.
-     * To be used after any channel tree modifications.
+     * The drawable a user row shows, from the user's values and talk state.
      */
-    fun updateChannels() {
-        val service = mService
-        if (service == null || !service.isConnected()) {
-            return
-        }
-
-        val session = try {
-            service.HumlaSession()
-        } catch (e: HumlaDisconnectedException) {
-            Log.d(TAG, "exception in updateChannels: $e")
-            return
-        } catch (e: IllegalStateException) {
-            Log.d(TAG, "exception in updateChannels: $e")
-            return
-        }
-        mNodes.clear()
-        try {
-            for (cid in mRootChannels) {
-                val channel = session.getChannel(cid)
-                if (channel != null) {
-                    constructNodes(null, channel, 0, mNodes)
-                }
-            }
-        } catch (e: IllegalStateException) {
-            Log.d(TAG, "exception in updateChannels: $e")
-        }
-    }
-
-    /**
-     * Update a user's state icon
-     * @param user The user to update.
-     * @param view The view containing this adapter.
-     */
-    fun updateUserStates(user: IUser?, view: RecyclerView?) {
-        if (user == null || view == null) {
-            return
-        }
-        val itemId = (user.session.toLong() and 0xFFFFFFFFL) or USER_ID_MASK
-        val uvh = view.findViewHolderForItemId(itemId) as UserViewHolder?
-        // mUserTalkHighlight is non-null by construction; only the holder lookup
-        // can miss.
-        if (uvh != null) {
-            val newState = getTalkStateDrawable(user)
-            val current = uvh.mUserTalkHighlight.drawable
-            if (newState != null && current != null) {
-                val currentInner = current.current
-                val state: ConstantState? = currentInner?.constantState
-                if (state == null || state != newState.constantState) {
-                    uvh.mUserTalkHighlight.setImageDrawable(newState)
-                }
-            } else if (newState != null) {
-                uvh.mUserTalkHighlight.setImageDrawable(newState)
-            }
-        }
-    }
-
-    // Widened to public: Kotlin has no package visibility (was package-visible in Java).
-    fun getTalkStateDrawable(user: IUser?): Drawable? {
+    fun getTalkStateDrawable(user: UserInfo?, talkState: TalkState): Drawable? {
         if (user == null) {
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_off)
         }
-        if (user.isSelfDeafened) {
+        if (user.selfDeafened) {
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_deafened)
-        } else if (user.isDeafened) {
+        } else if (user.deafened) {
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_server_deafened)
-        } else if (user.isSelfMuted) {
+        } else if (user.selfMuted) {
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_muted)
-        } else if (user.isMuted) {
+        } else if (user.muted) {
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_server_muted)
-        } else if (user.isSuppressed) {
+        } else if (user.suppressed) {
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_suppressed)
-        } else if (user.talkState == TalkState.TALKING ||
-            user.talkState == TalkState.SHOUTING ||
-            user.talkState == TalkState.WHISPERING
+        } else if (talkState == TalkState.TALKING ||
+            talkState == TalkState.SHOUTING ||
+            talkState == TalkState.WHISPERING
         ) {
             // TODO whisper and shouting?
             return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_on)
         } else {
             // Passive drawables
-            val bitmap: Bitmap? = mAvatarCache.get(user)
+            val bitmap: Bitmap? = avatarOf(user)
             if (bitmap != null) {
                 return CircleDrawable(mContext.resources, bitmap)
             }
@@ -390,100 +257,104 @@ class ChannelListAdapter(
         return AppCompatResources.getDrawable(mContext, R.drawable.outline_circle_talking_off)
     }
 
+    private fun avatarOf(user: UserInfo): Bitmap? = mAvatarCache.get(
+        user.session,
+        user.textureCacheKey(),
+        user.texture?.toByteArray(),
+    )
+
     fun getUserPosition(session: Int): Int {
         val itemId = (session.toLong() and 0xFFFFFFFFL) or USER_ID_MASK
-        for (i in mNodes.indices) {
-            val node = mNodes[i]
-            try {
-                if (node.getId() == itemId) {
-                    return i
-                }
-            } catch (e: RemoteException) {
-                e.printStackTrace()
-            }
-        }
-        return -1
+        return mRows.indexOfFirst { it.stableId == itemId }
     }
 
     fun getChannelPosition(channelId: Int): Int {
         val itemId = (channelId.toLong() and 0xFFFFFFFFL) or CHANNEL_ID_MASK
-        for (i in mNodes.indices) {
-            val node = mNodes[i]
-            try {
-                if (node.getId() == itemId) {
-                    return i
-                }
-            } catch (e: RemoteException) {
-                e.printStackTrace()
-            }
+        return mRows.indexOfFirst { it.stableId == itemId }
+    }
+
+    fun clearAvatarCache() {
+        mAvatarCache.clear()
+    }
+
+    @VisibleForTesting
+    fun getAvatarCache(): AvatarCache {
+        return mAvatarCache
+    }
+
+    /** The flat list the adapter currently shows, for the screen-level test. */
+    @VisibleForTesting
+    fun rows(): List<Row> = mRows
+
+    /**
+     * Builds the deterministic flat row list. The same expansion rules as the
+     * live-handle adapter: an unset entry hides a channel with no users
+     * anywhere in its subtree; an explicit false always hides children.
+     */
+    private fun buildRows(state: ChannelListUiState): List<Row> {
+        val server = state.server
+        val selfChannelId = server.self?.channelId
+        val out = ArrayList<Row>()
+        val roots = if (mShowPinnedOnly) {
+            state.pinnedChannelIds.filter { server.channels.containsKey(it) }
+        } else {
+            listOf(0).filter { server.channels.containsKey(it) }
         }
-        return -1
+        for (rootId in roots) {
+            appendChannel(state, rootId, 0, selfChannelId, out)
+        }
+        return out
     }
 
-    fun setOnUserClickListener(listener: OnUserClickListener?) {
-        mUserClickListener = listener
-    }
-
-    fun setOnChannelClickListener(listener: OnChannelClickListener?) {
-        mChannelClickListener = listener
-    }
-
-    /**
-     * Sets whether to show the channel user count in a channel row.
-     */
-    fun setShowChannelUserCount(showUserCount: Boolean) {
-        mShowChannelUserCount = showUserCount
-        notifyDataSetChanged()
-    }
-
-    /**
-     * Recursively creates a list of {@link Node}s representing the channel hierarchy.
-     * @param parent The parent node to propagate under.
-     * @param channel The parent channel.
-     * @param depth The current depth of the subtree.
-     * @param nodes An accumulator to store generated nodes into.
-     */
-    private fun constructNodes(
-        parent: Node?,
-        channel: IChannel,
+    private fun appendChannel(
+        state: ChannelListUiState,
+        channelId: Int,
         depth: Int,
-        nodes: MutableList<Node>
+        selfChannelId: Int?,
+        out: MutableList<Row>,
     ) {
-        val channelNode = Node(parent, depth, channel)
-        nodes.add(channelNode)
-
-        val expandSetting = mExpandedChannels[channel.id]
-        if ((expandSetting == null && channel.subchannelUserCount == 0) ||
-            (expandSetting != null && !expandSetting)
-        ) {
-            channelNode.setExpanded(false)
+        val server = state.server
+        val channel = server.channels[channelId] ?: return
+        val children = server.tree.children(channelId)
+        val users = server.tree.users(channelId)
+        val userCount = server.tree.userCountInSubtree(channelId)
+        val expandSetting = mExpandedChannels[channelId]
+        val expanded =
+            !((expandSetting == null && userCount == 0) || (expandSetting != null && !expandSetting))
+        out.add(
+            Row.ChannelRow(
+                channel = channel,
+                depth = depth,
+                hasChildren = children.isNotEmpty() || userCount > 0,
+                userCount = userCount,
+                isSelfChannel = channelId == selfChannelId,
+                linkedToSelf = selfChannelId != null && channel.links.contains(selfChannelId),
+                listening = channel.isListening(state.session),
+                expanded = expanded,
+            ),
+        )
+        if (!expanded) {
             return // Skip adding children of contracted/empty channels.
         }
-
-        for (user in channel.users) {
-            nodes.add(Node(channelNode, depth, user))
+        for (user in users) {
+            out.add(
+                Row.UserRow(
+                    user = user,
+                    depth = depth,
+                    isSelf = user.session == state.server.selfSession,
+                    talkState = user.session.let {
+                        if (state.talkActivity.selfTalking && it == state.server.selfSession) {
+                            TalkState.TALKING
+                        } else {
+                            state.talkActivity.users[it] ?: TalkState.PASSIVE
+                        }
+                    },
+                ),
+            )
         }
-        for (subc in channel.subchannels) {
-            constructNodes(channelNode, subc, depth + 1, nodes)
+        for (child in children) {
+            appendChannel(state, child.id, depth + 1, selfChannelId, out)
         }
-    }
-
-    /**
-     * Changes the service backing the adapter. Updates the list as well.
-     * @param service The new service to retrieve channels from.
-     */
-    fun setService(service: IHumlaService) {
-        mService = service
-        if (service.getConnectionState() == HumlaService.ConnectionState.CONNECTED) {
-            updateChannels()
-            notifyDataSetChanged()
-        }
-    }
-
-    override fun onLocalUserStateUpdated(user: IUser) {
-        // The session owns local mute/ignore and persists them through its
-        // LocalFactsStore; the adapter only repaints.
-        notifyDataSetChanged()
     }
 
     private class UserViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
@@ -503,100 +374,43 @@ class ChannelListAdapter(
         val mMoreButton: ImageView = itemView.findViewById(R.id.channel_row_more)
     }
 
-    fun removeUser(session: Int) {
-        mAvatarCache.remove(session)
-    }
+    /** One flattened row. Value equality drives the minimal repaint. */
+    sealed interface Row {
+        val depth: Int
+        val stableId: Long
 
-    fun clearAvatarCache() {
-        mAvatarCache.clear()
-    }
-
-    @VisibleForTesting
-    fun getAvatarCache(): AvatarCache {
-        return mAvatarCache
-    }
-
-    /**
-     * An arbitrary node in the channel-user hierarchy.
-     * Can be either a channel or user.
-     */
-    private class Node {
-        private val mParent: Node?
-        private val mChannel: IChannel?
-        private val mUser: IUser?
-        private val mDepth: Int
-        private var mExpanded: Boolean
-
-        constructor(parent: Node?, depth: Int, channel: IChannel) {
-            mParent = parent
-            mChannel = channel
-            mUser = null
-            mDepth = depth
-            mExpanded = true
+        data class ChannelRow(
+            val channel: ChannelInfo,
+            override val depth: Int,
+            val hasChildren: Boolean,
+            val userCount: Int,
+            val isSelfChannel: Boolean,
+            val linkedToSelf: Boolean,
+            val listening: Boolean,
+            val expanded: Boolean,
+        ) : Row {
+            override val stableId: Long
+                get() = CHANNEL_ID_MASK or (channel.id.toLong() and 0xFFFFFFFFL)
         }
 
-        constructor(parent: Node?, depth: Int, user: IUser) {
-            mParent = parent
-            mChannel = null
-            mUser = user
-            mDepth = depth
-            mExpanded = false
-        }
-
-        fun isChannel(): Boolean {
-            return mChannel != null
-        }
-
-        fun isUser(): Boolean {
-            return mUser != null
-        }
-
-        fun getParent(): Node? {
-            return mParent
-        }
-
-        fun getChannel(): IChannel? {
-            return mChannel
-        }
-
-        fun getUser(): IUser? {
-            return mUser
-        }
-
-        @Throws(RemoteException::class)
-        fun getId(): Long? {
-            // Apply flags to differentiate integer-length identifiers
-            if (isChannel()) {
-                // NPE-exact: isChannel proves mChannel non-null; unboxing null threw NPE.
-                val channel = mChannel ?: throw NullPointerException("channel")
-                return CHANNEL_ID_MASK or (channel.id.toLong() and 0xFFFFFFFFL)
-            } else if (isUser()) {
-                // NPE-exact: isUser proves mUser non-null; unboxing null threw NPE.
-                val user = mUser ?: throw NullPointerException("user")
-                return USER_ID_MASK or (user.session.toLong() and 0xFFFFFFFFL)
-            }
-            return null
-        }
-
-        fun getDepth(): Int {
-            return mDepth
-        }
-
-        fun isExpanded(): Boolean {
-            return mExpanded
-        }
-
-        fun setExpanded(expanded: Boolean) {
-            mExpanded = expanded
+        data class UserRow(
+            val user: UserInfo,
+            override val depth: Int,
+            val isSelf: Boolean,
+            val talkState: TalkState,
+        ) : Row {
+            override val stableId: Long
+                get() = USER_ID_MASK or (user.session.toLong() and 0xFFFFFFFFL)
         }
     }
 
     companion object {
-        private val TAG: String = ChannelListAdapter::class.java.name
-
         // Set particular bits to make the integer-based model item ids unique.
         // (0x1L << 32) and (0x1L << 33); written out because const forbids shl.
         const val CHANNEL_ID_MASK = 0x100000000L
         const val USER_ID_MASK = 0x200000000L
+
+        /** Any non-null payload; onBindViewHolder ignores it and rebinds the row. */
+        private val REBIND_IN_PLACE = Any()
     }
 }

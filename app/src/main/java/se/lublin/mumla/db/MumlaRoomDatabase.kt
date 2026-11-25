@@ -24,7 +24,6 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import se.lublin.humla.model.Server
 import se.lublin.mumla.LocalFactsDao
@@ -38,12 +37,10 @@ import se.lublin.mumla.LocalFactsDao
  * the fleet has real data. `Server` is the single `@Entity @Parcelize` model
  * (DB row, parcel, and UI model in one); no entity mapping remains.
  *
- * Threading: the legacy interface is synchronous and screens still call it
- * from the main thread, so its methods bridge to the IO dispatcher. Screens
- * move to the suspend methods in step 7; the service, features, and
- * LocalFactsStore already use those. The container builds exactly one
- * instance per process ([create]) — Room forbids concurrent instances on
- * one file.
+ * Threading: every read and write is suspend and runs on Dispatchers.IO, so
+ * no screen, feature, or service can block the main thread on storage. The
+ * container builds exactly one instance per process ([create]) — Room forbids
+ * concurrent instances on one file.
  */
 @Database(
     entities = [
@@ -81,11 +78,11 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase, LocalFactsDao 
         }
     }
 
-    override fun getServers(): List<Server> = io {
+    override suspend fun getServers(): List<Server> = withContext(Dispatchers.IO) {
         serverDao().getAll()
     }
 
-    override fun addServer(server: Server) {
+    override suspend fun addServer(server: Server) {
         // Insert via a detached copy so concurrent readers of the passed
         // instance never observe the transient id == 0 window: the caller's
         // object keeps its previous id (-1 unsaved sentinel) until the
@@ -101,18 +98,18 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase, LocalFactsDao 
             username = server.username,
             password = server.password,
         )
-        server.id = io { serverDao().insert(detached) }
+        server.id = withContext(Dispatchers.IO) { serverDao().insert(detached) }
     }
 
-    override fun updateServer(server: Server) {
-        io { serverDao().update(server) }
+    override suspend fun updateServer(server: Server) {
+        withContext(Dispatchers.IO) { serverDao().update(server) }
     }
 
-    override fun removeServer(server: Server) {
+    override suspend fun removeServer(server: Server) {
         // Atomic five-table cleanup: a crash mid-way must not leave orphans
         // (no FKs backstop these tables), so the deletes run in one Room
         // transaction on the IO bridge (Room forbids main-thread queries).
-        io {
+        withContext(Dispatchers.IO) {
             runInTransaction {
                 serverDao().deleteById(server.id)
                 // Server-specific cleanup, mirroring the SQLite implementation.
@@ -124,94 +121,75 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase, LocalFactsDao 
         }
     }
 
-    override fun isCommentSeen(hash: String, commentHash: ByteArray): Boolean =
-        io { commentDao().count(hash, String(commentHash, Charsets.UTF_8)) > 0 }
-
-    override fun markCommentSeen(hash: String, commentHash: ByteArray) {
-        io {
-            commentDao().insert(
-                CommentEntity(
-                    who = hash,
-                    comment = String(commentHash, Charsets.UTF_8),
-                    // Pre-existing quirk, preserved: stores the literal
-                    // "datetime('now')" instead of evaluating it (filed
-                    // separately; the value is never read).
-                    seen = "datetime('now')",
-                ),
-            )
-        }
-    }
-
-    override fun getPinnedChannels(serverId: Long): List<Int> =
+    override suspend fun getPinnedChannels(serverId: Long): List<Int> =
         // Corrupt non-numeric rows are dropped, not coerced to channel 0
         // (0 is a valid channel; mapping garbage there would pin it).
-        io { pinnedDao().getChannels(serverId).mapNotNull { it.toIntOrNull() } }
+        withContext(Dispatchers.IO) { pinnedDao().getChannels(serverId).mapNotNull { it.toIntOrNull() } }
 
-    override fun addPinnedChannel(serverId: Long, channelId: Int) {
-        io { pinnedDao().insert(FavouriteEntity(channel = channelId.toString(), serverId = serverId)) }
+    override suspend fun addPinnedChannel(serverId: Long, channelId: Int) {
+        withContext(Dispatchers.IO) { pinnedDao().insert(FavouriteEntity(channel = channelId.toString(), serverId = serverId)) }
     }
 
-    override fun removePinnedChannel(serverId: Long, channelId: Int) {
-        io { pinnedDao().delete(serverId, channelId.toString()) }
+    override suspend fun removePinnedChannel(serverId: Long, channelId: Int) {
+        withContext(Dispatchers.IO) { pinnedDao().delete(serverId, channelId.toString()) }
     }
 
-    override fun isChannelPinned(serverId: Long, channelId: Int): Boolean =
-        io { pinnedDao().count(serverId, channelId.toString()) > 0 }
+    override suspend fun isChannelPinned(serverId: Long, channelId: Int): Boolean =
+        withContext(Dispatchers.IO) { pinnedDao().count(serverId, channelId.toString()) > 0 }
 
-    override fun getAccessTokens(serverId: Long): List<String> =
-        io { tokenDao().getValues(serverId) }
+    override suspend fun getAccessTokens(serverId: Long): List<String> =
+        withContext(Dispatchers.IO) { tokenDao().getValues(serverId) }
 
-    override fun addAccessToken(serverId: Long, token: String) {
-        io { tokenDao().insert(TokenEntity(value = token, serverId = serverId)) }
+    override suspend fun addAccessToken(serverId: Long, token: String) {
+        withContext(Dispatchers.IO) { tokenDao().insert(TokenEntity(value = token, serverId = serverId)) }
     }
 
-    override fun removeAccessToken(serverId: Long, token: String) {
-        io { tokenDao().delete(serverId, token) }
+    override suspend fun removeAccessToken(serverId: Long, token: String) {
+        withContext(Dispatchers.IO) { tokenDao().delete(serverId, token) }
     }
 
-    override fun getLocalMutedUsers(serverId: Long): List<Int> =
-        io { localMuteDao().getUsers(serverId) }
+    override suspend fun getLocalMutedUsers(serverId: Long): List<Int> =
+        withContext(Dispatchers.IO) { localMuteDao().getUsers(serverId) }
 
-    override fun addLocalMutedUser(serverId: Long, userId: Int) {
-        io { localMuteDao().insert(LocalMuteEntity(serverId = serverId, userId = userId)) }
+    override suspend fun addLocalMutedUser(serverId: Long, userId: Int) {
+        withContext(Dispatchers.IO) { localMuteDao().insert(LocalMuteEntity(serverId = serverId, userId = userId)) }
     }
 
-    override fun removeLocalMutedUser(serverId: Long, userId: Int) {
-        io { localMuteDao().delete(serverId, userId) }
+    override suspend fun removeLocalMutedUser(serverId: Long, userId: Int) {
+        withContext(Dispatchers.IO) { localMuteDao().delete(serverId, userId) }
     }
 
-    override fun getLocalIgnoredUsers(serverId: Long): List<Int> =
-        io { localIgnoreDao().getUsers(serverId) }
+    override suspend fun getLocalIgnoredUsers(serverId: Long): List<Int> =
+        withContext(Dispatchers.IO) { localIgnoreDao().getUsers(serverId) }
 
-    override fun addLocalIgnoredUser(serverId: Long, userId: Int) {
-        io { localIgnoreDao().insert(LocalIgnoreEntity(serverId = serverId, userId = userId)) }
+    override suspend fun addLocalIgnoredUser(serverId: Long, userId: Int) {
+        withContext(Dispatchers.IO) { localIgnoreDao().insert(LocalIgnoreEntity(serverId = serverId, userId = userId)) }
     }
 
-    override fun removeLocalIgnoredUser(serverId: Long, userId: Int) {
-        io { localIgnoreDao().delete(serverId, userId) }
+    override suspend fun removeLocalIgnoredUser(serverId: Long, userId: Int) {
+        withContext(Dispatchers.IO) { localIgnoreDao().delete(serverId, userId) }
     }
 
-    override fun addCertificate(name: String, certificate: ByteArray, password: String?): DatabaseCertificate {
-        val id = io {
+    override suspend fun addCertificate(name: String, certificate: ByteArray, password: String?): DatabaseCertificate {
+        val id = withContext(Dispatchers.IO) {
             certificateDao().insert(CertificateEntity(data = certificate, name = name, password = password))
         }
         return DatabaseCertificate(id, name)
     }
 
-    override fun getCertificates(): List<DatabaseCertificate> =
-        io { certificateDao().getAll().map { DatabaseCertificate(it.id, it.name) } }
+    override suspend fun getCertificates(): List<DatabaseCertificate> =
+        withContext(Dispatchers.IO) { certificateDao().getAll().map { DatabaseCertificate(it.id, it.name) } }
 
-    override fun getCertificateData(id: Long): ByteArray? =
-        io { certificateDao().getData(id) }
+    override suspend fun getCertificateData(id: Long): ByteArray? =
+        withContext(Dispatchers.IO) { certificateDao().getData(id) }
 
-    override fun getCertificatePassword(id: Long): String? =
-        io { certificateDao().getPassword(id) }
+    override suspend fun getCertificatePassword(id: Long): String? =
+        withContext(Dispatchers.IO) { certificateDao().getPassword(id) }
 
-    override fun removeCertificate(id: Long) {
-        io { certificateDao().deleteById(id) }
+    override suspend fun removeCertificate(id: Long) {
+        withContext(Dispatchers.IO) { certificateDao().deleteById(id) }
     }
 
-    /** Suspend path for the service, features, and LocalFactsStore. */
     override suspend fun mutedUsers(serverId: Long): List<Int> = localMutedUsers(serverId)
 
     override suspend fun ignoredUsers(serverId: Long): List<Int> = localIgnoredUsers(serverId)
@@ -246,11 +224,6 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase, LocalFactsDao 
 
     suspend fun deleteLocalIgnoredUser(serverId: Long, userId: Int) = withContext(Dispatchers.IO) {
         localIgnoreDao().delete(serverId, userId)
-    }
-
-    /** Generic suspend bridge for the remaining DAO work in step 7. */
-    suspend fun <T> query(block: (MumlaRoomDatabase) -> T): T = withContext(Dispatchers.IO) {
-        block(this@MumlaRoomDatabase)
     }
 
     companion object {
@@ -410,7 +383,5 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase, LocalFactsDao 
                 )
             }
         }
-
-        private fun <T> io(block: () -> T): T = runBlocking(Dispatchers.IO) { block() }
     }
 }

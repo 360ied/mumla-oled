@@ -22,7 +22,7 @@ import org.junit.Test
 
 /**
  * Pins the pure reconnect-backoff table owned by ReconnectPolicy
- * (HumlaService.getReconnectDelayForAttempts delegates to it).
+ * (the client computes every retry delay from it).
  * Delays: 0->1000, 1->3000, 2->6000, 3->12000, >=4->25000.
  */
 class ReconnectPolicyTest {

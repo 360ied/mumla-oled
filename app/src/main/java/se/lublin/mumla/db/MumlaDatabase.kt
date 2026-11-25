@@ -27,30 +27,27 @@ interface MumlaDatabase {
     fun open()
     fun close()
 
-    fun getServers(): List<Server>
-    fun addServer(server: Server)
-    fun updateServer(server: Server)
-    fun removeServer(server: Server)
+    suspend fun getServers(): List<Server>
+    suspend fun addServer(server: Server)
+    suspend fun updateServer(server: Server)
+    suspend fun removeServer(server: Server)
 
-    fun isCommentSeen(hash: String, commentHash: ByteArray): Boolean
-    fun markCommentSeen(hash: String, commentHash: ByteArray)
+    suspend fun getPinnedChannels(serverId: Long): List<Int>
+    suspend fun addPinnedChannel(serverId: Long, channelId: Int)
+    suspend fun removePinnedChannel(serverId: Long, channelId: Int)
+    suspend fun isChannelPinned(serverId: Long, channelId: Int): Boolean
 
-    fun getPinnedChannels(serverId: Long): List<Int>
-    fun addPinnedChannel(serverId: Long, channelId: Int)
-    fun removePinnedChannel(serverId: Long, channelId: Int)
-    fun isChannelPinned(serverId: Long, channelId: Int): Boolean
+    suspend fun getAccessTokens(serverId: Long): List<String>
+    suspend fun addAccessToken(serverId: Long, token: String)
+    suspend fun removeAccessToken(serverId: Long, token: String)
 
-    fun getAccessTokens(serverId: Long): List<String>
-    fun addAccessToken(serverId: Long, token: String)
-    fun removeAccessToken(serverId: Long, token: String)
+    suspend fun getLocalMutedUsers(serverId: Long): List<Int>
+    suspend fun addLocalMutedUser(serverId: Long, userId: Int)
+    suspend fun removeLocalMutedUser(serverId: Long, userId: Int)
 
-    fun getLocalMutedUsers(serverId: Long): List<Int>
-    fun addLocalMutedUser(serverId: Long, userId: Int)
-    fun removeLocalMutedUser(serverId: Long, userId: Int)
-
-    fun getLocalIgnoredUsers(serverId: Long): List<Int>
-    fun addLocalIgnoredUser(serverId: Long, userId: Int)
-    fun removeLocalIgnoredUser(serverId: Long, userId: Int)
+    suspend fun getLocalIgnoredUsers(serverId: Long): List<Int>
+    suspend fun addLocalIgnoredUser(serverId: Long, userId: Int)
+    suspend fun removeLocalIgnoredUser(serverId: Long, userId: Int)
 
     /**
      * Adds the given certificate binary blob to the database with an optional passphrase.
@@ -59,31 +56,31 @@ interface MumlaDatabase {
      * @param password The PKCS12 decryption passphrase, or null if unencrypted.
      * @return A handle for the newly created certificate.
      */
-    fun addCertificate(name: String, certificate: ByteArray, password: String?): DatabaseCertificate
+    suspend fun addCertificate(name: String, certificate: ByteArray, password: String?): DatabaseCertificate
 
-    fun addCertificate(name: String, certificate: ByteArray): DatabaseCertificate {
+    suspend fun addCertificate(name: String, certificate: ByteArray): DatabaseCertificate {
         return addCertificate(name, certificate, null)
     }
 
-    fun getCertificates(): List<DatabaseCertificate>
+    suspend fun getCertificates(): List<DatabaseCertificate>
 
     /**
      * Obtains the certificate data associated with the given certificate ID.
      * @param id The certificate ID to fetch the data of.
      * @return A binary representation of a PKCS12 certificate.
      */
-    fun getCertificateData(id: Long): ByteArray?
+    suspend fun getCertificateData(id: Long): ByteArray?
 
     /**
      * Obtains the certificate passphrase associated with the given certificate ID.
      * @param id The certificate ID to fetch the passphrase of.
      * @return The PKCS12 decryption passphrase, or null if unencrypted.
      */
-    fun getCertificatePassword(id: Long): String?
+    suspend fun getCertificatePassword(id: Long): String?
 
     /**
      * Removes the certificate with the given ID.
      * @param id The certificate's identifier.
      */
-    fun removeCertificate(id: Long)
+    suspend fun removeCertificate(id: Long)
 }

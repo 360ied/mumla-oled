@@ -17,42 +17,15 @@
 
 package se.lublin.mumla.preference
 
-import android.content.ComponentName
-import android.content.Intent
-import android.content.ServiceConnection
 import android.os.Bundle
-import android.os.IBinder
 import android.util.Log
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.widget.Toolbar
 import androidx.fragment.app.Fragment
 import se.lublin.mumla.R
 import se.lublin.mumla.app.BaseActivity
-import se.lublin.mumla.service.IMumlaService
-import se.lublin.mumla.service.MumlaService
 
 class SettingsActivity : BaseActivity() {
-    private var crashService: IMumlaService? = null
-    private var crashBound: Boolean = false
-
-    private val crashConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            try {
-                crashService = (service as MumlaService.MumlaBinder).getService()
-                crashBound = true
-            } catch (_: Throwable) {
-                crashService = null
-                crashBound = false
-            }
-            notifyCrashFragment()
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            crashBound = false
-            crashService = null
-            notifyCrashFragment()
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -140,63 +113,6 @@ class SettingsActivity : BaseActivity() {
                     Log.w(TAG, "Could not instantiate settings fragment $fragmentClassName", e)
                 }
             }
-        }
-    }
-
-    override fun onStart() {
-        super.onStart()
-        try {
-            val intent = Intent(this, MumlaService::class.java)
-            // Flag 0 like MumlaActivity: the bind only succeeds while the
-            // service is already running; buttons sit disabled while unbound.
-            crashBound = bindService(intent, crashConnection, 0)
-            if (!crashBound) {
-                crashService = null
-            }
-        } catch (_: Throwable) {
-            crashBound = false
-            crashService = null
-        }
-    }
-
-    override fun onStop() {
-        // Unbind after super.onStop(): FragmentActivity dispatches fragment
-        // onStop from super, so the fragment's unregisterObserver still sees
-        // a non-null service and never leaks it on the live MumlaService.
-        super.onStop()
-        if (crashBound) {
-            try {
-                unbindService(crashConnection)
-            } catch (_: Throwable) {
-            }
-            crashBound = false
-            crashService = null
-        }
-    }
-
-    fun getCrashService(): IMumlaService? {
-        return crashService
-    }
-
-    fun isCrashBound(): Boolean {
-        return crashBound
-    }
-
-    fun isCrashConnected(): Boolean {
-        return try {
-            crashService?.isConnected() == true
-        } catch (_: Throwable) {
-            false
-        }
-    }
-
-    private fun notifyCrashFragment() {
-        try {
-            val fragment = supportFragmentManager.findFragmentById(R.id.settings_container)
-            if (fragment is CrashReportsFragment) {
-                fragment.onServiceStateChanged()
-            }
-        } catch (_: Throwable) {
         }
     }
 

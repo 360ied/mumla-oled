@@ -103,6 +103,7 @@ appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat"
 cardview = { module = "androidx.cardview:cardview", version.ref = "cardview" }
 documentfile = { module = "androidx.documentfile:documentfile", version.ref = "documentfile" }
 fragment = { module = "androidx.fragment:fragment", version.ref = "fragment" }
+fragment-ktx = { module = "androidx.fragment:fragment-ktx", version.ref = "fragment" }
 recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerview" }
 exifinterface = { module = "androidx.exifinterface:exifinterface", version.ref = "exifinterface" }
 material = { module = "com.google.android.material:material", version.ref = "material" }

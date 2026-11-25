@@ -17,7 +17,7 @@ under [`steps/`](steps/); progress is tracked in
 | [5a Engine refactor, codec, network threads](steps/5a-engine-refactor-codec-network-threads.md) | done |
 | [5b AAudio](steps/5b-aaudio.md) | done |
 | [6 Container, storage, and features](steps/6-container-storage-and-features.md) | done |
-| [7 Screens and service cut-over](steps/7-screens-and-service-cut-over.md) | not started |
+| [7 Screens and service cut-over](steps/7-screens-and-service-cut-over.md) | done |
 | [8 Clean up](steps/8-clean-up.md) | not started |
 
 The step files of finished steps are records of the plan as it was
@@ -79,15 +79,6 @@ flowchart LR
   instead of running a fourth.
 - Every step leaves a working app. Step 7 needs step 6; step 8 needs
   steps 5b and 7.
-- Until step 7, the connect-target half of `ConfigDelta` keeps applying
-  through `HumlaService.apply`; step 7 deletes it with the service.
-- **Interim observer bridge.** Until step 7, `HumlaClient` and `Session`
-  take `IHumlaObserver`, a main-thread poster, and the deny formatter so
-  today's screens keep working. `HumlaRuntime` holds all three, because
-  the client outlives every service instance: it owns the observer (its
-  `HumlaCallbacks`) and the main-thread poster, and takes the deny
-  formatter from the container as an input. Step 7 removes them along
-  with `IHumlaObserver`.
 - **Main-thread assertion.** Every method that may block (stream start
   and stop, platform route calls, thread joins) starts with
   `checkNotMainThread()`, a small helper that throws in debug builds and
@@ -111,7 +102,7 @@ Updated in the branch of the step that reverses them:
 
 | Decision (where recorded) | Replaced by | Step |
 |---|---|---|
-| Native fence: "C++ frozen, no behavior touch" ([migration README](../migration/README.md)) | The engine stays free of I/O; it may be refactored, pinned by golden outputs | 5a (recorded), 7 (marked done here; the old README stays as written) |
+| Native fence: "C++ frozen, no behavior touch" ([migration README](../migration/README.md)) | The engine stays free of I/O; it may be refactored, pinned by golden outputs | 5a, 7 (done; the old README stays as written) |
 | "No Oboe/AAudio" in the audio pipeline description ([`AGENTS.md`](../../AGENTS.md)) | AAudio, callback mode, for capture and playback | 5b (recorded) |
-| Frozen binder surface `IMumlaService`/`IHumlaService`/`IHumlaSession` ([migration README](../migration/README.md)) | Removed; screens and features collect flows | 7 |
+| Frozen binder surface `IMumlaService`/`IHumlaService`/`IHumlaSession` ([migration README](../migration/README.md)) | Removed; screens and features collect flows | 7 (done) |
 | Hilt as the DI framework ([migration slices](../migration/slices.md)) | Hand-written `AppContainer` | 6 |

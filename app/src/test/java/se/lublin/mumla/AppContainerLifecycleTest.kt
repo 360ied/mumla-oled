@@ -19,50 +19,58 @@ package se.lublin.mumla
 
 import android.content.Context
 import android.content.Intent
-import org.robolectric.RuntimeEnvironment
+import android.os.Looper
+import java.time.Duration
+import kotlin.reflect.KClass
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.withTimeout
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
-import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
-import android.os.Looper
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows
+import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowPowerManager
 import se.lublin.humla.HumlaRuntime
+import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.FakeFactory
 import se.lublin.humla.client.FakeTransport
+import se.lublin.humla.client.reject
 import se.lublin.humla.client.syncSequence
 import se.lublin.humla.client.testTarget
 import se.lublin.humla.client.userState
-import se.lublin.humla.model.Server
 import se.lublin.humla.net.HumlaTCPMessageType
 import se.lublin.humla.net.Inbound
 import se.lublin.humla.route.RouteState
-import se.lublin.humla.util.HumlaObserver
 import se.lublin.humla.voice.EngineNative
 import se.lublin.mumla.app.MumlaApplication
 import se.lublin.mumla.db.MumlaRoomDatabase
-import se.lublin.mumla.service.MumlaService
+import se.lublin.mumla.service.ConnectionService
 
 /**
- * Executable check of the step-6 lifetime rule: the container and its runtime
- * are built once per process, and a service created after another one was
- * destroyed gets the same, still working objects.
+ * Executable check of the step-7 service rule: the container and its runtime
+ * are built once per process, the UI's connect path starts ConnectionService
+ * at the first visible attempt, and the service lives exactly while the
+ * connection does. Nothing binds to it.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(application = AppContainerLifecycleTest.TestApplication::class, sdk = [34])
 class AppContainerLifecycleTest {
 
     class TestApplication : MumlaApplication() {
+        /** Paused: the connect-path waiter runs only when the test runs it. */
+        val waiterDispatcher = StandardTestDispatcher()
+
         override fun createContainer(): AppContainer =
             AppContainer(
                 this,
@@ -70,6 +78,7 @@ class AppContainerLifecycleTest {
                     engineFactory = { FakeEngineNative() },
                     transports = FakeFactory(),
                 ),
+                waiterDispatcher,
             )
     }
 
@@ -109,14 +118,72 @@ class AppContainerLifecycleTest {
         override fun destroy() = Unit
     }
 
+    private fun app(): TestApplication = RuntimeEnvironment.getApplication() as TestApplication
+
+    private fun container(): AppContainer = app().container
+
+    private fun idle() = Shadows.shadowOf(Looper.getMainLooper()).idle()
+
+    private fun factory(): FakeFactory = container().runtimeEdges.transports as FakeFactory
+
+    private fun newTransport(): FakeTransport = FakeTransport().also {
+        factory().transports.addLast(it)
+    }
+
+    /** Lets the paused app scope run (the connect-path waiter). */
+    private fun runWaiter() = app().waiterDispatcher.scheduler.runCurrent()
+
+    /** Waits for the connect path's started-service intent without consuming it. */
+    private fun awaitServiceIntent(): Intent = runBlocking {
+        withTimeout(5_000) {
+            while (Shadows.shadowOf(app()).peekNextStartedService() == null) {
+                runWaiter()
+                idle()
+                delay(10)
+            }
+            Shadows.shadowOf(app()).nextStartedService
+                ?: throw AssertionError("no started service")
+        }
+    }
+
+    private fun <T : ClientState> awaitState(kind: KClass<T>): T = runBlocking {
+        withTimeout(5_000) {
+            var value = container().runtime.client.state.value
+            while (!kind.isInstance(value)) {
+                idle()
+                delay(10)
+                value = container().runtime.client.state.value
+            }
+            @Suppress("UNCHECKED_CAST")
+            value as T
+        }
+    }
+
+    /** Starts ConnectionService the way the foreground start would. */
+    private fun startService(intent: Intent): ServiceController<ConnectionService> =
+        Robolectric.buildService(ConnectionService::class.java, intent).create().startCommand(0, 0)
+
+    /** Connect through the container path and start the service it asked for. */
+    private fun connectAndStartService(transport: FakeTransport): ServiceController<ConnectionService> {
+        idle()
+        container().connect(testTarget())
+        awaitState(ClientState.Connecting::class)
+        runWaiter()
+        val intent = awaitServiceIntent()
+        assertEquals(ConnectionService::class.java.name, intent.component?.className)
+        val controller = startService(intent)
+        idle()
+        return controller
+    }
+
     @After fun closeRuntime() {
         // Every Robolectric container registers one process network callback;
         // release it so tests do not accumulate callbacks.
-        (RuntimeEnvironment.getApplication() as TestApplication).container.runtime.close()
+        container().runtime.close()
     }
 
     @Test fun runtimeKeepsAndReleasesItsNetworkCallback() {
-        val runtime = (RuntimeEnvironment.getApplication() as TestApplication).container.runtime
+        val runtime = container().runtime
         assertTrue(runtime.networkCallbackRegistered)
         runtime.close()
         assertFalse(runtime.networkCallbackRegistered)
@@ -125,7 +192,7 @@ class AppContainerLifecycleTest {
     }
 
     @Test fun processSingletonsAreShared() {
-        val app = RuntimeEnvironment.getApplication() as TestApplication
+        val app = app()
         val companion = AppContainer.Companion
         val create = AppContainer.Companion::class.java.getDeclaredMethod(
             "createSettingsStore", Context::class.java,
@@ -137,210 +204,292 @@ class AppContainerLifecycleTest {
         assertSame(MumlaRoomDatabase.create(app), MumlaRoomDatabase.create(app))
     }
 
-    @Test fun newConnectDeltaResetsTheErrorShownFlag() {
-        val controller = Robolectric.buildService(MumlaService::class.java).create()
-        val service = controller.get()
-        service.markErrorShown()
-        assertTrue(service.isErrorShown())
-        val intent = Intent(RuntimeEnvironment.getApplication(), MumlaService::class.java)
-        intent.putExtra(
-            MumlaService.EXTRA_SERVER,
-            Server(-1L, "name", "example.org", 64738, "user", null),
-        )
-        val build = MumlaService::class.java.getDeclaredMethod(
-            "buildConnectDelta", Intent::class.java,
-        )
-        build.isAccessible = true
-        assertNotNull(build.invoke(service, intent))
-        assertFalse(service.isErrorShown())
-        controller.destroy()
-    }
-
-    @Test fun rejectedVoiceSettingsKeepThePreviousValueAndTheFlowAlive() = runBlocking {
-        val container = (RuntimeEnvironment.getApplication() as TestApplication).container
+    @Test fun rejectedVoiceSettingsKeepThePreviousValueAndTheFlowAlive(): Unit = runBlocking {
+        val container = container()
         val before = container.voiceSettings.value
         container.settingsRepository.updateTyped { it.inputBitrate = 0 }
         withTimeout(5_000) {
             while (container.settingsRepository.state.value.snapshot.inputBitrate != 0) {
-                kotlinx.coroutines.delay(10)
+                runWaiter()
+                delay(10)
             }
         }
-        kotlinx.coroutines.delay(50)
+        repeat(5) {
+            runWaiter()
+            delay(10)
+        }
         assertEquals(before, container.voiceSettings.value)
         // A rejected snapshot must not kill the flow: a later valid write
         // still reaches voiceSettings without another container rebuild.
         container.settingsRepository.updateTyped { it.inputBitrate = 48000 }
         withTimeout(5_000) {
             while (container.voiceSettings.value.targetBitrate != 48000) {
-                kotlinx.coroutines.delay(10)
+                runWaiter()
+                delay(10)
             }
         }
         assertEquals(48000, container.voiceSettings.value.targetBitrate)
     }
 
-    @Test fun idleServiceDoesNotPostAConnectingPlaceholder() {
-        val controller = Robolectric.buildService(MumlaService::class.java).create()
+    @Test
+    fun connectStartsTheServiceAndTheSessionConnectsWithoutABinding(): Unit = runBlocking {
+        val transport = newTransport()
+        val controller = connectAndStartService(transport)
         val shadow = Shadows.shadowOf(controller.get())
-        // Only startForeground sets the id and nothing resets it, so 0 means
-        // the service never posted. isLastForegroundNotificationAttached()
-        // cannot pin this: the collector's Idle stopForeground(REMOVE) clears
-        // it even after a placeholder was posted.
-        assertEquals(
-            "a bound-but-Idle service must not post the connecting notification",
-            0,
-            shadow.lastForegroundNotificationId,
+        assertTrue(
+            "the service must post the connection notification at once",
+            shadow.isLastForegroundNotificationAttached(),
         )
-        controller.destroy()
-    }
 
-    @Test
-    fun secondServiceSharesTheRuntimeAndDropsTheFirstObservers() {
-        val app = RuntimeEnvironment.getApplication() as TestApplication
-        val container = app.container
-        val firstController = Robolectric.buildService(MumlaService::class.java).create()
-        val first = firstController.get()
-        val firstRuntime = runtimeOf(first)
-        assertSame(container.runtime, firstRuntime)
-
-        var firstCalls = 0
-        val firstObserver = object : HumlaObserver() {
-            override fun onConnecting() { firstCalls++ }
-        }
-        first.registerObserver(firstObserver)
-
-        firstController.destroy()
-
-        // The runtime's route thread is still alive after the first service
-        // is gone: the process-lifetime answer is not a closed route.
-        container.runtime.retrySco()
-        assertTrue(container.runtime.routeState.value is RouteState)
-
-        container.runtime.callbacks.onConnecting()
-        assertTrue("observer of a destroyed service must be gone", firstCalls == 0)
-
-        val secondController = Robolectric.buildService(MumlaService::class.java).create()
-        val second = secondController.get()
-        val secondRuntime = runtimeOf(second)
-        assertSame("second service must hold the same runtime", firstRuntime, secondRuntime)
-        assertSame("second service must hold the same client", firstRuntime.client, secondRuntime.client)
-        assertSame(container.runtime.client, secondRuntime.client)
-
-        var secondCalls = 0
-        val secondObserver = object : HumlaObserver() {
-            override fun onConnecting() { secondCalls++ }
-        }
-        second.registerObserver(secondObserver)
-        container.runtime.callbacks.onConnecting()
-        assertTrue("observer of the live service must receive callbacks", secondCalls > 0)
-        assertNotSame(first, second)
-
-        secondController.destroy()
-    }
-
-    @Test
-    fun connectThroughSecondServiceReachesTheFakeTransport() {
-        runBlocking {
-        val app = RuntimeEnvironment.getApplication() as TestApplication
-        val container = app.container
-        // Robolectric's paused main looper: let the process-lifetime feature
-        // collectors subscribe before the first event can be emitted.
-        Shadows.shadowOf(Looper.getMainLooper()).idle()
-        val firstController = Robolectric.buildService(MumlaService::class.java).create()
-        val first = firstController.get()
-        firstController.destroy()
-        val secondController = Robolectric.buildService(MumlaService::class.java).create()
-        val second = secondController.get()
-
-        val factory = container.runtimeEdges.transports as FakeFactory
-        val transport = FakeTransport()
-        factory.transports.addLast(transport)
-        container.runtime.client.connect(testTarget())
-
-        withTimeout(5_000) {
-            while (container.runtime.client.state.value !is ClientState.Connecting) {
-                kotlinx.coroutines.delay(10)
-            }
-        }
-        assertTrue(container.runtime.client.state.value is ClientState.Connecting)
-        // A connect reaches the fake transport and the process-lifetime route
-        // is still live (its own thread answers SessionStarted asynchronously).
-        withTimeout(5_000) {
-            while (factory.created.isEmpty()) {
-                kotlinx.coroutines.delay(10)
-            }
-        }
-        assertTrue("connect must reach the fake transport factory", factory.created.isNotEmpty())
-        assertTrue(container.runtime.routeState.value is RouteState)
-
-        // Drive the fake transport through ServerSync: the second service's
-        // connect reaches Connected, and the application-lifetime features
-        // see the resulting session events.
         for (message in syncSequence()) {
             transport.inboundChannel.trySend(message)
         }
-        withTimeout(5_000) {
-            while (container.runtime.client.state.value !is ClientState.Connected) {
-                Shadows.shadowOf(Looper.getMainLooper()).idle()
-                kotlinx.coroutines.delay(10)
-            }
-        }
-        // A join after sync is a semantic event; the process-lifetime chat
-        // log collector must see it even though the service was re-created.
+        awaitState(ClientState.Connected::class)
+        idle()
+        assertTrue("the service stays in the foreground", shadow.isLastForegroundNotificationAttached())
+        assertTrue(
+            "nothing binds a service",
+            Shadows.shadowOf(app()).boundServiceConnections.isEmpty(),
+        )
+
+        // A semantic event reaches the process-lifetime features without any
+        // service instance being bound.
         transport.inboundChannel.trySend(
             Inbound.Message(HumlaTCPMessageType.UserState, userState(3, "carol", 0)),
         )
         withTimeout(5_000) {
-            while (container.chatLog.currentMessages().isEmpty()) {
-                Shadows.shadowOf(Looper.getMainLooper()).idle()
-                kotlinx.coroutines.delay(10)
+            while (container().chatLog.currentMessages().isEmpty()) {
+                idle()
+                delay(10)
             }
         }
         assertTrue(
-            "features must see events from the second service's connection",
-            container.chatLog.currentMessages().any { it.body?.contains("carol") == true },
+            container().chatLog.currentMessages().any { it.body?.contains("carol") == true },
         )
-        // The process-lifetime route still answered SessionStarted after the
-        // first service was destroyed and re-created.
-        withTimeout(5_000) {
-            while (container.runtime.routeState.value is RouteState.Idle) {
-                Shadows.shadowOf(Looper.getMainLooper()).idle()
-                kotlinx.coroutines.delay(10)
-            }
-        }
-        assertTrue(container.runtime.routeState.value !is RouteState.Idle)
 
-        val shadow = Shadows.shadowOf(second)
-        withTimeout(5_000) {
-            while (!shadow.isLastForegroundNotificationAttached()) {
-                Shadows.shadowOf(Looper.getMainLooper()).idle()
-                kotlinx.coroutines.delay(10)
-            }
-        }
-        assertTrue("the feature's notification must be posted", shadow.isLastForegroundNotificationAttached())
+        container().runtime.client.disconnect()
+        awaitState(ClientState.Idle::class)
+        idle()
+        controller.destroy()
+    }
 
-        container.runtime.client.disconnect()
+    @Test
+    fun idleStopsTheServiceAndRemovesTheNotification(): Unit = runBlocking {
+        val transport = newTransport()
+        val controller = connectAndStartService(transport)
+        for (message in syncSequence()) {
+            transport.inboundChannel.trySend(message)
+        }
+        awaitState(ClientState.Connected::class)
+        idle()
+
+        container().runtime.client.disconnect()
+        awaitState(ClientState.Idle::class)
+        idle()
+        val shadow = Shadows.shadowOf(controller.get())
+        assertTrue("the notification goes", shadow.isForegroundStopped())
+        assertTrue("the service stops itself", shadow.isStoppedBySelf())
+        controller.destroy()
+    }
+
+    @Test
+    fun aRepeatedStartStillStopsCleanly(): Unit = runBlocking {
+        val transport = newTransport()
+        val controller = connectAndStartService(transport)
+        // A later connect asks the already-running service to start again.
+        val scopeField = ConnectionService::class.java.getDeclaredField("scope").apply { isAccessible = true }
+        val firstScope = scopeField.get(controller.get())
+        controller.startCommand(0, 0)
+        idle()
+        val shadow = Shadows.shadowOf(controller.get())
+        assertTrue(shadow.isLastForegroundNotificationAttached())
+        // One collector per instance: the scope and its single child survive.
+        assertSame(firstScope, scopeField.get(controller.get()))
+        val job = (firstScope as kotlinx.coroutines.CoroutineScope).coroutineContext[kotlinx.coroutines.Job]!!
+        assertEquals(1, job.children.count())
+
+        for (message in syncSequence()) {
+            transport.inboundChannel.trySend(message)
+        }
+        awaitState(ClientState.Connected::class)
+        container().runtime.client.disconnect()
+        awaitState(ClientState.Idle::class)
+        idle()
+        assertTrue(shadow.isForegroundStopped())
+        assertTrue(shadow.isStoppedBySelf())
+        controller.destroy()
+    }
+
+    @Test
+    fun failedStopsTheServiceAndRemovesTheNotification(): Unit = runBlocking {
+        val transport = newTransport()
+        val controller = connectAndStartService(transport)
+        transport.inboundChannel.trySend(Inbound.Message(HumlaTCPMessageType.Reject, reject()))
+        awaitState(ClientState.Failed::class)
+        idle()
+        val shadow = Shadows.shadowOf(controller.get())
+        assertTrue("the notification goes", shadow.isForegroundStopped())
+        assertTrue("the service stops itself", shadow.isStoppedBySelf())
+        controller.destroy()
+    }
+
+    @Test
+    fun aConnectThatFailsBeforeConnectingLeavesNoRunningService(): Unit = runBlocking {
+        // A trust failure arrives without a session. The waiter is still
+        // paused, so it observes only the Failed state: it must start nothing.
+        factory().throwOnCreate = se.lublin.humla.net.TransportException(
+            se.lublin.humla.client.trustError(),
+        )
+        idle()
+        container().connect(testTarget())
+        awaitState(ClientState.Failed::class)
+        runWaiter()
+        idle()
+        assertEquals(
+            "a waiter that only observed the failure must start no service",
+            null,
+            Shadows.shadowOf(app()).peekNextStartedService(),
+        )
+    }
+
+    @Test
+    fun aLaterConnectCancelsAnEarlierWaiter(): Unit = runBlocking {
+        idle()
+        container().connect(testTarget())
+        container().connect(testTarget())
+        awaitState(ClientState.Connecting::class)
+        runWaiter()
+        idle()
+        // Exactly one start request: the first waiter was replaced.
+        assertEquals(1, Shadows.shadowOf(app()).allStartedServices.size)
+    }
+
+    @Test
+    fun theWaiterDecisionIsPinned() {
+        val failed = ClientState.Failed(testTarget(), ClientError.Connection("boom", null))
+        assertEquals(ServiceStart.START, serviceStartDecision(ClientState.Connecting(testTarget(), 0), null))
+        assertEquals(ServiceStart.START, serviceStartDecision(ClientState.Reconnecting(
+            testTarget(), 1, 0L, ClientError.Connection("boom", null), null,
+        ), null))
+        assertEquals(ServiceStart.START, serviceStartDecision(
+            ClientState.Connected(testTarget(), org.mockito.Mockito.mock(se.lublin.humla.client.Session::class.java)),
+            null,
+        ))
+        assertEquals(ServiceStart.WAIT, serviceStartDecision(ClientState.Idle, null))
+        // A Failed that predates the call is stale: keep waiting.
+        assertEquals(ServiceStart.WAIT, serviceStartDecision(failed, failed))
+        // Any other Failed: the attempt died before Connecting was seen.
+        assertEquals(ServiceStart.SKIP, serviceStartDecision(failed, null))
+    }
+
+    @Test
+    fun destroyingTheServiceWhileConnectedDisconnectsTheClient(): Unit = runBlocking {
+        val transport = newTransport()
+        val controller = connectAndStartService(transport)
+        for (message in syncSequence()) {
+            transport.inboundChannel.trySend(message)
+        }
+        awaitState(ClientState.Connected::class)
+        idle()
+
+        controller.destroy()
+        awaitState(ClientState.Idle::class)
+    }
+
+    @Test
+    fun aSecondConnectSharesTheRuntimeAndTheRouteStillAnswers(): Unit = runBlocking {
+        val first = newTransport()
+        val firstController = connectAndStartService(first)
+        for (message in syncSequence()) {
+            first.inboundChannel.trySend(message)
+        }
+        awaitState(ClientState.Connected::class)
         withTimeout(5_000) {
-            while (shadow.isLastForegroundNotificationAttached() ||
-                container.connectionNotification.visible.value
-            ) {
-                Shadows.shadowOf(Looper.getMainLooper()).idle()
-                kotlinx.coroutines.delay(10)
+            while (container().runtime.routeState.value is RouteState.Idle) {
+                idle()
+                delay(10)
             }
         }
-        assertFalse("foreground notification must be removed", shadow.isLastForegroundNotificationAttached())
-        assertTrue("service must leave the foreground", shadow.isForegroundStopped())
-        assertFalse("connection notification must be gone", container.connectionNotification.visible.value)
-        // The bound service itself is still alive and usable after the
-        // connection ends; step 7 moves that decision to ConnectionService.
-        assertTrue(second.getMessageLog().isNotEmpty())
+        container().runtime.client.disconnect()
+        awaitState(ClientState.Idle::class)
+        idle()
+        firstController.destroy()
+
+        // The process-lifetime route thread is still alive after the service
+        // is gone: the process-lifetime answer is not a closed route.
+        container().runtime.retrySco()
+        idle()
+        assertEquals(RouteState.Idle, container().runtime.routeState.value)
+
+        val runtime = container().runtime
+        val client = runtime.client
+        val second = newTransport()
+        val secondController = connectAndStartService(second)
+        assertSame("a second connect gets the same runtime", runtime, container().runtime)
+        assertSame("a second connect gets the same client", client, container().runtime.client)
+        for (message in syncSequence()) {
+            second.inboundChannel.trySend(message)
+        }
+        awaitState(ClientState.Connected::class)
+        withTimeout(5_000) {
+            while (container().runtime.routeState.value is RouteState.Idle) {
+                idle()
+                delay(10)
+            }
+        }
+        container().runtime.client.disconnect()
+        awaitState(ClientState.Idle::class)
+        withTimeout(5_000) {
+            while (container().runtime.routeState.value !is RouteState.Idle) {
+                idle()
+                delay(10)
+            }
+        }
+        idle()
         secondController.destroy()
     }
 
+    @Test
+    fun anIdleServiceStopsItself(): Unit = runBlocking {
+        // The service posts first (Android's five-second rule) and the state
+        // collector stops it at once when nothing is connecting.
+        val intent = Intent(app(), ConnectionService::class.java)
+        val controller = startService(intent)
+        idle()
+        val shadow = Shadows.shadowOf(controller.get())
+        // The post happened before the stop: Android's five-second rule holds
+        // even for a start that finds nothing to do.
+        assertEquals(1, shadow.lastForegroundNotificationId)
+        assertTrue(shadow.isStoppedBySelf())
+        assertTrue(shadow.isForegroundStopped())
+        controller.destroy()
     }
 
-    private fun runtimeOf(service: MumlaService): HumlaRuntime {
-        val field = Class.forName("se.lublin.humla.HumlaService").getDeclaredField("appRuntime")
-        field.isAccessible = true
-        return field.get(service) as HumlaRuntime
+    @Test
+    fun aNotificationRebuildKeepsTheConnectingGraceWindow(): Unit = runBlocking {
+        // A settings change rebuilds the notification; that must not restart
+        // the 15 s wake-lock window, which only a client.state move sets.
+        val transport = newTransport()
+        val controller = connectAndStartService(transport)
+        val lock = ShadowPowerManager.getLatestWakeLock()
+        assertTrue("connecting holds the lock", lock.isHeld)
+
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(10))
+        val before = container().connectionNotification.notification.value
+        val showUserCount = container().settingsRepository.state.value.snapshot.showUserCount
+        container().settingsRepository.updateTyped { it.showUserCount = !showUserCount }
+        withTimeout(5_000) {
+            while (container().connectionNotification.notification.value === before) {
+                runWaiter()
+                idle()
+                delay(10)
+            }
+        }
+        idle()
+        assertTrue(container().runtime.client.state.value is ClientState.Connecting)
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(6))
+
+        assertFalse("the window ran from the Connecting transition", lock.isHeld)
+        controller.destroy()
     }
 }

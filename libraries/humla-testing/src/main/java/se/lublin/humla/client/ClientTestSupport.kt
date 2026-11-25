@@ -29,9 +29,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.model.IMessage
-import se.lublin.humla.model.IUser
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.HumlaTCPMessageType
 import se.lublin.humla.net.Inbound
@@ -45,9 +42,6 @@ import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.net.VoiceStatus
 import se.lublin.humla.protobuf.Mumble
-import se.lublin.humla.util.HumlaException
-import se.lublin.humla.util.IHumlaObserver
-import se.lublin.humla.util.VoiceTargetMode
 
 /**
  * Fakes and the per-step invariant harness shared by the client and session
@@ -209,33 +203,6 @@ class FakeNetwork : NetworkMonitor {
     suspend fun emitAvailable() {
         _available.emit(Unit)
     }
-}
-
-object NoopObserver : IHumlaObserver {
-    override fun onConnected() = Unit
-    override fun onConnecting() = Unit
-    override fun onDisconnected(e: HumlaException?) = Unit
-    override fun onTLSHandshakeFailed(
-        chain: Array<java.security.cert.X509Certificate>?,
-        failure: se.lublin.humla.net.HandshakeFailure?,
-        verifiedHost: String?,
-    ) = Unit
-    override fun onBluetoothScoChanged(active: Boolean) = Unit
-    override fun onChannelAdded(channel: IChannel?) = Unit
-    override fun onChannelStateUpdated(channel: IChannel?) = Unit
-    override fun onChannelRemoved(channel: IChannel?) = Unit
-    override fun onChannelPermissionsUpdated(channel: IChannel?) = Unit
-    override fun onUserConnected(user: IUser?) = Unit
-    override fun onUserStateUpdated(user: IUser?) = Unit
-    override fun onUserTalkStateUpdated(user: IUser?) = Unit
-    override fun onUserJoinedChannel(user: IUser?, newChannel: IChannel?, oldChannel: IChannel?) = Unit
-    override fun onUserRemoved(user: IUser?, reason: String?) = Unit
-    override fun onPermissionDenied(reason: String?) = Unit
-    override fun onMessageLogged(message: IMessage?) = Unit
-    override fun onVoiceTargetChanged(mode: VoiceTargetMode?) = Unit
-    override fun onLogInfo(message: String?) = Unit
-    override fun onLogWarning(message: String?) = Unit
-    override fun onLogError(message: String?) = Unit
 }
 
 fun testTarget(forceTcp: Boolean = true, username: String = "alice"): ConnectTarget = ConnectTarget(

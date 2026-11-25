@@ -32,6 +32,7 @@ import android.view.inputmethod.EditorInfo
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.os.BundleCompat
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
@@ -46,8 +47,11 @@ import java.security.UnrecoverableKeyException
 import java.security.cert.CertificateException
 import java.util.Arrays
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
-import java.util.concurrent.Executors
 import java.util.regex.Pattern
 import javax.crypto.AEADBadTagException
 import javax.crypto.BadPaddingException
@@ -72,8 +76,6 @@ class CertificateImportActivity : BaseActivity() {
     private var mPasswordField: TextInputEditText? = null
     /** Guards the dialog submit against double-taps while a parse is in flight. */
     private var mStoring: Boolean = false
-    /** Off-main-thread reader for picked certificate files (5 MB cap); shut down in onDestroy. */
-    private val mCertIoExecutor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,25 +94,25 @@ class CertificateImportActivity : BaseActivity() {
                     // Re-read off the main thread; the Bundle holds only the source Uri
                     // (plus display metadata), never cert bytes or passwords.
                     val isRetry = mPendingIsRetry
-                    mCertIoExecutor.execute {
+                    lifecycleScope.launch(Dispatchers.IO) {
                         val certBytes: ByteArray
                         try {
                             certBytes = readCertBytes(uri)
                         } catch (e: IOException) {
                             Log.w(TAG, "Could not re-read certificate after activity recreation", e)
-                            runOnUiThread {
+                            withContext(Dispatchers.Main.immediate) {
                                 if (isFinishing || isDestroyed) {
-                                    return@runOnUiThread
+                                    return@withContext
                                 }
                                 mWaitingForPassword = false
                                 Toast.makeText(this@CertificateImportActivity, R.string.invalid_certificate, Toast.LENGTH_LONG).show()
                                 finish()
                             }
-                            return@execute
+                            return@launch
                         }
-                        runOnUiThread {
+                        withContext(Dispatchers.Main.immediate) {
                             if (isFinishing || isDestroyed) {
-                                return@runOnUiThread
+                                return@withContext
                             }
                             showPasswordDialog(uri, fileName, certBytes, isRetry)
                         }
@@ -147,12 +149,8 @@ class CertificateImportActivity : BaseActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        for (dropped in mCertIoExecutor.shutdownNow()) {
-            // Dropped runnables never execute; zero here what the task would have zeroed.
-            if (dropped is PasswordRunnable) {
-                dropped.zeroHeldPassword()
-            }
-        }
+        // Parsing coroutines are cancelled with the activity scope; each one
+        // zeroes its password in a finally block.
         val dialog = mPasswordDialog
         if (dialog != null && dialog.isShowing) {
             dialog.dismiss()
@@ -178,20 +176,20 @@ class CertificateImportActivity : BaseActivity() {
 
         val uri = data?.data ?: throw NullPointerException("data")
         // Read and probe off the main thread; only Toast/finish run on the UI thread.
-        mCertIoExecutor.execute {
+        lifecycleScope.launch(Dispatchers.IO) {
             val certBytes: ByteArray
             try {
                 certBytes = readCertBytes(uri)
             } catch (e: IOException) {
                 Log.w(TAG, "Could not read picked certificate", e)
-                runOnUiThread {
+                withContext(Dispatchers.Main.immediate) {
                     if (isFinishing || isDestroyed) {
-                        return@runOnUiThread
+                        return@withContext
                     }
                     Toast.makeText(this@CertificateImportActivity, R.string.invalid_certificate, Toast.LENGTH_LONG).show()
                     finish()
                 }
-                return@execute
+                return@launch
             }
 
             var displayName: String? = null
@@ -211,9 +209,9 @@ class CertificateImportActivity : BaseActivity() {
                 fileName = UUID.randomUUID().toString() + ".p12"
             }
             val resolved = fileName ?: throw NullPointerException("fileName")
-            runOnUiThread {
+            withContext(Dispatchers.Main.immediate) {
                 if (isFinishing || isDestroyed) {
-                    return@runOnUiThread
+                    return@withContext
                 }
                 storeKeystore(CharArray(0), uri, resolved, certBytes, false)
             }
@@ -265,18 +263,17 @@ class CertificateImportActivity : BaseActivity() {
     ) {
         // KeyStore parsing (PBKDF/MAC over up-to-5 MB input) and the database insert
         // run off the main thread; only dialog, Toast, and finish run on the UI thread.
-        // storeKeystore remains the single password-zeroing owner on every executed path;
-        // a runnable discarded by shutdownNow is zeroed in onDestroy instead.
-        mCertIoExecutor.execute(object : PasswordRunnable(password) {
-            override fun run() {
+        // The finally block is the single password-zeroing owner on every path,
+        // including cancellation when the activity is destroyed.
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
                 try {
                     openKeystore(certBytes, password)
                 } catch (e: Exception) {
                     if (isPasswordFailure(e)) {
-                        zeroPassword(password)
-                        runOnUiThread {
+                        withContext(Dispatchers.Main.immediate) {
                             if (isFinishing || isDestroyed) {
-                                return@runOnUiThread
+                                return@withContext
                             }
                             // Release the in-flight submit so the reshown dialog accepts a retry.
                             mStoring = false
@@ -284,10 +281,9 @@ class CertificateImportActivity : BaseActivity() {
                         }
                     } else {
                         Log.w(TAG, "Certificate keystore could not be opened", e)
-                        zeroPassword(password)
-                        runOnUiThread {
+                        withContext(Dispatchers.Main.immediate) {
                             if (isFinishing || isDestroyed) {
-                                return@runOnUiThread
+                                return@withContext
                             }
                             dismissPasswordDialog()
                             mWaitingForPassword = false
@@ -297,33 +293,30 @@ class CertificateImportActivity : BaseActivity() {
                             finish()
                         }
                     }
-                    return
+                    return@launch
                 }
 
-                // Destroyed while parsing (e.g. rotation): the restore path re-reads from
-                // the Uri, so bail before inserting to avoid a duplicate certificate row.
-                // shutdownNow interrupts the worker, which sets this flag on the runner.
-                if (Thread.currentThread().isInterrupted) {
-                    zeroPassword(password)
-                    return
+                // Destroyed while parsing (e.g. rotation): the restore path re-reads
+                // from the Uri, so bail before inserting to avoid a duplicate
+                // certificate row. The scope is cancelled in onDestroy.
+                if (!isActive) {
+                    return@launch
                 }
 
                 // DB boundary only: the at-rest store keeps a String password by design
-                // (secrets-at-rest-plan), so convert here and zero the char[] immediately.
+                // (secrets-at-rest-plan), so convert here and zero the char[] in finally.
                 val passwordStr = if (password.isNotEmpty()) String(password) else null
-                zeroPassword(password)
                 val database: MumlaDatabase = this@CertificateImportActivity.container.database
                 val certificate = database.addCertificate(fileName, certBytes, passwordStr)
-                database.close()
 
                 val imported = certificate != null && certificate.id >= 0
                 if (imported) {
                     val settings = this@CertificateImportActivity.container.settings
                     settings.defaultCertificateId = certificate.id
                 }
-                runOnUiThread {
+                withContext(Dispatchers.Main.immediate) {
                     if (isFinishing || isDestroyed) {
-                        return@runOnUiThread
+                        return@withContext
                     }
                     mWaitingForPassword = false
                     dismissPasswordDialog()
@@ -340,14 +333,9 @@ class CertificateImportActivity : BaseActivity() {
                     }
                     finish()
                 }
+            } finally {
+                zeroPassword(password)
             }
-        })
-    }
-
-    /** Executor task holding a password char[]; zeroed if the executor discards it. */
-    private abstract class PasswordRunnable(private val mPassword: CharArray) : Runnable {
-        fun zeroHeldPassword() {
-            zeroPassword(mPassword)
         }
     }
 

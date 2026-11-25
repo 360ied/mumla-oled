@@ -19,34 +19,36 @@ package se.lublin.mumla.service;
 
 import junit.framework.TestCase;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import se.lublin.humla.model.Message;
 
 public class IChatMessageTest extends TestCase {
 
-    public void testTextMessageDefaultNotSelfAuthored() {
-        Message rawMessage = new Message("Hello from remote");
-        IChatMessage.TextMessage textMsg = new IChatMessage.TextMessage(rawMessage);
+    public void testTextMessageHoldsValues() {
+        IChatMessage.TextMessage textMsg = new IChatMessage.TextMessage(
+                "Alice", Collections.singletonList("General"), "Hello from remote", 42L);
 
-        assertFalse("Default TextMessage constructor must not be self-authored",
-                textMsg.isSelfAuthored());
+        assertFalse("Text entries default to not self-authored", textMsg.isSelfAuthored());
         assertEquals("Hello from remote", textMsg.getBody());
-        assertSame(rawMessage, textMsg.getMessage());
+        assertEquals("Alice", textMsg.getActorName());
+        assertEquals(Collections.singletonList("General"), textMsg.getTargetNames());
+        assertEquals(42L, textMsg.getReceivedTime());
     }
 
-    public void testTextMessageExplicitSelfAuthored() {
-        Message rawMessage = new Message("Hello from me");
-        IChatMessage.TextMessage textMsg = new IChatMessage.TextMessage(rawMessage, true);
+    public void testTextMessageSelfAuthored() {
+        IChatMessage.TextMessage textMsg = new IChatMessage.TextMessage(
+                "Self", Arrays.asList("Alice", "Bob"), "Hello from me", 7L, true);
 
         assertTrue("Explicitly authored TextMessage must report isSelfAuthored as true",
                 textMsg.isSelfAuthored());
         assertEquals("Hello from me", textMsg.getBody());
+        assertEquals(Arrays.asList("Alice", "Bob"), textMsg.getTargetNames());
     }
 
     public void testTextMessageVisitor() {
-        Message rawMessage = new Message("Test visitor");
-        IChatMessage.TextMessage textMsg = new IChatMessage.TextMessage(rawMessage, true);
+        IChatMessage.TextMessage textMsg = new IChatMessage.TextMessage(
+                "Self", Collections.emptyList(), "Test visitor", 1L, true);
 
         final AtomicBoolean visited = new AtomicBoolean(false);
         textMsg.accept(new IChatMessage.Visitor() {

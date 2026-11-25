@@ -26,6 +26,7 @@ Checks (see docs/target-architecture/enforcement.md):
   5. Local-facts writer: only the store and the db package may write local
      mute/ignore or self mute/deafen (step 6).
   6. Feature isolation: features never name other features (step 6).
+  7. No binder surface: nothing under app/src/main binds a service (step 7).
 
 The check fails if a file not on the allowlist has a match, if a listed
 file has more matches than its count, or if it has fewer (the count must
@@ -234,6 +235,15 @@ RE_FEATURE_START = re.compile(r"\bfun start\(\s*scope\s*:\s*CoroutineScope\s*\)"
 # silently drop out of the feature set; fail closed instead.
 RE_ANY_START = re.compile(r"\b(?:suspend\s+)?fun\s+start\s*\(")
 
+# Step 7: nothing binds a service. Screens reach the client through the
+# container and collect flows; the binder surface was deleted with the
+# services. The patterns match identifiers, not call shapes, so a call split
+# across lines and every bind variant (bindService, bindIsolatedService,
+# bindServiceAsUser) are caught. Comments and strings count too, as in the
+# render-thread check: the gate fails closed and a mention is reworded.
+NO_BIND_ROOT = "app/src/main"
+RE_SERVICE_BIND = re.compile(r"\bbind\w*Service\w*|\bServiceConnection\b")
+
 RE_RENDER_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*renderActive")
 RE_CAPTURE_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*captureActive")
 
@@ -315,6 +325,28 @@ def check_feature_isolation(root: Path):
                     f"container hand-off flow instead"
                 )
     return errors
+
+
+def scan_service_binding(root: Path):
+    """Return list of (path, line-no, line) for binder-surface uses."""
+    hits = []
+    base = root / NO_BIND_ROOT
+    if not base.is_dir():
+        return hits
+    for dirpath, _, filenames in os.walk(base):
+        for name in filenames:
+            if not name.endswith(CONCURRENCY_EXTS):
+                continue
+            full = Path(dirpath) / name
+            rel = full.relative_to(root).as_posix()
+            try:
+                lines = full.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for i, line in enumerate(lines, 1):
+                if RE_SERVICE_BIND.search(line):
+                    hits.append((rel, i, line.strip()))
+    return hits
 
 
 def check_voice_lifecycle(root: Path):
@@ -639,6 +671,8 @@ def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
     errors.extend(check_native(scan_native(root), native_allowed))
     for rel, lineno, line in scan_native_body(root):
         errors.append(f"native-body: {rel}:{lineno}: {line}")
+    for rel, lineno, line in scan_service_binding(root):
+        errors.append(f"service-binding: {rel}:{lineno}: {line}")
     errors.extend(check_voice_lifecycle(root))
     errors.extend(check_local_facts_writers(root))
     errors.extend(check_feature_set_closed(root))

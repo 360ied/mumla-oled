@@ -46,7 +46,6 @@ import se.lublin.humla.state.ServerState
 import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SessionEventRecord
 import se.lublin.humla.state.SyncPhase
-import se.lublin.humla.util.IHumlaObserver
 import se.lublin.humla.voice.TalkActivity
 
 /**
@@ -70,11 +69,7 @@ class HumlaClient(
     private val voiceLink: VoiceLink,
     private val network: NetworkMonitor,
     private val localFactsStore: LocalFactsStore,
-    private val talkActivity: StateFlow<TalkActivity>,
     private val clock: Clock,
-    private val observer: IHumlaObserver,
-    private val mainPoster: (Runnable) -> Unit,
-    private val denyFormatter: (SessionEvent.PermissionDenied) -> String,
     private val clientDispatcher: kotlinx.coroutines.CoroutineDispatcher =
         Dispatchers.Default.limitedParallelism(1),
     private val ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO,
@@ -308,12 +303,8 @@ class HumlaClient(
             parentScope = attemptScope,
             transport = transport,
             localFacts = facts,
-            talkActivity = talkActivity,
             voiceLink = voiceLink,
-            observer = observer,
             localFactsStore = localFactsStore,
-            mainPoster = mainPoster,
-            denyFormatter = denyFormatter,
             eventSink = { event, state -> _events.tryEmit(SessionEventRecord(event, state)); Unit },
             workDispatcher = sessionDispatcher,
             ioDispatcher = ioDispatcher,

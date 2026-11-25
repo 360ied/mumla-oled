@@ -20,19 +20,15 @@ package se.lublin.mumla.app
 import se.lublin.mumla.container
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.ComponentName
 import android.content.Intent
-import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
 import android.text.InputType
 import android.text.TextUtils
+import android.text.format.DateUtils
 import android.util.Log
 import android.view.KeyEvent
 import android.view.Menu
@@ -55,22 +51,27 @@ import androidx.drawerlayout.widget.DrawerLayout
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentTransaction
+import androidx.activity.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
-import java.io.IOException
 import java.net.MalformedURLException
 import java.security.GeneralSecurityException
 import java.security.MessageDigest
-import java.security.cert.Certificate
 import java.security.cert.X509Certificate
-import se.lublin.humla.HumlaService
-import se.lublin.humla.IHumlaService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import se.lublin.humla.model.Server
-import se.lublin.humla.net.HandshakeFailure
 import se.lublin.humla.net.TlsHostnameVerifier
 import se.lublin.humla.protobuf.Mumble
-import se.lublin.humla.util.HumlaException
-import se.lublin.humla.util.HumlaObserver
 import se.lublin.humla.util.MumbleURLParser
 import se.lublin.mumla.BuildConfig
 import se.lublin.mumla.R
@@ -78,31 +79,24 @@ import se.lublin.mumla.Settings
 import se.lublin.mumla.channel.AccessTokenFragment
 import se.lublin.mumla.channel.ChannelFragment
 import se.lublin.mumla.channel.ServerInfoFragment
-import se.lublin.mumla.db.DatabaseCertificate
 import se.lublin.mumla.db.MumlaDatabase
-import se.lublin.mumla.db.MumlaRoomDatabase
+import se.lublin.mumla.feature.ChatLogFeature
+import se.lublin.mumla.feature.displayMessage
 import se.lublin.mumla.preference.CrashReportsFragment
-import se.lublin.mumla.preference.MumlaCertificateGenerateTask
+import se.lublin.mumla.preference.generateClientCertificate
 import se.lublin.mumla.preference.SettingsActivity
 import se.lublin.mumla.servers.FavouriteServerListFragment
 import se.lublin.mumla.servers.ServerEditFragment
-import se.lublin.mumla.service.IMumlaService
-import se.lublin.mumla.feature.ChatLogFeature
-import se.lublin.mumla.service.MumlaService
-import se.lublin.mumla.util.CrashReporter
-import se.lublin.mumla.util.CrashReportSeenStore
-import se.lublin.mumla.util.HumlaServiceFragment
-import se.lublin.mumla.util.HumlaServiceProvider
 import se.lublin.mumla.util.MumlaTrustStore
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
-    FavouriteServerListFragment.ServerConnectHandler, HumlaServiceProvider,
+    FavouriteServerListFragment.ServerConnectHandler,
     DrawerAdapter.DrawerDataProvider, ServerEditFragment.ServerEditListener {
 
-    private var mService: IMumlaService? = null
+    private val viewModel: MainViewModel by viewModels {
+        MumlaViewModelFactory(application)
+    }
+
     private var mDatabase: MumlaDatabase? = null
     private var mSettings: Settings? = null
 
@@ -116,556 +110,23 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
 
     private var mConnectingDialog: AlertDialog? = null
     private var mErrorDialog: AlertDialog? = null
-    // Switch-server confirmation: tracked like the error/connect dialogs so
-    // onPause can dismiss it (its positive button arms a reconnect intent
-    // that onPause deliberately drops — see clearReconnectObserver).
     private var mSwitchDialog: AlertDialog? = null
-    // Permission-denied notice and back-press disconnect confirmation:
-    // tracked for the same pause-dismissal so rotation cannot leak them.
     private var mPermissionDialog: AlertDialog? = null
     private var mBackPressDialog: AlertDialog? = null
     private var mCertDialog: AlertDialog? = null
     private var mCrashSnackbar: Snackbar? = null
-    private var mCrashRecheck: Runnable? = null
-    private val mCrashHandler = Handler(Looper.getMainLooper())
-    @Volatile
-    private var mCrashCheckGen = 0
     // Dedicated host for the first-run certificate guide. It carries an
     // OnDismissListener with first-run side effects that must never fire for
     // the TLS dialogs hosted by mCertDialog above (round-2 D2).
     private var mFirstRunDialog: AlertDialog? = null
-    // True while the first-run certificate generation task owns StartupAction.
+    // True while the first-run certificate generation coroutine owns StartupAction.
     private var mFirstRunGenerateInFlight = false
+    private var mGenerateProgressDialog: AlertDialog? = null
 
-    // The latest one-shot reconnect observer (switch-server and
-    // reject-retry flows): unregistered in onDisconnected, or in onPause /
-    // onDestroy if the activity dies first, so a stale callback can never
-    // drive connectToServer on a destroyed activity with a closed database.
-    // The target Server survives separately so a pause-dropped intent can
-    // resume on rebind instead of vanishing silently.
-    private var mReconnectObserver: HumlaObserver? = null
-    private var mPendingReconnectServer: Server? = null
-
-    /** Registers a one-shot reconnect observer, replacing any pending one. */
-    private fun setReconnectObserver(observer: HumlaObserver, target: Server) {
-        clearReconnectObserver()
-        mReconnectObserver = observer
-        mPendingReconnectServer = target
-        val service = mService
-        if (service != null) {
-            service.registerObserver(observer)
-        }
-    }
-
-    /** Drops any pending one-shot reconnect observer without firing it. */
-    private fun clearReconnectObserver() {
-        dropReconnectObserver()
-        mPendingReconnectServer = null
-    }
-
-    /**
-     * Unregisters the pending observer but keeps the target Server, so a
-     * pause-dropped intent can resume on rebind. Use at lifecycle seams
-     * (pause/disconnect); use [clearReconnectObserver] when the
-     * intent itself is consumed or invalidated.
-     */
-    private fun dropReconnectObserver() {
-        val observer = mReconnectObserver
-        if (observer != null) {
-            val service = mService
-            if (service != null) {
-                service.unregisterObserver(observer)
-            }
-            mReconnectObserver = null
-        }
-    }
-
-    // Tracks bindService success: the bind uses no BIND_AUTO_CREATE, so no
-    // connection exists on a fresh launch before the first connect, and an
-    // unconditional unbindService would throw IllegalArgumentException.
-    private var mBound: Boolean = false
-
-    /**
-     * List of fragments to be notified about service state changes.
-     */
-    private val mServiceFragments = ArrayList<HumlaServiceFragment>()
-
-    private val mConnection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            mBound = true
-            // CCE-exact: the original cast unconditionally.
-            mService = (service as MumlaService.MumlaBinder).getService()
-            // NPE-exact: the original dereferenced mService unconditionally below.
-            val svc = mService ?: throw NullPointerException("mService")
-            svc.setSuppressNotifications(true)
-            svc.registerObserver(mObserver)
-            // Resume a switch/retry intent dropped by a pause (the observer
-            // was cleared, but the target survives): already-connected
-            // re-arms and disconnects, otherwise connect directly. Fires at
-            // most once — clear first so a second bind cannot double-drive.
-            val pending = mPendingReconnectServer
-            if (pending != null) {
-                clearReconnectObserver()
-                if (isFinishing || isDestroyed) {
-                    return
-                }
-                if (svc.isConnected() && isSameServer(svc.getTargetServer(), pending)) {
-                    // Already where the intent pointed: nothing to do.
-                } else if (svc.isConnected()) {
-                    // Still on the old server (disconnect in flight at pause):
-                    // re-arm and finish the switch like the original tap.
-                    // (A concurrent auto-reconnect to a *different* server is
-                    // indistinguishable here; re-arming preserves the explicit
-                    // user tap over the silent one — accepted tradeoff.)
-                    setReconnectObserver(object : HumlaObserver() {
-                        override fun onDisconnected(e: HumlaException?) {
-                            clearReconnectObserver()
-                            if (isFinishing || isDestroyed) {
-                                return
-                            }
-                            connectToServer(pending)
-                        }
-                    }, pending)
-                    svc.disconnect()
-                } else if (svc.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
-                    // In-flight attempt owns the transition: serialize the
-                    // pending target behind it like the reject-retry flow.
-                    setReconnectObserver(object : HumlaObserver() {
-                        override fun onDisconnected(e: HumlaException?) {
-                            clearReconnectObserver()
-                            if (isFinishing || isDestroyed) {
-                                return
-                            }
-                            connectToServer(pending)
-                        }
-                    }, pending)
-                } else {
-                    // Idle or backoff-armed with no live socket: the service
-                    // disarms backoff on explicit connect, so go direct
-                    // instead of waiting out up to 25s of timer. (Cancel
-                    // first so no parallel attempt can race the new one.)
-                    svc.cancelReconnect()
-                    connectToServer(pending)
-                }
-            }
-            svc.clearChatNotifications() // Clear chat notifications on resume.
-            // NPE-exact: the original dereferenced mDrawerAdapter unconditionally.
-            val drawerAdapter = mDrawerAdapter ?: throw NullPointerException("mDrawerAdapter")
-            drawerAdapter.notifyDataSetChanged()
-            // Re-sync volume routing: onCreate ran pre-bind (MUSIC), and a
-            // rebound already-active SCO link emits no transition event.
-            setVolumeControlStream(
-                if (useVoiceCallVolume()) {
-                    AudioManager.STREAM_VOICE_CALL
-                } else {
-                    AudioManager.STREAM_MUSIC
-                }
-            )
-
-            for (fragment in ArrayList(mServiceFragments)) {
-                fragment.setServiceBound(true)
-            }
-
-            // Re-show server list if we're showing a fragment that depends on the service.
-            if (supportFragmentManager.findFragmentById(R.id.content_frame) is HumlaServiceFragment &&
-                !svc.isConnected()
-            ) {
-                loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES)
-            }
-            updateConnectionState(getService())
-        }
-
-        override fun onServiceDisconnected(name: ComponentName?) {
-            mBound = false
-            // The dead service's callback set is gone; drop the observer
-            // but keep the target so rebind can resume the intent.
-            dropReconnectObserver()
-            mService = null
-        }
-    }
-
-    private val mObserver = object : HumlaObserver() {
-        override fun onConnected() {
-            // A pending switch/retry is moot once connected: clear it so a
-            // later unrelated drop cannot hijack toward a stale target.
-            clearReconnectObserver()
-            // NPE-exact: the original dereferenced mSettings unconditionally.
-            val settings = mSettings ?: throw NullPointerException("mSettings")
-            if (settings.shouldStartUpInPinnedMode) {
-                loadDrawerFragment(DrawerAdapter.ITEM_PINNED_CHANNELS)
-            } else {
-                loadDrawerFragment(DrawerAdapter.ITEM_SERVER)
-            }
-            // Swap screens synchronously: commit() alone leaves the server list visible
-            // and tappable until the next traversal, while updateConnectionState() below
-            // dismisses the modal connecting dialog first. commit() is the state-loss
-            // check, and this observer is unregistered in onPause before
-            // onSaveInstanceState on the same Looper, so this adds no new exposure.
-            // Drains the whole pending queue in FIFO order, which is benign.
-            supportFragmentManager.executePendingTransactions()
-
-            // NPE-exact: the original dereferenced mDrawerAdapter unconditionally.
-            val drawerAdapter = mDrawerAdapter ?: throw NullPointerException("mDrawerAdapter")
-            drawerAdapter.notifyDataSetChanged()
-            supportInvalidateOptionsMenu()
-
-            updateConnectionState(getService())
-        }
-
-        override fun onConnecting() {
-            updateConnectionState(getService())
-        }
-
-        override fun onDisconnected(e: HumlaException?) {
-            // Re-show server list if we're showing a fragment that depends on the service.
-            if (supportFragmentManager.findFragmentById(R.id.content_frame) is HumlaServiceFragment) {
-                loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES)
-                // Same synchronous swap as onConnected: the dialog below shows
-                // immediately, so don't leave stale channel UI up for a traversal.
-                supportFragmentManager.executePendingTransactions()
-            }
-            // NPE-exact: the original dereferenced mDrawerAdapter unconditionally.
-            val drawerAdapter = mDrawerAdapter ?: throw NullPointerException("mDrawerAdapter")
-            drawerAdapter.notifyDataSetChanged()
-            supportInvalidateOptionsMenu()
-
-            updateConnectionState(getService())
-        }
-
-        override fun onBluetoothScoChanged(active: Boolean) {
-            // Link transitions refresh what the preference snapshot cannot:
-            // volume keys follow the live route. The overflow checkmark
-            // mirrors the requested toggle, so this invalidate only gates
-            // menu visibility on connect/disconnect.
-            setVolumeControlStream(
-                if (useVoiceCallVolume()) {
-                    AudioManager.STREAM_VOICE_CALL
-                } else {
-                    AudioManager.STREAM_MUSIC
-                }
-            )
-            supportInvalidateOptionsMenu()
-        }
-
-        override fun onAudioRouteChanged() {
-            // Media-sink transitions change nothing in the preference
-            // snapshot and never touch SCO state: volume keys follow the
-            // live route instead.
-            setVolumeControlStream(
-                if (useVoiceCallVolume()) {
-                    AudioManager.STREAM_VOICE_CALL
-                } else {
-                    AudioManager.STREAM_MUSIC
-                }
-            )
-            supportInvalidateOptionsMenu()
-        }
-
-        override fun onTLSHandshakeFailed(
-            chain: Array<X509Certificate>?,
-            failure: HandshakeFailure?,
-            verifiedHost: String?
-        ) {
-            if (chain == null || chain.isEmpty() || chain[0] == null) {
-                return
-            }
-            // NPE-exact: the original dereferenced the array element unconditionally.
-            val x509 = chain[0] ?: return
-            val service = getService()
-            if (service == null || service.getTargetServer() == null) {
-                return
-            }
-            // NPE-exact: the original dereferenced getTargetServer() unconditionally.
-            val lastServer = service.getTargetServer() ?: return
-            // Pins and verification both key on the post-SRV host; the dialog
-            // shows that same host so mismatch copy names what was checked.
-            var host: String? = verifiedHost ?: lastServer.host
-            host = TlsHostnameVerifier.canonicalizeHost(host)
-            if (host == null) {
-                return
-            }
-            if (failure == HandshakeFailure.HOSTNAME_MISMATCH) {
-                showMismatchDialog(host, x509)
-                return
-            }
-            val pinned = pinnedForHost(host)
-            if (failure == HandshakeFailure.PIN_CHANGED || pinned != null) {
-                showChangedDialog(lastServer, host, x509, pinned)
-                return
-            }
-            showFirstTrustDialog(lastServer, host, x509)
-        }
-
-        /** CA-valid cert for the wrong host: no Allow, no pinning — disconnect only. */
-        private fun showMismatchDialog(host: String, x509: X509Certificate) {
-            val claimed = TlsHostnameVerifier.claimedNames(x509)
-            val names = if (claimed.isEmpty()) getString(R.string.unknown) else TextUtils.join(", ", claimed)
-            val layout = layoutInflater.inflate(R.layout.certificate_info, null)
-            val textView = layout.findViewById(R.id.certificate_info_text) as TextView
-            textView.text = getString(R.string.certificate_identity_mismatch_body, host, names) +
-                "\n\n" + certificateDetails(x509)
-            dismissCertDialog()
-            mCertDialog = MaterialAlertDialogBuilder(this@MumlaActivity)
-                .setTitle(R.string.certificate_identity_mismatch)
-                .setView(layout)
-                .setPositiveButton(android.R.string.ok, null)
-                .show()
-        }
-
-        /** Self-signed/unknown issuer, no pin yet: clarified Allow flow. */
-        private fun showFirstTrustDialog(server: Server, host: String, x509: X509Certificate) {
-            val layout = layoutInflater.inflate(R.layout.certificate_info, null)
-            val textView = layout.findViewById(R.id.certificate_info_text) as TextView
-            textView.text = getString(R.string.untrusted_certificate_body, host) +
-                "\n\n" + certificateDetails(x509)
-            dismissCertDialog()
-            mCertDialog = MaterialAlertDialogBuilder(this@MumlaActivity)
-                .setTitle(R.string.untrusted_certificate)
-                .setView(layout)
-                .setPositiveButton(R.string.allow) { _, _ -> pinAndReconnect(server, host, x509) }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-
-        /** Pinned host presenting a different key: explicit Replace with old-vs-new fingerprints. */
-        private fun showChangedDialog(
-            server: Server,
-            host: String,
-            presented: X509Certificate,
-            pinned: X509Certificate?
-        ) {
-            val layout = layoutInflater.inflate(R.layout.certificate_info, null)
-            val textView = layout.findViewById(R.id.certificate_info_text) as TextView
-            val oldPrint = pinned?.let { sha256Fingerprint(it) } ?: getString(R.string.unknown)
-            textView.text = getString(
-                R.string.certificate_changed_body, host, oldPrint, sha256Fingerprint(presented)
-            ) + "\n\n" + certificateDetails(presented)
-            dismissCertDialog()
-            mCertDialog = MaterialAlertDialogBuilder(this@MumlaActivity)
-                .setTitle(R.string.certificate_changed_title)
-                .setView(layout)
-                .setPositiveButton(R.string.replace_certificate) { _, _ -> pinAndReconnect(server, host, presented) }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-        }
-
-        private fun pinnedForHost(host: String): X509Certificate? {
-            try {
-                val trustStore = MumlaTrustStore.getTrustStore(this@MumlaActivity)
-                if (trustStore.containsAlias(host)) {
-                    val pinned: Certificate? = trustStore.getCertificate(host)
-                    if (pinned is X509Certificate) {
-                        return pinned
-                    }
-                }
-            } catch (e: GeneralSecurityException) {
-                Log.e(TAG, "Could not read trust store", e)
-            } catch (e: IOException) {
-                Log.e(TAG, "Could not read trust store", e)
-            }
-            return null
-        }
-
-        private fun pinAndReconnect(server: Server, host: String, x509: X509Certificate) {
-            try {
-                val trustStore = MumlaTrustStore.getTrustStore(this@MumlaActivity)
-                trustStore.setCertificateEntry(host, x509)
-                MumlaTrustStore.saveTrustStore(this@MumlaActivity, trustStore)
-                Toast.makeText(this@MumlaActivity, R.string.trust_added, Toast.LENGTH_LONG).show()
-                connectToServer(server)
-            } catch (e: GeneralSecurityException) {
-                Log.e(TAG, "Could not write trust store", e)
-                Toast.makeText(this@MumlaActivity, R.string.trust_add_failed, Toast.LENGTH_LONG).show()
-            } catch (e: IOException) {
-                Log.e(TAG, "Could not write trust store", e)
-                Toast.makeText(this@MumlaActivity, R.string.trust_add_failed, Toast.LENGTH_LONG).show()
-            }
-        }
-
-        private fun certificateDetails(x509: X509Certificate): String {
-            try {
-                val hexDigest1 = colonHex(MessageDigest.getInstance("SHA-1").digest(x509.encoded))
-                val hexDigest2 = colonHex(MessageDigest.getInstance("SHA-256").digest(x509.encoded))
-
-                return getString(
-                    R.string.certificate_info,
-                    x509.subjectX500Principal.name,
-                    x509.notBefore.toString(),
-                    x509.notAfter.toString(),
-                    hexDigest1,
-                    hexDigest2
-                )
-            } catch (e: GeneralSecurityException) {
-                Log.e(TAG, "Could not fingerprint certificate", e)
-                return x509.toString()
-            }
-        }
-
-        private fun sha256Fingerprint(x509: X509Certificate): String {
-            try {
-                return colonHex(MessageDigest.getInstance("SHA-256").digest(x509.encoded))
-            } catch (e: GeneralSecurityException) {
-                Log.e(TAG, "Could not fingerprint certificate", e)
-                return getString(R.string.unknown)
-            }
-        }
-
-        private fun colonHex(bytes: ByteArray): String {
-            val hex = bytesToHex(bytes)
-            val out = StringBuilder(hex.length + hex.length / 2)
-            var i = 0
-            while (i < hex.length) {
-                if (i > 0) {
-                    out.append(':')
-                }
-                out.append(hex, i, minOf(i + 2, hex.length))
-                i += 2
-            }
-            return out.toString()
-        }
-
-        override fun onPermissionDenied(reason: String?) {
-            val dialog = mPermissionDialog
-            if (dialog != null) {
-                dialog.dismiss()
-                mPermissionDialog = null
-            }
-            mPermissionDialog = MaterialAlertDialogBuilder(this@MumlaActivity)
-                .setTitle(R.string.perm_denied)
-                .setMessage(reason)
-                .setPositiveButton(android.R.string.ok, null)
-                .show()
-        }
-    }
-
-    private fun dismissCertDialog() {
-        val dialog = mCertDialog
-        if (dialog != null) {
-            dialog.dismiss()
-            mCertDialog = null
-        }
-    }
-
-    private fun dismissFirstRunDialog() {
-        val dialog = mFirstRunDialog
-        if (dialog != null) {
-            dialog.dismiss()
-            mFirstRunDialog = null
-        }
-    }
-
-    private fun checkCrashReports() {
-        val gen = mCrashCheckGen
-        val appCtx = applicationContext
-        Thread({ 
-            try {
-                val store = CrashReporter.store(appCtx)
-                val entries = store.list()
-                if (entries.isEmpty()) {
-                    return@Thread
-                }
-                val newest = entries[0]
-                val lastSeen = try {
-                    kotlinx.coroutines.runBlocking {
-                        CrashReportSeenStore.getLastSeen(appCtx)
-                    }
-                } catch (e: Throwable) {
-                    Log.w(TAG, "Could not read crash seen-store", e)
-                    null
-                }
-                if (lastSeen == newest.id) {
-                    return@Thread
-                }
-                if (gen != mCrashCheckGen) {
-                    return@Thread
-                }
-                runOnUiThread {
-                    if (gen == mCrashCheckGen) {
-                        showCrashSnackbar(newest.id)
-                    }
-                }
-            } catch (e: Throwable) {
-                Log.w(TAG, "Crash check failed", e)
-            }
-        }, "crash-check").start()
-    }
-
-    private fun scheduleCrashRecheck() {
-        val recheck = Runnable {
-            Thread({
-                try {
-                    // The exit record for a just-died process can land after
-                    // the startup drain ran: re-drain once (watermark-guarded
-                    // and idempotent) and recheck, so the prompt appears on
-                    // this launch instead of the next one.
-                    CrashReporter.drainExitInfo(applicationContext)
-                } catch (e: Throwable) {
-                    Log.w(TAG, "Crash re-drain failed", e)
-                }
-                checkCrashReports()
-            }, "crash-recheck").start()
-        }
-        mCrashRecheck = recheck
-        mCrashHandler.postDelayed(recheck, CRASH_RECHECK_DELAY_MS)
-    }
-
-    private fun showCrashSnackbar(newestId: String) {
-        if (isFinishing || isDestroyed) {
-            return
-        }
-        // Never resurface over a paused activity: the worker recheck can land
-        // after onPause dismissed the prompt.
-        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
-            return
-        }
-        // Dismiss any orphan before showing: startup check and the 5s recheck
-        // can otherwise overwrite the field and leak the first Snackbar.
-        mCrashSnackbar?.dismiss()
-        val root = findViewById<View>(android.R.id.content) ?: return
-        // Indefinite: this is the only gateway to the report, and a timed
-        // prompt is easily missed behind the system crash dialog or startup
-        // churn. Swipe or the View action still dismisses it.
-        val snackbar = Snackbar.make(root, R.string.crash_prompt, Snackbar.LENGTH_INDEFINITE)
-            .setAction(R.string.crash_view) { openCrashReports() }
-        // Single-shot per report: mark seen only once the Snackbar reports
-        // shown, so rotation dismisses without re-prompting and
-        // swipe/timeout never resurfaces — while a prompt that never
-        // reaches the screen is retried next launch instead of being
-        // silently consumed.
-        snackbar.addCallback(object : Snackbar.Callback() {
-            override fun onShown(sb: Snackbar?) {
-                lifecycleScope.launch(Dispatchers.IO) {
-                    try {
-                        CrashReportSeenStore.setLastSeen(applicationContext, newestId)
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "Could not write crash seen-store", e)
-                    }
-                }
-            }
-            override fun onDismissed(transientBottomBar: Snackbar?, event: Int) {
-                // Swipe/timeout leaves a dismissed instance behind; clear so
-                // the onResume re-arm sees no prompt and can reschedule.
-                if (mCrashSnackbar?.view == transientBottomBar?.view) {
-                    mCrashSnackbar = null
-                }
-            }
-        })
-        mCrashSnackbar = snackbar
-        snackbar.show()
-    }
-
-    private fun openCrashReports() {
-        try {
-            val intent = Intent(this, SettingsActivity::class.java)
-            intent.putExtra(
-                SettingsActivity.EXTRA_LAUNCH_FRAGMENT,
-                CrashReportsFragment::class.java.name,
-            )
-            startActivity(intent)
-        } catch (e: Throwable) {
-            Log.w(TAG, "Could not open crash reports", e)
-        }
-    }
+    /** The prompt the current certificate dialog renders; null when dismissed. */
+    private var mShownTrust: TrustPrompt? = null
+    /** Cancelled with the reconnect dialog. */
+    private var mCountdownJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val settings = this.container.settings
@@ -679,21 +140,16 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                 savedInstanceState.getBoolean(STATE_POST_NOTIF_ASKED, false)
             mServerPendingPerm =
                 BundleCompat.getParcelable(savedInstanceState, STATE_SERVER_PENDING, Server::class.java)
-            mPendingReconnectServer =
-                BundleCompat.getParcelable(savedInstanceState, STATE_RECONNECT_TARGET, Server::class.java)
         }
         setContentView(R.layout.activity_main)
 
-        val toolbar = findViewById(R.id.toolbar) as Toolbar
+        val toolbar = findViewById<Toolbar>(R.id.toolbar)
         setSupportActionBar(toolbar)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                val svc = mService
-                if (svc != null && svc.isConnected()) {
-                    val current = svc.getTargetServer()
-                    var currentName = current?.getName()
-                    if (currentName == null) currentName = ""
+                if (viewModel.connection.value is ConnectionUi.Connected) {
+                    val currentName = viewModel.connection.value.serverName ?: ""
                     val backPressDialog = mBackPressDialog
                     if (backPressDialog != null) {
                         backPressDialog.dismiss()
@@ -702,10 +158,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                     mBackPressDialog = MaterialAlertDialogBuilder(this@MumlaActivity)
                         .setMessage(getString(R.string.disconnectSure, currentName))
                         .setPositiveButton(R.string.confirm) { _, _ ->
-                            val confirmSvc = mService
-                            if (confirmSvc != null) {
-                                confirmSvc.disconnect()
-                            }
+                            viewModel.disconnect()
                             loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES)
                         }
                         .setNegativeButton(android.R.string.cancel, null)
@@ -726,7 +179,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         database.open()
 
         mDrawerLayout = findViewById(R.id.drawer_layout) as DrawerLayout
-        val drawerList = findViewById(R.id.left_drawer) as ListView
+        val drawerList = findViewById<ListView>(R.id.left_drawer)
 
         val headerView = layoutInflater.inflate(R.layout.list_drawer_headerlogo, drawerList, false)
         drawerList.addHeaderView(headerView, null, false)
@@ -743,14 +196,10 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
 
             override fun onDrawerStateChanged(newState: Int) {
                 super.onDrawerStateChanged(newState)
-                // Prevent push to talk from getting stuck on when the drawer is opened.
-                val service = getService()
-                if (service != null && service.isConnected()) {
-                    val session = service.HumlaSession()
-                    if (session.isTalking() && !settings.isPushToTalkToggle) {
-                        session.setTalkingState(false)
-                    }
-                }
+                // Prevent push to talk from getting stuck on when the drawer
+                // is opened. A cancel always ends a held press; toggle mode
+                // ignores it, as the talk-key feature decides.
+                viewModel.talkKeyCancel()
             }
 
             override fun onDrawerOpened(drawerView: View) {
@@ -786,13 +235,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             handleViewIntent(intent)
         }
 
-        setVolumeControlStream(
-            if (useVoiceCallVolume()) {
-                AudioManager.STREAM_VOICE_CALL
-            } else {
-                AudioManager.STREAM_MUSIC
-            }
-        )
+        applyVolumeControlStream()
 
         if (savedInstanceState == null) {
             // Got no instance bundle: this is run only on real app startup -- not when Android
@@ -804,8 +247,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                 showFirstRunGuide()
             } else {
                 StartupAction().execute(this)
-                checkCrashReports()
-                scheduleCrashRecheck()
+                viewModel.startCrashChecks()
             }
         } else if (pendingFirstRunStartup) {
             // Recreation while first-run generation was in flight on the dead
@@ -814,6 +256,9 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             pendingFirstRunStartup = false
             StartupAction().execute(this)
         }
+
+        collectState()
+        collectSettings()
     }
 
     override fun onPostCreate(savedInstanceState: Bundle?) {
@@ -821,6 +266,67 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         // NPE-exact: the original dereferenced mDrawerToggle unconditionally.
         val drawerToggle = mDrawerToggle ?: throw NullPointerException("mDrawerToggle")
         drawerToggle.syncState()
+    }
+
+    /** Collects the connection, its dialogs, and the crash prompt. */
+    private fun collectState() {
+        val runtime = container.runtime
+        // Seed the comparison with the state this instance was created in:
+        // the first collected value must not look like a transition, or a
+        // rotation while connected would replace the restored screen.
+        mLastRendered = viewModel.connection.value
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // The pending switch (and nothing else) keys off "started":
+                // a switch confirmed just before leaving connects on return.
+                viewModel.onActivityStarted()
+                try {
+                    coroutineScope {
+                        launch { viewModel.connection.collect { renderConnection(it) } }
+                        launch { viewModel.connectionError.collect { updateConnectionDialogs() } }
+                        launch { viewModel.trustPrompt.collect { renderTrustPrompt(it) } }
+                        launch { viewModel.permissionDenied.collect { renderPermissionDenied(it) } }
+                        launch { viewModel.crashReportId.collect { renderCrashPrompt(it) } }
+                        // Volume keys follow the live route, never the SCO link itself.
+                        launch {
+                            runtime.routeState
+                                .map { runtime.isMediaRouteActive }
+                                .distinctUntilChanged()
+                                .collect {
+                                    applyVolumeControlStream()
+                                    supportInvalidateOptionsMenu()
+                                }
+                        }
+                    }
+                } finally {
+                    viewModel.onActivityStopped()
+                }
+            }
+        }
+    }
+
+    /** Stay-awake and the volume stream follow the settings they read. */
+    private fun collectSettings() {
+        val repository = container.settingsRepository
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    repository.state
+                        .map { it.snapshot.stayAwake }
+                        .distinctUntilChanged()
+                        .collect { setStayAwake(it) }
+                }
+                launch {
+                    repository.state
+                        .map { it.snapshot.handsetMode to it.snapshot.bluetoothHeadset }
+                        .distinctUntilChanged()
+                        .collect {
+                            applyVolumeControlStream()
+                            supportInvalidateOptionsMenu()
+                        }
+                }
+            }
+        }
     }
 
     override fun onResume() {
@@ -832,39 +338,26 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             pendingFirstRunStartup = false
             StartupAction().execute(this)
         }
-        val connectIntent = Intent(this, MumlaService::class.java)
-        try {
-            mBound = bindService(connectIntent, mConnection, 0)
-        } catch (e: Exception) {
-            Log.w(TAG, "Service bind failed", e)
-            mBound = false
-        }
-        // Rotation within the 5s recheck window cancels it in onPause and
-        // never reschedules (onCreate fresh-branch only). Re-arm here when
-        // no prompt is showing and no recheck is armed; the check itself is
-        // single-shot via the seen-store so repeated resumes are harmless.
-        if (mCrashSnackbar == null && mCrashRecheck == null && !isFinishing && !isDestroyed) {
-            try {
-                checkCrashReports()
-                scheduleCrashRecheck()
-            } catch (e: Throwable) {
-                Log.w(TAG, "Crash reschedule failed", e)
-            }
-        }
+        viewModel.setSuppressNotifications(true)
+        viewModel.clearChatNotifications()
+        // Re-arm the crash check when nothing is showing; the seen-store keeps
+        // repeated resumes harmless.
+        viewModel.recheckCrashReports()
     }
 
     override fun onPause() {
         super.onPause()
-        val errorDialog = mErrorDialog
-        if (errorDialog != null) {
-            errorDialog.dismiss()
-            mErrorDialog = null
-        }
-        val connectingDialog = mConnectingDialog
-        if (connectingDialog != null) {
-            connectingDialog.dismiss()
-            mConnectingDialog = null
-        }
+        dismissAllDialogs()
+        dismissCrashSnackbar()
+        viewModel.dismissCrashPrompt()
+        viewModel.talkKeyCancel()
+        viewModel.dismissPermissionDenied()
+        viewModel.setSuppressNotifications(false)
+    }
+
+    private fun dismissAllDialogs() {
+        dismissConnectingDialog()
+        dismissErrorDialog()
         val switchDialog = mSwitchDialog
         if (switchDialog != null) {
             switchDialog.dismiss()
@@ -881,42 +374,14 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             mBackPressDialog = null
         }
         dismissCertDialog()
+        // The prompt is rebuilt from ClientState on the next STARTED, like
+        // the error dialog: a lifecycle dismissal is not a user decision.
+        mShownTrust = null
         dismissFirstRunDialog()
-        mCrashCheckGen++
-        val snackbar = mCrashSnackbar
-        if (snackbar != null) {
-            snackbar.dismiss()
-            mCrashSnackbar = null
-        }
-        val recheck = mCrashRecheck
-        if (recheck != null) {
-            mCrashHandler.removeCallbacks(recheck)
-            mCrashRecheck = null
-        }
-
-        val service = mService
-        if (service != null) {
-            service.onTalkKeyCancel()
-            // Snapshot: setServiceBound(false) runs fragment callbacks that
-            // can synchronously transact (onDestroyView removes), which would
-            // ConcurrentModificationException the live list mid-fanout.
-            for (fragment in ArrayList(mServiceFragments)) {
-                fragment.setServiceBound(false)
-            }
-            service.unregisterObserver(mObserver)
-            service.setSuppressNotifications(false)
-        }
-        // A pending switch-server/retry observer must not outlive the
-        // activity: its onDisconnected would drive connectToServer (and the
-        // database) on a dead instance. The target survives for resume.
-        dropReconnectObserver()
-        if (mBound) {
-            try {
-                unbindService(mConnection)
-            } catch (e: IllegalArgumentException) {
-                Log.w(TAG, "Service already unbound", e)
-            }
-            mBound = false
+        val progress = mGenerateProgressDialog
+        mGenerateProgressDialog = null
+        if (progress != null) {
+            progress.dismiss()
         }
     }
 
@@ -953,7 +418,6 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
     }
 
     override fun onDestroy() {
-        clearReconnectObserver()
         // NPE-exact: the original dereferenced mDatabase unconditionally.
         val database = mDatabase ?: throw NullPointerException("mDatabase")
         database.close()
@@ -968,8 +432,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         if (disconnectButton == null) {
             return super.onPrepareOptionsMenu(menu)
         }
-        val service = mService
-        disconnectButton.setVisible(service != null && service.isConnected())
+        disconnectButton.setVisible(viewModel.connection.value is ConnectionUi.Connected)
 
         return super.onPrepareOptionsMenu(menu)
     }
@@ -987,10 +450,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             return true
         }
         if (item.itemId == R.id.action_disconnect) {
-            val service = getService()
-            if (service != null) {
-                service.disconnect()
-            }
+            viewModel.disconnect()
             return true
         }
         return false
@@ -998,21 +458,26 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
 
     /**
      * Volume keys follow output routing: voice-call stream on voice routes
-     * (the AEC path), music stream on media routes (A2DP volume). Pre-bind
-     * default is voice (matches the no-sink route); the route push corrects
-     * it right after bind when a media sink is present.
+     * (the AEC path), music stream on media routes (A2DP volume). The default
+     * is voice, matching the no-sink route.
      */
-    private fun useVoiceCallVolume(): Boolean {
-        val service = mService
-        return service == null || !service.isMediaRouteActive()
+    private fun useVoiceCallVolume(): Boolean = !container.runtime.isMediaRouteActive
+
+    private fun applyVolumeControlStream() {
+        setVolumeControlStream(
+            if (useVoiceCallVolume()) {
+                AudioManager.STREAM_VOICE_CALL
+            } else {
+                AudioManager.STREAM_MUSIC
+            }
+        )
     }
 
     /**
      * Asserts Bluetooth headset state. Absolute, not a toggle; writes the
      * requested preference unconditionally so the overflow item mirrors
      * Settings > Audio. Missing-grant handling lives downstream: the
-     * service reverts with a hint. No-op writes return early and never
-     * dispatch preference listeners.
+     * Bluetooth permission feature reverts with a hint.
      */
     fun setBluetoothHeadset(enabled: Boolean) {
         // NPE-exact: the original dereferenced mSettings unconditionally.
@@ -1034,9 +499,8 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         // NPE-exact: the original dereferenced mSettings unconditionally.
         val settings = mSettings ?: throw NullPointerException("mSettings")
         val pttKey = settings.pushToTalkKey
-        val service = mService
-        if (service != null && Settings.isPttKeyBound(pttKey, keyCode)) {
-            service.onTalkKeyDown()
+        if (Settings.isPttKeyBound(pttKey, keyCode)) {
+            viewModel.talkKeyDown()
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -1046,9 +510,8 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         // NPE-exact: the original dereferenced mSettings unconditionally.
         val settings = mSettings ?: throw NullPointerException("mSettings")
         val pttKey = settings.pushToTalkKey
-        val service = mService
-        if (service != null && Settings.isPttKeyBound(pttKey, keyCode)) {
-            service.onTalkKeyUp()
+        if (Settings.isPttKeyBound(pttKey, keyCode)) {
+            viewModel.talkKeyUp()
             return true
         }
         return super.onKeyUp(keyCode, event)
@@ -1056,9 +519,8 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        val service = mService
-        if (!hasFocus && service != null) {
-            service.onTalkKeyCancel()
+        if (!hasFocus) {
+            viewModel.talkKeyCancel()
         }
     }
 
@@ -1084,11 +546,32 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             .setMessage(msg)
             .setPositiveButton(R.string.generate) { _, _ ->
                 mFirstRunGenerateInFlight = true
-                val generateTask = object : MumlaCertificateGenerateTask(this@MumlaActivity) {
-                    override fun onPostExecute(result: DatabaseCertificate?) {
-                        super.onPostExecute(result)
+                settings.isFirstRun = false
+                val progress = MaterialAlertDialogBuilder(this@MumlaActivity)
+                    .setTitle(R.string.generateCertProgress)
+                    .setView(R.layout.dialog_progress)
+                    .setCancelable(false)
+                    .create()
+                progress.show()
+                mGenerateProgressDialog = progress
+                val appContext = applicationContext
+                container.appScope.launch {
+                    val result = generateClientCertificate(appContext)
+                    withContext(Dispatchers.Main.immediate) {
+                        val dialog = mGenerateProgressDialog
+                        mGenerateProgressDialog = null
+                        if (!isFinishing && !isDestroyed) {
+                            dialog?.dismiss()
+                        }
                         mFirstRunGenerateInFlight = false
                         if (result != null) settings.defaultCertificateId = result.id
+                        if (result == null && !isFinishing && !isDestroyed) {
+                            Toast.makeText(
+                                this@MumlaActivity,
+                                R.string.generateCertFailure,
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                         // The news dialog shows from this activity's window token; skip
                         // it if the activity died while generation was in flight —
                         // and hand StartupAction to the recreated instance via
@@ -1100,8 +583,6 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                         }
                     }
                 }
-                generateTask.execute()
-                settings.isFirstRun = false
             }
             // The dismiss listener below owns the flag-clear/StartupAction path,
             // so every dismissal (button, back-press, outside-tap, onPause)
@@ -1137,18 +618,12 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             DrawerAdapter.ITEM_SERVER -> ChannelFragment::class.java
             DrawerAdapter.ITEM_INFO -> ServerInfoFragment::class.java
             DrawerAdapter.ITEM_ACCESS_TOKENS -> {
-                val bound = getService()
-                val connectedServer = bound?.getTargetServer()
-                if (connectedServer == null) {
+                val connected = viewModel.connection.value as? ConnectionUi.Connected
+                if (connected == null) {
                     FavouriteServerListFragment::class.java
                 } else {
-                    args.putLong("server", connectedServer.id)
-                    // NPE-exact: the original dereferenced mDatabase unconditionally.
-                    val database = mDatabase ?: throw NullPointerException("mDatabase")
-                    args.putStringArrayList(
-                        "access_tokens",
-                        ArrayList(database.getAccessTokens(connectedServer.id))
-                    )
+                    // The screen's ViewModel loads the tokens itself.
+                    args.putLong(MumlaViewModelFactory.ARG_SERVER, connected.target.server.serverId)
                     AccessTokenFragment::class.java
                 }
             }
@@ -1211,14 +686,412 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         outState.putBoolean(STATE_BT_ASKED, mPermBluetoothAsked)
         outState.putBoolean(STATE_POST_NOTIF_ASKED, mPermPostNotificationsAsked)
         outState.putParcelable(STATE_SERVER_PENDING, mServerPendingPerm)
-        outState.putParcelable(STATE_RECONNECT_TARGET, mPendingReconnectServer)
+    }
+
+    // Connection state rendering.
+
+    private fun renderConnection(connection: ConnectionUi) {
+        updateConnectionDialogs()
+        val drawerAdapter = mDrawerAdapter
+        drawerAdapter?.notifyDataSetChanged()
+        supportInvalidateOptionsMenu()
+
+        when (connectionScreenTransition(mLastRendered, connection)) {
+            ConnectionScreenTransition.OPEN_SESSION -> {
+                // A pending switch/retry is moot once connected: the
+                // ViewModel clears its own pending target at the Idle it
+                // connected from.
+                val settings = mSettings ?: throw NullPointerException("mSettings")
+                if (settings.shouldStartUpInPinnedMode) {
+                    loadDrawerFragment(DrawerAdapter.ITEM_PINNED_CHANNELS)
+                } else {
+                    loadDrawerFragment(DrawerAdapter.ITEM_SERVER)
+                }
+                // Swap screens synchronously: commit() alone leaves the server
+                // list visible and tappable until the next traversal, while the
+                // connecting dialog was dismissed above.
+                supportFragmentManager.executePendingTransactions()
+                drawerAdapter?.notifyDataSetChanged()
+                supportInvalidateOptionsMenu()
+            }
+            ConnectionScreenTransition.SHOW_FAVOURITES -> {
+                // Re-show the server list when the connection ends while a
+                // session-only screen is up.
+                if (isConnectedOnlyContent()) {
+                    loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES)
+                    supportFragmentManager.executePendingTransactions()
+                }
+            }
+            ConnectionScreenTransition.NONE -> Unit
+        }
+        mLastRendered = connection
+    }
+
+    /** The fragment currently showing, if it needs a live session. */
+    private fun isConnectedOnlyContent(): Boolean {
+        val fragment = supportFragmentManager.findFragmentById(R.id.content_frame) ?: return false
+        return fragment is ChannelFragment ||
+            fragment is ServerInfoFragment ||
+            fragment is AccessTokenFragment
+    }
+
+    /** The previously rendered connection; see [collectState] for the seed. */
+    private var mLastRendered: ConnectionUi? = null
+
+    private fun updateConnectionDialogs() {
+        val connection = viewModel.connection.value
+        val error = viewModel.connectionError.value
+        dismissConnectingDialog()
+        dismissErrorDialog()
+        when {
+            connection is ConnectionUi.Connecting -> showConnectingDialog(connection)
+            error != null && connection is ConnectionUi.Reconnecting ->
+                showReconnectingDialog(connection, error)
+            error != null && connection is ConnectionUi.Failed ->
+                showFailedDialog(connection, error)
+        }
+    }
+
+    private fun showConnectingDialog(connection: ConnectionUi.Connecting) {
+        mConnectingDialog = MaterialAlertDialogBuilder(this)
+            .setTitle(getString(R.string.connecting_to_server, connection.host))
+            .setView(R.layout.dialog_progress)
+            .setCancelable(true)
+            .setOnCancelListener {
+                viewModel.disconnect()
+                Toast.makeText(
+                    this@MumlaActivity, R.string.cancelled,
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            .create()
+        // NPE-exact: the original dereferenced mConnectingDialog unconditionally.
+        val dialog = mConnectingDialog ?: throw NullPointerException("mConnectingDialog")
+        dialog.show()
+    }
+
+    private fun showReconnectingDialog(connection: ConnectionUi.Reconnecting, error: se.lublin.humla.client.ClientError) {
+        val builder = MaterialAlertDialogBuilder(this)
+        builder.setTitle(getString(R.string.connectionRefused))
+        builder.setMessage(reconnectMessage(connection, error))
+        builder.setPositiveButton(R.string.cancel_reconnect) { _, _ ->
+            viewModel.cancelReconnect()
+            viewModel.dismissError()
+        }
+        builder.setCancelable(false)
+        mErrorDialog = builder.show()
+        startReconnectCountdown(connection, error)
+    }
+
+    private fun reconnectMessage(connection: ConnectionUi.Reconnecting, error: se.lublin.humla.client.ClientError): String {
+        // The countdown is the platform's localized relative time, so no new
+        // untranslated string is introduced.
+        val countdown = DateUtils.getRelativeTimeSpanString(
+            connection.retryAtMillis,
+            System.currentTimeMillis(),
+            DateUtils.SECOND_IN_MILLIS,
+        )
+        val cause = error.displayMessage() ?: "unknown"
+        return getString(R.string.attempting_reconnect, cause) + "\n" + countdown
+    }
+
+    /** Re-renders the countdown once a second while the dialog is up. */
+    private fun startReconnectCountdown(connection: ConnectionUi.Reconnecting, error: se.lublin.humla.client.ClientError) {
+        mCountdownJob?.cancel()
+        mCountdownJob = lifecycleScope.launch {
+            while (true) {
+                val dialog = mErrorDialog ?: break
+                dialog.setMessage(reconnectMessage(connection, error))
+                if (connection.retryAtMillis - System.currentTimeMillis() <= 0) {
+                    break
+                }
+                delay(1000)
+            }
+        }
+    }
+
+    private fun showFailedDialog(connection: ConnectionUi.Failed, error: se.lublin.humla.client.ClientError) {
+        val rejected = error as? se.lublin.humla.client.ClientError.Rejected
+        val wrongPassword = rejected != null &&
+            (rejected.type == Mumble.Reject.RejectType.WrongUserPW.number ||
+                rejected.type == Mumble.Reject.RejectType.WrongServerPW.number)
+        val builder = MaterialAlertDialogBuilder(this)
+        if (wrongPassword) {
+            val passwordField = EditText(this)
+            passwordField.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            passwordField.setHint(R.string.password)
+            builder.setTitle(R.string.invalid_password)
+            builder.setMessage(error.displayMessage())
+            builder.setView(passwordField)
+            builder.setPositiveButton(R.string.reconnect) { _, _ ->
+                val server = MainViewModel.serverOf(connection.target)
+                server.password = passwordField.text.toString()
+                viewModel.retryWithPassword(server)
+            }
+            builder.setNegativeButton(android.R.string.cancel) { _, _ ->
+                viewModel.dismissError()
+            }
+        } else {
+            builder.setTitle(getString(R.string.connectionRefused))
+            builder.setMessage(error.displayMessage() ?: getString(R.string.unknown))
+            builder.setPositiveButton(android.R.string.ok) { _, _ ->
+                viewModel.dismissError()
+            }
+        }
+        builder.setCancelable(false)
+        mErrorDialog = builder.show()
+    }
+
+    private fun dismissConnectingDialog() {
+        val dialog = mConnectingDialog
+        if (dialog != null) {
+            dialog.dismiss()
+            mConnectingDialog = null
+        }
+    }
+
+    private fun dismissErrorDialog() {
+        mCountdownJob?.cancel()
+        mCountdownJob = null
+        val dialog = mErrorDialog
+        if (dialog != null) {
+            dialog.dismiss()
+            mErrorDialog = null
+        }
+    }
+
+    // TLS trust prompts.
+
+    private fun renderTrustPrompt(prompt: TrustPrompt?) {
+        if (prompt == null) {
+            mShownTrust = null
+            dismissCertDialog()
+            return
+        }
+        if (prompt == mShownTrust) {
+            return
+        }
+        mShownTrust = prompt
+        when (prompt.kind) {
+            TrustPrompt.Kind.HOSTNAME_MISMATCH -> showMismatchDialog(prompt)
+            TrustPrompt.Kind.FIRST_TRUST -> showFirstTrustDialog(prompt)
+            TrustPrompt.Kind.CHANGED_PIN -> showChangedDialog(prompt)
+        }
+    }
+
+    /** CA-valid cert for the wrong host: no Allow, no pinning — disconnect only. */
+    private fun showMismatchDialog(prompt: TrustPrompt) {
+        val claimed = TlsHostnameVerifier.claimedNames(prompt.certificate)
+        val names = if (claimed.isEmpty()) getString(R.string.unknown) else TextUtils.join(", ", claimed)
+        val layout = layoutInflater.inflate(R.layout.certificate_info, null)
+        val textView = layout.findViewById<TextView>(R.id.certificate_info_text)
+        textView.text = getString(R.string.certificate_identity_mismatch_body, prompt.host, names) +
+            "\n\n" + certificateDetails(prompt.certificate)
+        dismissCertDialog()
+        mCertDialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.certificate_identity_mismatch)
+            .setView(layout)
+            .setPositiveButton(android.R.string.ok) { _, _ -> mShownTrust = null }
+            .show()
+    }
+
+    /** Self-signed/unknown issuer, no pin yet: clarified Allow flow. */
+    private fun showFirstTrustDialog(prompt: TrustPrompt) {
+        val layout = layoutInflater.inflate(R.layout.certificate_info, null)
+        val textView = layout.findViewById<TextView>(R.id.certificate_info_text)
+        textView.text = getString(R.string.untrusted_certificate_body, prompt.host) +
+            "\n\n" + certificateDetails(prompt.certificate)
+        dismissCertDialog()
+        mCertDialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.untrusted_certificate)
+            .setView(layout)
+            .setPositiveButton(R.string.allow) { _, _ -> pinAndReconnect(prompt) }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> mShownTrust = null }
+            .show()
+    }
+
+    /** Pinned host presenting a different key: explicit Replace with old-vs-new fingerprints. */
+    private fun showChangedDialog(prompt: TrustPrompt) {
+        val layout = layoutInflater.inflate(R.layout.certificate_info, null)
+        val textView = layout.findViewById<TextView>(R.id.certificate_info_text)
+        val oldPrint = prompt.pinned?.let { sha256Fingerprint(it) } ?: getString(R.string.unknown)
+        textView.text = getString(
+            R.string.certificate_changed_body,
+            prompt.host,
+            oldPrint,
+            sha256Fingerprint(prompt.certificate),
+        ) + "\n\n" + certificateDetails(prompt.certificate)
+        dismissCertDialog()
+        mCertDialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.certificate_changed_title)
+            .setView(layout)
+            .setPositiveButton(R.string.replace_certificate) { _, _ -> pinAndReconnect(prompt) }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> mShownTrust = null }
+            .show()
+    }
+
+    private fun pinAndReconnect(prompt: TrustPrompt) {
+        mShownTrust = null
+        if (viewModel.pinAndConnect(prompt)) {
+            Toast.makeText(this, R.string.trust_added, Toast.LENGTH_LONG).show()
+        } else {
+            Toast.makeText(this, R.string.trust_add_failed, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun certificateDetails(x509: X509Certificate): String {
+        try {
+            val hexDigest1 = colonHex(MessageDigest.getInstance("SHA-1").digest(x509.encoded))
+            val hexDigest2 = colonHex(MessageDigest.getInstance("SHA-256").digest(x509.encoded))
+
+            return getString(
+                R.string.certificate_info,
+                x509.subjectX500Principal.name,
+                x509.notBefore.toString(),
+                x509.notAfter.toString(),
+                hexDigest1,
+                hexDigest2
+            )
+        } catch (e: GeneralSecurityException) {
+            Log.e(TAG, "Could not fingerprint certificate", e)
+            return x509.toString()
+        }
+    }
+
+    private fun sha256Fingerprint(x509: X509Certificate): String {
+        try {
+            return colonHex(MessageDigest.getInstance("SHA-256").digest(x509.encoded))
+        } catch (e: GeneralSecurityException) {
+            Log.e(TAG, "Could not fingerprint certificate", e)
+            return getString(R.string.unknown)
+        }
+    }
+
+    private fun colonHex(bytes: ByteArray): String {
+        val hex = bytesToHex(bytes)
+        val out = StringBuilder(hex.length + hex.length / 2)
+        var i = 0
+        while (i < hex.length) {
+            if (i > 0) {
+                out.append(':')
+            }
+            out.append(hex, i, minOf(i + 2, hex.length))
+            i += 2
+        }
+        return out.toString()
+    }
+
+    private fun dismissCertDialog() {
+        val dialog = mCertDialog
+        if (dialog != null) {
+            dialog.dismiss()
+            mCertDialog = null
+        }
+    }
+
+    private fun dismissFirstRunDialog() {
+        val dialog = mFirstRunDialog
+        if (dialog != null) {
+            dialog.dismiss()
+            mFirstRunDialog = null
+        }
+    }
+
+    // Permission-denied notice.
+
+    private fun renderPermissionDenied(reason: String?) {
+        val dialog = mPermissionDialog
+        if (dialog != null) {
+            dialog.dismiss()
+            mPermissionDialog = null
+        }
+        if (reason == null) {
+            return
+        }
+        mPermissionDialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.perm_denied)
+            .setMessage(reason)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                viewModel.dismissPermissionDenied()
+            }
+            .setOnDismissListener {
+                mPermissionDialog = null
+            }
+            .show()
+    }
+
+    // Crash-report prompt.
+
+    private fun renderCrashPrompt(id: String?) {
+        if (id == null) {
+            dismissCrashSnackbar()
+            return
+        }
+        // Never resurface over a paused activity: the worker recheck can land
+        // after onPause dismissed the prompt.
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            return
+        }
+        showCrashSnackbar(id)
+    }
+
+    private fun dismissCrashSnackbar() {
+        val snackbar = mCrashSnackbar
+        if (snackbar != null) {
+            snackbar.dismiss()
+            mCrashSnackbar = null
+        }
+    }
+
+    private fun showCrashSnackbar(newestId: String) {
+        if (isFinishing || isDestroyed) {
+            return
+        }
+        // Dismiss any orphan before showing: the startup check and the 5s
+        // recheck can otherwise overwrite the field and leak the first Snackbar.
+        mCrashSnackbar?.dismiss()
+        val root = findViewById<View>(android.R.id.content) ?: return
+        // Indefinite: this is the only gateway to the report, and a timed
+        // prompt is easily missed behind the system crash dialog or startup
+        // churn. Swipe or the View action still dismisses it.
+        val snackbar = Snackbar.make(root, R.string.crash_prompt, Snackbar.LENGTH_INDEFINITE)
+            .setAction(R.string.crash_view) { openCrashReports() }
+        // Single-shot per report: mark seen only once the Snackbar reports
+        // shown, so rotation dismisses without re-prompting and
+        // swipe/timeout never resurfaces — while a prompt that never
+        // reaches the screen is retried next launch instead of being
+        // silently consumed.
+        snackbar.addCallback(object : Snackbar.Callback() {
+            override fun onShown(sb: Snackbar?) {
+                viewModel.markCrashReportSeen(newestId)
+            }
+
+            override fun onDismissed(transientBottomBar: Snackbar?, event: Int) {
+                // Swipe/timeout leaves a dismissed instance behind; clear so
+                // the onResume re-arm sees no prompt and can reschedule.
+                if (mCrashSnackbar?.view == transientBottomBar?.view) {
+                    mCrashSnackbar = null
+                }
+            }
+        })
+        mCrashSnackbar = snackbar
+        snackbar.show()
+    }
+
+    private fun openCrashReports() {
+        try {
+            val intent = Intent(this, SettingsActivity::class.java)
+            intent.putExtra(
+                SettingsActivity.EXTRA_LAUNCH_FRAGMENT,
+                CrashReportsFragment::class.java.name,
+            )
+            startActivity(intent)
+        } catch (e: Throwable) {
+            Log.w(TAG, "Could not open crash reports", e)
+        }
     }
 
     override fun connectToServer(server: Server) {
-        // NOTE: stale pending-reconnect invalidation happens at the commit
-        // point below (before ServerConnectTask), not here: permission and
-        // CONNECTING guards may ignore this tap, and must not destroy an
-        // armed retry along the way.
         mServerPendingPerm = server
         connectToServerWithPerm()
     }
@@ -1301,67 +1174,34 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             return
         }
 
-        val server = pending
         mServerPendingPerm = null
-
-        val service = mService
-        // Already connected: tapping the current server is a no-op, tapping
-        // another server offers a switch via the reconnect dialog.
-        if (service != null && service.isConnected()) {
-            // Tapping the server we're already on is a no-op: reconnecting to it
-            // would pointlessly tear down the live session.
-            if (isSameServer(service.getTargetServer(), server)) {
+        when (viewModel.connect(pending)) {
+            ConnectRequest.STARTED -> Unit
+            ConnectRequest.ALREADY_CONNECTED ->
                 Toast.makeText(this, R.string.already_connected, Toast.LENGTH_SHORT).show()
-                return
-            }
-            // Dismiss-before-assign: rapid taps must not orphan a shown
-            // dialog by overwriting its only tracked reference.
-            val switchDialog = mSwitchDialog
-            if (switchDialog != null) {
-                switchDialog.dismiss()
-                mSwitchDialog = null
-            }
-            mSwitchDialog = MaterialAlertDialogBuilder(this)
-                .setMessage(R.string.reconnect_dialog_message)
-                .setPositiveButton(R.string.connect) { _, _ ->
-                    // Register an observer to reconnect to the new server once disconnected.
-                    val svc = getService()
-                    if (svc == null) {
-                        return@setPositiveButton
-                    }
-                    setReconnectObserver(object : HumlaObserver() {
-                        override fun onDisconnected(e: HumlaException?) {
-                            clearReconnectObserver()
-                            if (isFinishing || isDestroyed) {
-                                return
-                            }
-                            connectToServer(server)
-                        }
-                    }, server)
-                    svc.disconnect()
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
-            return
-        }
-        // Ignore rapid taps while a connection attempt is already in progress;
-        // each tap would otherwise spawn a parallel connection attempt.
-        // (No stale-intent clear on this path: the tap is dropped, so an
-        // armed retry behind the in-flight attempt must survive it.)
-        if (service != null && service.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
-            if (isSameServer(service.getTargetServer(), server)) {
+            ConnectRequest.CONNECTING_SAME ->
                 Toast.makeText(this, R.string.mumlaConnecting, Toast.LENGTH_SHORT).show()
-            } else {
+            ConnectRequest.CONNECTING_OTHER ->
                 Toast.makeText(this, R.string.already_connecting, Toast.LENGTH_LONG).show()
-            }
-            return
+            ConnectRequest.SWITCH_CONFIRM -> showSwitchDialog(pending)
         }
+    }
 
-        // Commit point: a fresh explicit intent invalidates any stale
-        // pending reconnect so a later rebind cannot chase the old target.
-        clearReconnectObserver()
-        val connectTask = ServerConnectTask(this)
-        connectTask.execute(server)
+    private fun showSwitchDialog(server: Server) {
+        // Dismiss-before-assign: rapid taps must not orphan a shown
+        // dialog by overwriting its only tracked reference.
+        val switchDialog = mSwitchDialog
+        if (switchDialog != null) {
+            switchDialog.dismiss()
+            mSwitchDialog = null
+        }
+        mSwitchDialog = MaterialAlertDialogBuilder(this)
+            .setMessage(R.string.reconnect_dialog_message)
+            .setPositiveButton(R.string.connect) { _, _ ->
+                viewModel.confirmSwitch(server)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     override fun onRequestPermissionsResult(
@@ -1452,199 +1292,21 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         }
     }
 
-    /**
-     * Updates the activity to represent the connection state of the given service.
-     * Will show reconnecting dialog if reconnecting, dismiss otherwise, etc.
-     * Basically, this service will do catch-up if the activity wasn't bound to receive
-     * connection state updates.
-     *
-     * @param service A bound IHumlaService.
-     */
-    private fun updateConnectionState(service: IHumlaService?) {
-        val connectingDialog = mConnectingDialog
-        if (connectingDialog != null) {
-            connectingDialog.dismiss()
-            mConnectingDialog = null
-        }
-        val errorDialog = mErrorDialog
-        if (errorDialog != null) {
-            errorDialog.dismiss()
-            mErrorDialog = null
-        }
-
-        if (service == null) {
-            return
-        }
-
-        when (service.getConnectionState()) {
-            HumlaService.ConnectionState.CONNECTING -> {
-                val server = service.getTargetServer()
-                val host = if (server?.host != null) server.host else ""
-                // SRV lookup is done later, so we no longer show the port in the connection
-                // progress dialog (and only the configured hostname)
-                mConnectingDialog = MaterialAlertDialogBuilder(this)
-                    .setTitle(getString(R.string.connecting_to_server, host))
-                    .setView(R.layout.dialog_progress)
-                    .setCancelable(true)
-                    .setOnCancelListener {
-                        service.disconnect()
-                        Toast.makeText(
-                            this@MumlaActivity, R.string.cancelled,
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    .create()
-                // NPE-exact: the original dereferenced mConnectingDialog unconditionally.
-                val dialog = mConnectingDialog ?: throw NullPointerException("mConnectingDialog")
-                dialog.show()
-            }
-            HumlaService.ConnectionState.CONNECTION_LOST -> {
-                // Only bother the user if the error hasn't already been shown.
-                // Single capture: the service is perished-checkable once here
-                // instead of re-querying getService() at every step.
-                val lostSvc = getService()
-                if (lostSvc != null && !lostSvc.isErrorShown()) {
-                    val builder = MaterialAlertDialogBuilder(this@MumlaActivity)
-                    builder.setTitle(getString(R.string.connectionRefused))
-                    val error = lostSvc.getConnectionError()
-                    if (error != null && lostSvc.isReconnecting()) {
-                        builder.setMessage(
-                            error.message + "\n\n" +
-                                getString(
-                                    R.string.attempting_reconnect,
-                                    error.cause?.message ?: "unknown"
-                                )
-                        )
-                        builder.setPositiveButton(R.string.cancel_reconnect) { _, _ ->
-                            val cancelSvc = getService()
-                            if (cancelSvc != null) {
-                                cancelSvc.cancelReconnect()
-                                cancelSvc.markErrorShown()
-                            }
-                        }
-                    } else if (error != null &&
-                        error.reason == HumlaException.HumlaDisconnectReason.REJECT &&
-                        error.reject != null &&
-                        (error.reject?.type == Mumble.Reject.RejectType.WrongUserPW ||
-                            error.reject?.type == Mumble.Reject.RejectType.WrongServerPW)
-                    ) {
-                        val passwordField = EditText(this)
-                        passwordField.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-                        passwordField.setHint(R.string.password)
-                        builder.setTitle(R.string.invalid_password)
-                        builder.setMessage(error.message)
-                        builder.setView(passwordField)
-                        builder.setPositiveButton(R.string.reconnect) { _, _ ->
-                            val svc = getService()
-                            if (svc == null) {
-                                return@setPositiveButton
-                            }
-                            val server1 = svc.getTargetServer()
-                            if (server1 == null) {
-                                return@setPositiveButton
-                            }
-                            val password = passwordField.text.toString()
-                            server1.password = password
-                            // NPE-exact: the original dereferenced mDatabase unconditionally.
-                            val database = mDatabase ?: throw NullPointerException("mDatabase")
-                            if (server1.isSaved()) {
-                                database.updateServer(server1)
-                            }
-                            if (svc.getConnectionState() == HumlaService.ConnectionState.CONNECTING) {
-                                // Serialize the retry behind the in-flight attempt, mirroring
-                                // the already-connected flow: reconnect once it tears down.
-                                setReconnectObserver(object : HumlaObserver() {
-                                    override fun onDisconnected(e: HumlaException?) {
-                                        clearReconnectObserver()
-                                        if (isFinishing || isDestroyed) {
-                                            return
-                                        }
-                                        connectToServer(server1)
-                                    }
-                                }, server1)
-                                svc.disconnect()
-                            } else {
-                                connectToServer(server1)
-                            }
-                        }
-                        builder.setNegativeButton(android.R.string.cancel) { _, _ ->
-                            val svc = getService()
-                            if (svc != null) {
-                                svc.markErrorShown()
-                            }
-                        }
-                    } else {
-                        val msg = error?.message ?: getString(R.string.unknown)
-                        builder.setMessage(msg)
-                        builder.setPositiveButton(android.R.string.ok) { _, _ ->
-                            val svc = getService()
-                            if (svc != null) {
-                                svc.markErrorShown()
-                            }
-                        }
-                    }
-                    builder.setCancelable(false)
-                    mErrorDialog = builder.show()
-                }
-            }
-            HumlaService.ConnectionState.DISCONNECTED,
-            HumlaService.ConnectionState.CONNECTED -> {
-                // Catch-up only covers transitional states; steady states need no dialog.
-            }
-        }
-    }
-
     /*
      * HERE BE IMPLEMENTATIONS
      */
 
-    override fun getService(): IMumlaService? {
-        return mService
-    }
-
-    override fun addServiceFragment(fragment: HumlaServiceFragment) {
-        mServiceFragments.add(fragment)
-    }
-
-    override fun removeServiceFragment(fragment: HumlaServiceFragment) {
-        mServiceFragments.remove(fragment)
-    }
-
-    override fun onSettingChanged(key: String?) {
-        super.onSettingChanged(key)
-        if (key == null) {
-            return
-        }
-        // NPE-exact: the original dereferenced mSettings unconditionally.
-        val settings = mSettings ?: throw NullPointerException("mSettings")
-        when (key) {
-            Settings.PREF_STAY_AWAKE ->
-                setStayAwake(settings.shouldStayAwake)
-            Settings.PREF_HANDSET_MODE, Settings.PREF_BLUETOOTH_HEADSET ->
-                setVolumeControlStream(
-                    if (useVoiceCallVolume()) {
-                        AudioManager.STREAM_VOICE_CALL
-                    } else {
-                        AudioManager.STREAM_MUSIC
-                    }
-                )
-        }
-    }
-
-    override fun isConnected(): Boolean {
-        val service = mService
-        return service != null && service.isConnected()
-    }
+    override fun isConnected(): Boolean = viewModel.connection.value is ConnectionUi.Connected
 
     override fun getConnectedServerName(): String? {
-        val service = mService
-        if (service != null && service.isConnected()) {
-            val server = service.getTargetServer()
-            var name = server?.getName()
+        val connection = viewModel.connection.value
+        if (connection is ConnectionUi.Connected) {
+            val server = connection.target.server
+            val name = server.name
             if (name == null || name.isEmpty()) {
-                name = server?.host
+                return server.host
             }
-            return name ?: ""
+            return name
         }
         if (BuildConfig.DEBUG) {
             throw RuntimeException("getConnectedServerName should only be called if connected!")
@@ -1656,11 +1318,11 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         // NPE-exact: the original dereferenced mDatabase unconditionally.
         val database = mDatabase ?: throw NullPointerException("mDatabase")
         when (action) {
-            ServerEditFragment.Action.ADD_ACTION -> {
+            ServerEditFragment.Action.ADD_ACTION -> lifecycleScope.launch {
                 database.addServer(server)
                 loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES)
             }
-            ServerEditFragment.Action.EDIT_ACTION -> {
+            ServerEditFragment.Action.EDIT_ACTION -> lifecycleScope.launch {
                 database.updateServer(server)
                 loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES)
             }
@@ -1680,9 +1342,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         private const val PERMISSIONS_REQUEST_POST_NOTIFICATIONS = 2
         private const val PERMISSIONS_REQUEST_BLUETOOTH_CONNECT = 3
         private const val STATE_SERVER_PENDING = "server_pending"
-        private const val STATE_RECONNECT_TARGET = "reconnect_target"
         private const val STATE_POST_NOTIF_ASKED = "post_notif_asked"
-        private const val CRASH_RECHECK_DELAY_MS = 5_000L
         private const val STATE_BT_ASKED = "bt_asked"
 
         // Process-wide pending StartupAction from a dead first-run instance:
@@ -1694,31 +1354,6 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         // before execute). Without this, the news dialog is silently skipped
         // for that launch.
         private var pendingFirstRunStartup = false
-
-        /**
-         * Widened to public: Kotlin has no package visibility (was package-visible
-         * static in Java for the same-package tests).
-         */
-        @JvmStatic
-        fun isSameServer(a: Server?, b: Server?): Boolean {
-            if (a == null || b == null) {
-                return a == b
-            }
-            // A corrected password must reconnect, not no-op: compare it even
-            // when the endpoint identity matches (saved or unsaved). Null and
-            // empty both mean "no password" (DB columns are nullable while the
-            // edit dialog produces ""), so normalize before comparing.
-            var pwA = a.password
-            var pwB = b.password
-            if (pwA == null) pwA = ""
-            if (pwB == null) pwB = ""
-            val samePassword = pwA == pwB
-            if (a.isSaved() && b.isSaved()) {
-                return a.id == b.id && samePassword
-            }
-            // Fall back to the chat-log identity convention (normalized endpoint + username).
-            return samePassword && ChatLogFeature.serverKey(a) == ChatLogFeature.serverKey(b)
-        }
 
         private val HEX_ARRAY = "0123456789abcdef".toCharArray()
 

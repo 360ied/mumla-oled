@@ -17,8 +17,6 @@
 
 package se.lublin.mumla.service
 
-import se.lublin.humla.model.IMessage
-
 /**
  * A general chat message, either a text message from a user or an
  * informational notice.
@@ -42,30 +40,18 @@ interface IChatMessage {
     fun accept(visitor: Visitor)
 
     /**
-     * A text message from a user.
+     * A text message from a user, as values: the sender's and targets' names
+     * are resolved when the record is logged, so no live handle or model
+     * object outlives the event.
      */
-    class TextMessage : IChatMessage {
-        private val mMessage: IMessage?
-        val isSelfAuthored: Boolean
-
-        constructor(message: IMessage?) : this(message, false)
-
-        constructor(message: IMessage?, selfAuthored: Boolean) {
-            mMessage = message
-            isSelfAuthored = selfAuthored
-        }
-
-        fun getMessage(): IMessage? {
-            return mMessage
-        }
-
-        override val body: String?
-            // NPE-exact: the original dereferenced mMessage unconditionally.
-            get() = (mMessage ?: throw NullPointerException("message")).message
-
-        override val receivedTime: Long
-            // NPE-exact: the original dereferenced mMessage unconditionally.
-            get() = (mMessage ?: throw NullPointerException("message")).receivedTime
+    class TextMessage @JvmOverloads constructor(
+        val actorName: String?,
+        /** Names of the targeted channels or users, in today's display order. */
+        val targetNames: List<String>,
+        override val body: String,
+        override val receivedTime: Long,
+        val isSelfAuthored: Boolean = false,
+    ) : IChatMessage {
 
         override fun accept(visitor: Visitor) {
             visitor.visit(this)

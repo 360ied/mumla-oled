@@ -19,7 +19,6 @@ package se.lublin.mumla.channel
 
 import android.content.Context
 import android.os.Bundle
-import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -27,50 +26,39 @@ import android.widget.EditText
 import androidx.appcompat.widget.PopupMenu
 import androidx.fragment.app.FragmentManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.model.IUser
 import se.lublin.humla.net.Permissions
+import se.lublin.humla.state.UserInfo
 import se.lublin.mumla.R
 import se.lublin.mumla.channel.comment.AbstractCommentFragment
 import se.lublin.mumla.channel.comment.UserCommentFragment
-import se.lublin.mumla.service.MumlaService
-import se.lublin.mumla.util.ModelUtils
 
 /**
+ * The context menu of one user row, acting through the screen's ViewModel.
+ * Every read goes to the latest state, so a toggle inverts the value the user
+ * has now, not the value it had when the row was tapped.
  * Created by andrew on 19/11/15.
  */
 class UserMenu(
     context: Context,
-    user: IUser,
-    service: MumlaService,
-    fragmentManager: FragmentManager,
-    stateListener: IUserLocalStateListener
+    private val snapshot: UserInfo,
+    private val viewModel: ChannelListViewModel,
+    private val fragmentManager: FragmentManager,
 ) : PermissionsPopupMenu.IOnMenuPrepareListener, PopupMenu.OnMenuItemClickListener {
     private val mContext: Context = context
-    private val mUser: IUser = user
-    private val mService: MumlaService = service
-    private val mFragmentManager: FragmentManager = fragmentManager
-    private val mStateListener: IUserLocalStateListener = stateListener
+
+    /** The user as it is now; the tapped row's values once the user has left. */
+    private val user: UserInfo
+        get() = viewModel.user(snapshot.session) ?: snapshot
 
     override fun onMenuPrepare(menu: Menu, permissions: Int) {
         // Use permission data to determine the actions available.
-        val self: Boolean
-        try {
-            self = mUser.session == mService.getSessionId()
-        } catch (e: IllegalStateException) {
-            Log.d(TAG, "exception in onMenuPrepare: $e")
-            return
-        }
-        val perms = mService.getPermissions()
-        val channel = mUser.channel
-        if (channel == null) {
-            Log.d(TAG, "mUser.getChannel()==null in onMenuPrepare")
-            return
-        }
+        val self = user.session == viewModel.selfSession()
+        val perms = viewModel.rootPermissions()
+        val channel = user.channelId?.let { viewModel.channel(it) } ?: return
         val channelPerms = if (channel.id != 0) channel.permissions else perms
-        val comment = mUser.comment
-        val commentHash = mUser.commentHash
-        val userHash = mUser.hash
+        val comment = user.comment
+        val commentHash = user.commentHash
+        val userHash = user.certHash
 
         menu.findItem(R.id.context_kick).setVisible(
             !self && perms and (Permissions.Kick or Permissions.Ban or Permissions.Write) > 0
@@ -80,11 +68,11 @@ class UserMenu(
         )
         menu.findItem(R.id.context_mute).setVisible(
             channelPerms and (Permissions.Write or Permissions.MuteDeafen) > 0 &&
-                (!self || mUser.isMuted || mUser.isSuppressed)
+                (!self || user.muted || user.suppressed)
         )
         menu.findItem(R.id.context_deafen).setVisible(
             channelPerms and (Permissions.Write or Permissions.MuteDeafen) > 0 &&
-                (!self || mUser.isDeafened)
+                (!self || user.deafened)
         )
         menu.findItem(R.id.context_priority).setVisible(
             channelPerms and (Permissions.Write or Permissions.MuteDeafen) > 0
@@ -101,18 +89,18 @@ class UserMenu(
             (comment != null && comment.isNotEmpty()) || commentHash != null
         )
         menu.findItem(R.id.context_register).setVisible(
-            mUser.userId < 0 &&
+            (user.userId ?: -1) < 0 &&
                 (userHash != null && userHash.isNotEmpty()) &&
                 perms and ((if (self) Permissions.SelfRegister else Permissions.Register) or Permissions.Write) > 0
         )
         menu.findItem(R.id.context_local_mute).setVisible(!self)
         menu.findItem(R.id.context_ignore_messages).setVisible(!self)
         // Highlight toggles
-        menu.findItem(R.id.context_mute).setChecked(mUser.isMuted || mUser.isSuppressed)
-        menu.findItem(R.id.context_deafen).setChecked(mUser.isDeafened)
-        menu.findItem(R.id.context_priority).setChecked(mUser.isPrioritySpeaker)
-        menu.findItem(R.id.context_local_mute).setChecked(mUser.isLocalMuted)
-        menu.findItem(R.id.context_ignore_messages).setChecked(mUser.isLocalIgnored)
+        menu.findItem(R.id.context_mute).setChecked(user.muted || user.suppressed)
+        menu.findItem(R.id.context_deafen).setChecked(user.deafened)
+        menu.findItem(R.id.context_priority).setChecked(user.prioritySpeaker)
+        menu.findItem(R.id.context_local_mute).setChecked(user.localMuted)
+        menu.findItem(R.id.context_ignore_messages).setChecked(user.localIgnored)
     }
 
     override fun onMenuItemClick(menuItem: MenuItem): Boolean {
@@ -126,48 +114,40 @@ class UserMenu(
                 .setTitle(titleRes)
                 .setView(reasonField)
                 .setPositiveButton(titleRes) { _, _ ->
-                    if (mService.isConnected()) {
-                        mService.kickBanUser(mUser.session, reasonField.text.toString(), isBan)
-                    }
+                    viewModel.kickBanUser(user.session, reasonField.text.toString(), isBan)
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
         } else if (itemId == R.id.context_mute) {
-            mService.setMuteDeafState(mUser.session, !(mUser.isMuted || mUser.isSuppressed), mUser.isDeafened)
+            viewModel.setMuteDeafState(
+                user.session,
+                !(user.muted || user.suppressed),
+                user.deafened,
+            )
         } else if (itemId == R.id.context_deafen) {
-            mService.setMuteDeafState(mUser.session, mUser.isMuted, !mUser.isDeafened)
+            viewModel.setMuteDeafState(user.session, user.muted, !user.deafened)
         } else if (itemId == R.id.context_move) {
             showChannelMoveDialog()
         } else if (itemId == R.id.context_priority) {
-            mService.setPrioritySpeaker(mUser.session, !mUser.isPrioritySpeaker)
+            viewModel.setPrioritySpeaker(user.session, !user.prioritySpeaker)
         } else if (itemId == R.id.context_local_mute) {
-            try {
-                mService.setLocalMute(mUser.session, !mUser.isLocalMuted)
-            } catch (e: IllegalStateException) {
-                Log.w("UserMenu", "local mute while disconnected", e)
-            }
-            mStateListener.onLocalUserStateUpdated(mUser)
+            viewModel.setLocalMute(user.session, !user.localMuted)
         } else if (itemId == R.id.context_ignore_messages) {
-            try {
-                mService.setLocalIgnore(mUser.session, !mUser.isLocalIgnored)
-            } catch (e: IllegalStateException) {
-                Log.w("UserMenu", "local ignore while disconnected", e)
-            }
-            mStateListener.onLocalUserStateUpdated(mUser)
+            viewModel.setLocalIgnore(user.session, !user.localIgnored)
         } else if (itemId == R.id.context_change_comment) {
             showUserComment(true)
         } else if (itemId == R.id.context_view_comment) {
             showUserComment(false)
         } else if (itemId == R.id.context_reset_comment) {
             MaterialAlertDialogBuilder(mContext)
-                .setMessage(mContext.getString(R.string.confirm_reset_comment, mUser.name))
+                .setMessage(mContext.getString(R.string.confirm_reset_comment, user.name))
                 .setPositiveButton(R.string.confirm) { _, _ ->
-                    mService.setUserComment(mUser.session, "")
+                    viewModel.setUserComment(user.session, "")
                 }
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
         } else if (itemId == R.id.context_register) {
-            mService.registerUser(mUser.session)
+            viewModel.registerUser(user.session)
         } else {
             return false
         }
@@ -176,18 +156,15 @@ class UserMenu(
 
     private fun showUserComment(edit: Boolean) {
         val args = Bundle()
-        args.putInt(UserCommentFragment.ARG_SESSION, mUser.session)
-        args.putString(AbstractCommentFragment.ARG_COMMENT, mUser.comment)
+        args.putInt(UserCommentFragment.ARG_SESSION, user.session)
         args.putBoolean(AbstractCommentFragment.ARG_EDITING, edit)
         val fragment = UserCommentFragment()
         fragment.arguments = args
-        fragment.show(mFragmentManager, UserCommentFragment::class.java.name)
+        fragment.show(fragmentManager, UserCommentFragment::class.java.name)
     }
 
     private fun showChannelMoveDialog() {
-        // NPE-exact: the original dereferenced getRootChannel() unconditionally.
-        val root = mService.getRootChannel() ?: throw NullPointerException("rootChannel")
-        val channels: List<IChannel> = ModelUtils.getChannelList(root)
+        val channels = viewModel.channelsInTreeOrder()
         val channelNames = arrayOfNulls<CharSequence>(channels.size)
         for (i in channels.indices) {
             channelNames[i] = channels[i].name
@@ -195,30 +172,19 @@ class UserMenu(
         MaterialAlertDialogBuilder(mContext)
             .setTitle(R.string.user_menu_move)
             .setItems(channelNames) { _, which ->
-                val channel = channels[which]
-                mService.moveUserToChannel(mUser.session, channel.id)
+                viewModel.moveUserToChannel(user.session, channels[which].id)
             }
             .show()
     }
 
     fun showPopup(anchor: View) {
-        // NPE-exact: the original dereferenced getChannel() unconditionally.
-        val channel = mUser.channel ?: throw NullPointerException("channel")
+        val channelId = user.channelId ?: return
         val popupMenu = PermissionsPopupMenu(
             mContext, anchor,
-            R.menu.context_user, this, this, channel, mService
+            R.menu.context_user, this, this,
+            permissions = viewModel.permissionsFor(channelId),
+            requestPermissions = { viewModel.requestPermissions(channelId) },
         )
         popupMenu.show()
-    }
-
-    /**
-     * A listener notified whenever the user's local state changes.
-     */
-    interface IUserLocalStateListener {
-        fun onLocalUserStateUpdated(user: IUser)
-    }
-
-    companion object {
-        private val TAG: String = UserMenu::class.java.name
     }
 }

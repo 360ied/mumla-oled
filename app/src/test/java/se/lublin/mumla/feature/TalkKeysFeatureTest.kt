@@ -26,7 +26,7 @@ import se.lublin.humla.client.emptyConnectTarget
 import se.lublin.mumla.Settings
 import se.lublin.mumla.TalkKeyEvent
 
-/** Talk-key guards moved from MumlaService into the feature. */
+/** Talk-key guards, moved out of the service into the feature. */
 class TalkKeysFeatureTest {
 
     private class Fixture(toggle: Boolean = false, mode: String = Settings.ARRAY_INPUT_METHOD_PTT) {

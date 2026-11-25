@@ -34,7 +34,10 @@ import se.lublin.mumla.R
 import se.lublin.mumla.app.BaseActivity
 import se.lublin.mumla.db.DatabaseCertificate
 import se.lublin.mumla.db.MumlaDatabase
-import se.lublin.mumla.db.MumlaRoomDatabase
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Created by andrew on 12/01/16.
@@ -55,34 +58,36 @@ class CertificateExportActivity : BaseActivity(), DialogInterface.OnClickListene
         super.onCreate(savedInstanceState)
         val database = this.container.database
         mDatabase = database
-        val certificates = database.getCertificates()
-        mCertificates = certificates
+        lifecycleScope.launch {
+            val certificates = database.getCertificates()
+            mCertificates = certificates
 
-        if (savedInstanceState != null && savedInstanceState.containsKey(STATE_PENDING_CERT_ID)) {
-            // Recreated while the document picker was open: its result is delivered to
-            // the new instance, which must still know which certificate to write.
-            val pendingId = savedInstanceState.getLong(STATE_PENDING_CERT_ID)
-            for (certificate in certificates) {
-                if (certificate.id == pendingId) {
-                    mCertificatePending = certificate
-                    break
+            if (savedInstanceState != null && savedInstanceState.containsKey(STATE_PENDING_CERT_ID)) {
+                // Recreated while the document picker was open: its result is delivered to
+                // the new instance, which must still know which certificate to write.
+                val pendingId = savedInstanceState.getLong(STATE_PENDING_CERT_ID)
+                for (certificate in certificates) {
+                    if (certificate.id == pendingId) {
+                        mCertificatePending = certificate
+                        break
+                    }
                 }
+                return@launch
             }
-            return
-        }
 
-        val labels = arrayOfNulls<CharSequence>(certificates.size)
-        for (i in labels.indices) {
-            labels[i] = certificates[i].name
-        }
+            val labels = arrayOfNulls<CharSequence>(certificates.size)
+            for (i in labels.indices) {
+                labels[i] = certificates[i].name
+            }
 
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.pref_export_certificate_title)
-            .setItems(labels, this)
-            .setOnCancelListener { finish() }
-            .create()
-            .also { mSelectionDialog = it }
-            .show()
+            MaterialAlertDialogBuilder(this@CertificateExportActivity)
+                .setTitle(R.string.pref_export_certificate_title)
+                .setItems(labels, this@CertificateExportActivity)
+                .setOnCancelListener { finish() }
+                .create()
+                .also { mSelectionDialog = it }
+                .show()
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -100,9 +105,6 @@ class CertificateExportActivity : BaseActivity(), DialogInterface.OnClickListene
             dialog.dismiss()
         }
         super.onDestroy()
-        // NPE-exact: the original dereferenced mDatabase unconditionally.
-        val database = mDatabase ?: throw NullPointerException("mDatabase")
-        database.close()
     }
 
     override fun onClick(dialog: DialogInterface?, which: Int) {
@@ -122,13 +124,18 @@ class CertificateExportActivity : BaseActivity(), DialogInterface.OnClickListene
         } else {
             val pending = mCertificatePending ?: throw NullPointerException("mCertificatePending")
             val df = DocumentFile.fromSingleUri(this, uri)
-            writeCertificate(uri, pending, df?.name ?: "<unknown>")
+            lifecycleScope.launch {
+                writeCertificate(uri, pending, df?.name ?: "<unknown>")
+                finish()
+            }
+            mCertificatePending = null
+            return
         }
         mCertificatePending = null
         finish()
     }
 
-    private fun writeCertificate(uri: Uri, cert: DatabaseCertificate, displayName: String) {
+    private suspend fun writeCertificate(uri: Uri, cert: DatabaseCertificate, displayName: String) {
         // NPE-exact: the original dereferenced mDatabase unconditionally.
         val database = mDatabase ?: throw NullPointerException("mDatabase")
         val data = database.getCertificateData(cert.id)
@@ -137,18 +144,25 @@ class CertificateExportActivity : BaseActivity(), DialogInterface.OnClickListene
             showError(R.string.error_writing_to_storage)
             return
         }
-        try {
-            contentResolver.openOutputStream(uri).use { os ->
-                if (os == null) {
-                    Log.w(TAG, "No output stream for document picked by user")
-                    showError(R.string.error_writing_to_storage)
-                    return
+        // A document provider may be remote or slow; write off the main thread.
+        val written = withContext(Dispatchers.IO) {
+            try {
+                contentResolver.openOutputStream(uri).use { os ->
+                    if (os == null) {
+                        Log.w(TAG, "No output stream for document picked by user")
+                        false
+                    } else {
+                        os.write(data)
+                        os.flush()
+                        true
+                    }
                 }
-                os.write(data)
-                os.flush()
+            } catch (e: IOException) {
+                Log.w(TAG, "Failed to write exported certificate", e)
+                false
             }
-        } catch (e: IOException) {
-            Log.w(TAG, "Failed to write exported certificate", e)
+        }
+        if (!written) {
             showError(R.string.error_writing_to_storage)
             return
         }
