@@ -254,10 +254,15 @@ step 6, the adapter, the service, and the store all wrote them.
 ## R8 keep rules
 
 From step 8, `check_architecture.py` fails if `app/proguard-rules.pro`
-names a `se.lublin.` class that has no production source file. For a
-nested name, only the part before the first `$` is checked. When the JNI
-seams were deleted in step 5a, their keep rules stayed behind for
-step 8 to find. A rule that matches nothing changes nothing in the build,
+names a `se.lublin.` class that has no production source file. This
+includes names after `implements` and `extends`, and the generated
+`protobuf` package counts as production code. For a nested name, only the
+part before the first `$` is checked. A name with a wildcard (`*` or `?`)
+is a pattern: the text before the first wildcard must begin at least one
+production class's fully qualified name. For example,
+`se.lublin.humla.protobuf.Mumble**` matches `Mumble` and `MumbleUDP`.
+When the JNI seams were deleted in step 5a, their keep rules stayed behind
+for step 8 to find. A rule that matches nothing changes nothing in the build,
 but it reads as a live JNI contract.
 
 ## Unreferenced types

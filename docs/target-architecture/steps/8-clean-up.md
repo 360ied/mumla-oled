@@ -90,6 +90,15 @@ Commits, in order:
    short injected timeout expires, and that cancelling the caller
    propagates. The connect path changes, so `./scripts/test_interop.sh`
    runs on this commit and must stay green.
+
+   **What no automated check runs.** The interop server is reached at an
+   explicit port, so interop exercises the resolver's short-circuit, never
+   a lookup. `SrvResolverTest` uses a fake lookup. The default lookup is
+   therefore kept to one line that calls
+   `ResolverApi.INSTANCE.resolveSrv(lookup)` and returns its sorted
+   records, the same call both paths make today. A real lookup runs only
+   in the on-device SRV check below. Adding a DNS server to the interop
+   harness is out of scope.
 2. **Delete `HumlaTCP`.** It has no caller after commit 1. Deleted with it:
    its `TCPConnectionListener`, its allowlist entry (3), and its
    `BOUNDARY_FILES` entry. `HumlaSSLSocketFactory`'s two comments that
@@ -109,8 +118,13 @@ Commits, in order:
      stored and `notifyDataSetChanged` is called on the main thread, so
      `mInfoResponses` becomes a plain map. `shutdown()` cancels the scope.
      `FavouriteServerListFragment`'s two `shutdown()` call sites (adapter
-     replaced, view destroyed) stay as they are. The ping function is a
-     constructor parameter so the test can fake it.
+     replaced, view destroyed) stay as they are.
+   - The ping function, the main dispatcher (default `Dispatchers.Main`),
+     and the ping dispatcher (default
+     `Dispatchers.IO.limitedParallelism(MAX_ACTIVE_PINGS)`) are constructor
+     parameters, and `FavouriteServerAdapter` passes them through. The
+     test passes one `StandardTestDispatcher` for both, so pings and their
+     results run in an order the test controls.
    - `Server` loses `resolvedHost`, `resolvedPort`, `getSrvHost`,
      `getSrvPort`, and `srvResolve`, along with their `Looper`, `Log`,
      `Patterns`, and executor imports. The fields were `@Ignore` and
@@ -125,9 +139,11 @@ Commits, in order:
 
    Two files leave the allowlist: `Server.kt` (4) and `ServerAdapter.kt`
    (1), which takes it to 7 / 22. A Robolectric `ServerAdapterTest` binds
-   the adapter with a fake ping. It asserts the progress row before the
-   result, the version, users, and latency after it, the offline row for
-   a failed ping, and no callback after `shutdown()`.
+   the adapter with a fake ping on the test dispatcher. It asserts the
+   progress row before the result, the version, users, and latency after
+   it, the offline row for a failed ping, and no callback after
+   `shutdown()`. The 50-ping cap is today's constant carried over, not a
+   tested invariant.
 4. **Chat images from coroutines.** `MumbleImageGetter` owns a scope
    (`SupervisorJob() + Dispatchers.Main`), and downloads run on
    `Dispatchers.IO.limitedParallelism(2)`. After a download, the cache
@@ -143,17 +159,24 @@ Commits, in order:
    `shutdown()` cancels the scope and clears both sets. A `getDrawable`
    after `shutdown()` starts nothing, which replaces the
    `RejectedExecutionException` guard. The SSRF-checked fetch stays as it
-   is, and the getter takes it as a constructor parameter (defaulting to
-   the real one) so the test can fake it.
+   is. The getter takes three constructor parameters, so the test can
+   fake each: the fetch (defaulting to the real one), the main dispatcher
+   (default `Dispatchers.Main`), and the fetch dispatcher (default
+   `Dispatchers.IO.limitedParallelism(2)`).
+   `ChannelChatAdapter` keeps the defaults.
 
    `MumbleImageGetter.kt` (4) leaves the allowlist, which takes it to
-   6 / 18. A new Robolectric test asserts:
+   6 / 18. A new Robolectric test passes one `StandardTestDispatcher` for
+   both dispatchers. That makes the coalescing deterministic: two
+   completions queue before the posted notification runs. It asserts:
    - two downloads that finish in one turn produce one callback;
    - a failed URL is not fetched again;
-   - no more than two fetches run at once;
    - nothing is called back after `shutdown()`.
 
-   `MumbleImageGetterTest`'s pure-function tests do not change.
+   The two-fetch cap is today's pool size carried over, not a tested
+   invariant: a single-threaded test dispatcher cannot observe it, and a
+   real-thread test could only check it with timing. The pure-function
+   tests in `MumbleImageGetterTest` do not change.
 5. **Crash reports without threads.**
    - `CrashReportsViewModel` gains `nativeCrashAvailable: StateFlow<Boolean>`.
      It starts `false` and is set once by a probe that runs in
@@ -218,9 +241,15 @@ Commits, in order:
     - **New patterns:** `\bAsyncTask\b`, `\bExecutorService\b`, and
       `\bThreadFactory\b`. After commits 3–5 they match nothing, so no
       count changes.
-    - **R8 keep rules.** Every `se.lublin.` class that
-      `app/proguard-rules.pro` names (the part before any `$`) must have
-      a production source file.
+    - **R8 keep rules.** Every `se.lublin.` name in
+      `app/proguard-rules.pro` must match production code, including
+      names after `implements` or `extends`. Production code includes the
+      generated `protobuf` package, which the tripwire skips. A plain name
+      is checked up to its first `$` and must have a source file. A name
+      with a wildcard (`*` or `?`) is a pattern: the text before the first
+      wildcard must begin at least one production class's fully qualified
+      name. Today's only pattern, `se.lublin.humla.protobuf.Mumble**`,
+      matches `Mumble` and `MumbleUDP`.
     - A test in `test_check_architecture.py` reads the fenced block under
       enforcement's [end state](../enforcement.md#end-state) heading and
       asserts that it equals `BOUNDARY_FILES`. That is the acceptance test
@@ -291,10 +320,13 @@ Commits, in order:
 - **Executable:** `SrvResolverTest`, `ServerAdapterTest`, the new
   `MumbleImageGetter` Robolectric test, and the `CrashReportsViewModelTest`
   probe cases pass. They drive the code that commits 1, 3, 4, and 5 make
-  live, as listed in those commits.
+  live, as listed in those commits, except the real MiniDNS lookup (see
+  commit 1).
 - **Executable:** `./scripts/test_interop.sh` is green on commits 1 and 7
-  and on the branch head. `./scripts/check.sh` and `assembleFossDebug`
-  are green on the head.
+  and on the branch head. It covers the transport's explicit-port
+  short-circuit and, for commit 7, the format at `Start`, not an SRV
+  lookup. `./scripts/check.sh` and `assembleFossDebug` are green on the
+  head.
 - **Executable:** `test_check_architecture.py` has a failing and a passing
   case for every rule commits 12 and 13 add, and `check_architecture.py`
   passes on the head.
@@ -320,8 +352,10 @@ Commits, in order:
 [testing](../testing.md#on-device-testing)):
 
 - the server list fills in pings, including for a host that only
-  resolves through SRV;
-- connecting to that host works;
+  resolves through SRV (saved with port 0);
+- connecting to that host works. This and the ping above are the only
+  checks that run a real SRV lookup, which matters for commit 1's
+  behavior change;
 - external and base64 chat images load, and leaving the chat while they
   load does not crash;
 - the crash-test buttons enable only while disconnected, and the ANR test
