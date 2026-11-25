@@ -146,9 +146,7 @@ interface IHumlaSession {
 
     fun kickBanUser(session: Int, reason: String?, ban: Boolean)
 
-    fun sendUserTextMessage(session: Int, message: String?): Message?
 
-    fun sendChannelTextMessage(channel: Int, message: String?, tree: Boolean): Message?
 
     fun setUserComment(session: Int, comment: String?)
 

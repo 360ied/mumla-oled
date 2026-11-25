@@ -25,6 +25,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
 import se.lublin.mumla.channel.AccessTokenViewModel
 import se.lublin.mumla.channel.ChannelViewModel
+import se.lublin.mumla.channel.ChatViewModel
 import se.lublin.mumla.channel.ServerInfoViewModel
 import se.lublin.mumla.channel.comment.ChannelDescriptionFragment
 import se.lublin.mumla.channel.comment.CommentViewModel
@@ -44,13 +45,15 @@ import se.lublin.mumla.container
 class MumlaViewModelFactory private constructor(
     private val application: Application,
     private val args: Bundle,
+    private val fragment: Fragment?,
 ) : ViewModelProvider.Factory {
 
-    constructor(application: Application) : this(application, Bundle.EMPTY)
+    constructor(application: Application) : this(application, Bundle.EMPTY, null)
 
     constructor(fragment: Fragment) : this(
         fragment.requireActivity().application,
         fragment.arguments ?: Bundle.EMPTY,
+        fragment,
     )
 
     override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T {
@@ -71,6 +74,16 @@ class MumlaViewModelFactory private constructor(
                 unregisterVoiceTarget = { id ->
                     client.currentSession.value?.unregisterWhisperTarget(id)
                 },
+            )
+            modelClass.isAssignableFrom(ChatViewModel::class.java) -> ChatViewModel(
+                messages = container.chatLog.messages,
+                target = parentChannelViewModel().chatTargetDisplay,
+                clientState = client.state,
+                sessionState = container.runtime.sessionState,
+                sendText = { channels, trees, users, message ->
+                    client.currentSession.value?.sendText(channels, trees, users, message)
+                },
+                clearLog = { container.chatLog.clear() },
             )
             modelClass.isAssignableFrom(AccessTokenViewModel::class.java) -> AccessTokenViewModel(
                 serverId = args.getLong(ARG_SERVER),
@@ -115,6 +128,19 @@ class MumlaViewModelFactory private constructor(
         }
         @Suppress("UNCHECKED_CAST")
         return model as T
+    }
+
+    /**
+     * The chat screen shares the parent channel screen's chat target, so it
+     * reads that screen's ViewModel from the same store instead of keeping a
+     * second copy.
+     */
+    private fun parentChannelViewModel(): ChannelViewModel {
+        val parent = fragment?.parentFragment
+            ?: throw IllegalStateException(
+                "ChatViewModel needs the channel screen's parent fragment",
+            )
+        return ViewModelProvider(parent, MumlaViewModelFactory(parent))[ChannelViewModel::class.java]
     }
 
     companion object {

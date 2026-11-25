@@ -28,23 +28,29 @@ import kotlinx.coroutines.launch
 import se.lublin.humla.Constants
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.ConnectTarget
-import se.lublin.humla.model.IMessage
 import se.lublin.humla.model.Server
 import se.lublin.humla.net.TlsHostnameVerifier
 import se.lublin.humla.net.VoiceEvent
+import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SessionEventRecord
-import se.lublin.humla.util.HumlaCallbacks
-import se.lublin.humla.util.HumlaObserver
-import se.lublin.humla.util.IHumlaObserver
+import se.lublin.humla.state.SessionState
 import se.lublin.mumla.AppLogLine
 import se.lublin.mumla.service.IChatMessage
 
 /**
+ * One append to the chat log. Informational lines are formatted text; text
+ * messages carry their sender and target names as values.
+ */
+sealed interface ChatLogEntry {
+    data class Info(val line: ChatLine) : ChatLogEntry
+    data class Text(val message: IChatMessage.TextMessage) : ChatLogEntry
+}
+
+/**
  * Process-lifetime chat history. Today's limits and LRU policy move here
- * unchanged; the chat screen reads [messages] through the service binder.
- * Until step 7, received text arrives through the observer bridge and sent
- * text through the service's send delegations. Every appended line is also
- * fanned out to HumlaCallbacks so an open chat screen keeps updating live.
+ * unchanged. Text entries come from the [SessionEvent.TextMessageReceived]
+ * and [SessionEvent.TextMessageSent] records; the open chat screen collects
+ * [messages], so nothing is forwarded to it through callbacks.
  */
 class ChatLogFeature(
     context: Context,
@@ -52,10 +58,9 @@ class ChatLogFeature(
     private val events: SharedFlow<SessionEventRecord>,
     private val voiceEvents: SharedFlow<VoiceEvent>,
     private val appLog: SharedFlow<AppLogLine>,
-    private val callbacks: HumlaCallbacks,
     private val formatter: ChatEventFormatter = ChatEventFormatter(context),
     /** Test seam for the slow line sink; production appends to the log. */
-    private val lineSink: (suspend (ChatLine) -> Unit)? = null,
+    private val lineSink: (suspend (ChatLogEntry) -> Unit)? = null,
 ) {
     private val appContext = context.applicationContext
 
@@ -77,17 +82,10 @@ class ChatLogFeature(
 
     /**
      * The feature's Main child scope. Every mutation of serverLogs, activeKey
-     * and _messages runs here: the collectors already do, and the interim
-     * binder/observer entry points post through [onMain].
+     * and _messages runs here: the collectors already do, and [clear] posts
+     * through [onMain].
      */
     private var mainScope: CoroutineScope? = null
-
-    /** Registered by the container for onMessageLogged only (interim bridge). */
-    val receivedTextObserver: IHumlaObserver = object : HumlaObserver() {
-        override fun onMessageLogged(message: IMessage?) {
-            onMain { addText(message, selfAuthored = false) }
-        }
-    }
 
     private fun onMain(block: () -> Unit) {
         val child = checkNotNull(mainScope) {
@@ -99,22 +97,25 @@ class ChatLogFeature(
     fun start(scope: CoroutineScope) {
         val child = scope.featureChild()
         mainScope = child
-        val sink = lineSink ?: { line: ChatLine -> append(line) }
-        // Single ChatLine queue: session and voice lines share one drain so
-        // ordering and backpressure tests cover both, and a slow sink never
-        // stalls the session emitter.
-        val lineQueue = FeatureEventQueue<ChatLine>(child) { line -> sink(line) }
+        val sink = lineSink ?: { entry: ChatLogEntry -> append(entry) }
+        // Single queue: session and voice entries share one drain so ordering
+        // and backpressure tests cover both, and a slow sink never stalls the
+        // session emitter.
+        val queue = FeatureEventQueue<ChatLogEntry>(child) { entry -> sink(entry) }
         child.launch {
             events.collect { record ->
-                for (line in formatter.lines(record)) lineQueue.offer(line)
+                textEntry(record)?.let { queue.offer(ChatLogEntry.Text(it)) }
+                for (line in formatter.lines(record)) queue.offer(ChatLogEntry.Info(line))
             }
         }
         child.launch { clientState.collect { onClientState(it) } }
         child.launch {
-            voiceEvents.collect { formatter.voiceLine(it)?.let { lineQueue.offer(it) } }
+            voiceEvents.collect {
+                formatter.voiceLine(it)?.let { line -> queue.offer(ChatLogEntry.Info(line)) }
+            }
         }
         child.launch {
-            appLog.collect { append(ChatLine(it.text, it.warning)) }
+            appLog.collect { append(ChatLogEntry.Info(ChatLine(it.text, it.warning))) }
         }
     }
 
@@ -128,16 +129,21 @@ class ChatLogFeature(
             is ClientState.Connected -> {
                 switchServer(state.target)
                 if (wasReconnecting) {
-                    append(ChatLine(ConnectionLines.reconnected(appContext)))
+                    append(ChatLogEntry.Info(ChatLine(ConnectionLines.reconnected(appContext))))
                 }
                 wasReconnecting = false
             }
             is ClientState.Reconnecting -> {
                 if (!wasReconnecting) {
                     append(
-                        ChatLine(
-                            ConnectionLines.disconnected(appContext, state.lastError.displayMessage()),
-                            warning = true,
+                        ChatLogEntry.Info(
+                            ChatLine(
+                                ConnectionLines.disconnected(
+                                    appContext,
+                                    state.lastError.displayMessage(),
+                                ),
+                                warning = true,
+                            ),
                         ),
                     )
                 }
@@ -146,7 +152,11 @@ class ChatLogFeature(
             is ClientState.Failed -> {
                 val cause = state.error.displayMessage()
                 if (cause != null) {
-                    append(ChatLine(ConnectionLines.disconnected(appContext, cause), warning = true))
+                    append(
+                        ChatLogEntry.Info(
+                            ChatLine(ConnectionLines.disconnected(appContext, cause), warning = true),
+                        ),
+                    )
                 }
                 wasReconnecting = false
             }
@@ -172,7 +182,7 @@ class ChatLogFeature(
         }
     }
 
-    /** Binder read: a defensive, unmodifiable copy of the current value. */
+    /** Defensive, unmodifiable copy of the current value. */
     fun currentMessages(): List<IChatMessage> = _messages.value
 
     fun clear() {
@@ -183,24 +193,55 @@ class ChatLogFeature(
         }
     }
 
-    /** Sent text from MumlaService's binder delegations (interim). */
-    fun addSentText(message: IMessage?) {
-        onMain { addText(message, selfAuthored = true) }
+    /**
+     * The text entry a record produces, with sender and target names resolved
+     * from the record's own state snapshot.
+     */
+    private fun textEntry(record: SessionEventRecord): IChatMessage.TextMessage? {
+        val event = record.event
+        return when (event) {
+            is SessionEvent.TextMessageReceived -> IChatMessage.TextMessage(
+                actorName = event.actorName,
+                targetNames = targetNames(event.channels, event.trees, event.users, record.state),
+                body = event.message,
+                receivedTime = event.receivedAtMillis,
+                isSelfAuthored = false,
+            )
+            is SessionEvent.TextMessageSent -> IChatMessage.TextMessage(
+                actorName = record.state.server.self?.name,
+                targetNames = targetNames(event.channels, event.trees, event.users, record.state),
+                body = event.message,
+                receivedTime = event.sentAtMillis,
+                isSelfAuthored = true,
+            )
+            else -> null
+        }
     }
 
-    private fun addText(message: IMessage?, selfAuthored: Boolean) {
-        val text = IChatMessage.TextMessage(message, selfAuthored)
-        appendMessage(text)
+    private fun targetNames(
+        channels: List<Int>,
+        trees: List<Int>,
+        users: List<Int>,
+        state: SessionState,
+    ): List<String> {
+        val names = ArrayList<String>(channels.size + trees.size + users.size)
+        for (id in channels) state.server.channels[id]?.name?.let { names.add(it) }
+        for (id in trees) state.server.channels[id]?.name?.let { names.add(it) }
+        for (session in users) state.server.users[session]?.name?.let { names.add(it) }
+        return names
     }
 
-    private fun append(line: ChatLine) {
-        val message = IChatMessage.InfoMessage(
-            if (line.warning) IChatMessage.InfoMessage.Type.WARNING
-            else IChatMessage.InfoMessage.Type.INFO,
-            line.text,
-        )
-        appendMessage(message)
-        if (line.warning) callbacks.onLogWarning(line.text) else callbacks.onLogInfo(line.text)
+    private fun append(entry: ChatLogEntry) {
+        when (entry) {
+            is ChatLogEntry.Info -> appendMessage(
+                IChatMessage.InfoMessage(
+                    if (entry.line.warning) IChatMessage.InfoMessage.Type.WARNING
+                    else IChatMessage.InfoMessage.Type.INFO,
+                    entry.line.text,
+                ),
+            )
+            is ChatLogEntry.Text -> appendMessage(entry.message)
+        }
     }
 
     private fun appendMessage(message: IChatMessage) {

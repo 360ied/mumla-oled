@@ -1004,24 +1004,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
         currentSession()?.kickBanUser(session, reason, ban)
     }
 
-    open override fun sendUserTextMessage(session: Int, message: String?): Message? {
-        val current = currentSession() ?: throw IllegalStateException("No active connection")
-        try {
-            return current.sendUserTextMessage(session, message)
-        } catch (e: IllegalStateException) {
-            throw IllegalStateException(e)
-        }
-    }
-
-    open override fun sendChannelTextMessage(channel: Int, message: String?, tree: Boolean): Message? {
-        val current = currentSession() ?: throw IllegalStateException("No active connection")
-        try {
-            return current.sendChannelTextMessage(channel, message, tree)
-        } catch (e: IllegalStateException) {
-            throw IllegalStateException(e)
-        }
-    }
-
     open override fun setUserComment(session: Int, comment: String?) {
         currentSession()?.setUserComment(session, comment)
     }

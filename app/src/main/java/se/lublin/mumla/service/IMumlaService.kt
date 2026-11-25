@@ -22,9 +22,5 @@ interface IMumlaService : IHumlaService {
 
     fun onTalkKeyCancel()
 
-    fun getMessageLog(): List<IChatMessage>
-
-    fun clearMessageLog()
-
     fun setSuppressNotifications(suppressNotifications: Boolean)
 }

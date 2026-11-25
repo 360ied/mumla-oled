@@ -25,7 +25,6 @@ import androidx.core.content.IntentCompat
 import kotlinx.coroutines.flow.StateFlow
 import se.lublin.humla.HumlaRuntime
 import se.lublin.humla.HumlaService
-import se.lublin.humla.model.Message
 import se.lublin.humla.model.Server
 import se.lublin.humla.util.CertRef
 import se.lublin.humla.util.ConfigDelta
@@ -130,24 +129,8 @@ open class MumlaService : HumlaService(), IMumlaService {
 
     override fun onTalkKeyCancel() = container.emitTalkKey(TalkKeyEvent.Cancel)
 
-    override fun getMessageLog(): List<IChatMessage> = container.chatLog.currentMessages()
-
-    override fun clearMessageLog() = container.chatLog.clear()
-
     override fun setSuppressNotifications(suppressNotifications: Boolean) =
         container.connectionNotification.setSuppressNotifications(suppressNotifications)
-
-    override fun sendUserTextMessage(session: Int, message: String?): Message? {
-        val msg = super.sendUserTextMessage(session, message)
-        container.chatLog.addSentText(msg)
-        return msg
-    }
-
-    override fun sendChannelTextMessage(channel: Int, message: String?, tree: Boolean): Message? {
-        val msg = super.sendChannelTextMessage(channel, message, tree)
-        container.chatLog.addSentText(msg)
-        return msg
-    }
 
     class MumlaBinder internal constructor(private val mService: MumlaService) : Binder() {
         fun getService(): IMumlaService = mService

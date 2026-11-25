@@ -332,7 +332,7 @@ class AppContainerLifecycleTest {
         assertFalse("connection notification must be gone", container.connectionNotification.visible.value)
         // The bound service itself is still alive and usable after the
         // connection ends; step 7 moves that decision to ConnectionService.
-        assertTrue(second.getMessageLog().isNotEmpty())
+        assertTrue(container.chatLog.currentMessages().isNotEmpty())
         secondController.destroy()
     }
 

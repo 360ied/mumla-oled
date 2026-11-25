@@ -1155,39 +1155,6 @@ class Session internal constructor(
         return ServerSettings(msg)
     }
 
-    fun sendUserTextMessage(session: Int, message: String?): Message? {
-        if (state.value.server.phase != SyncPhase.SYNCED) throw IllegalStateException("Not synced")
-        if (message == null) return null
-        sendText(emptyList(), emptyList(), listOf(session), message)
-        val s = state.value
-        val selfSession = s.server.selfSession ?: throw IllegalStateException("Not synced")
-        val selfName = s.server.users[selfSession]?.name
-        val users = ArrayList<IUser>()
-        if (s.server.users.containsKey(session)) users.add(UserHandle(session, state, talkActivity))
-        return Message(selfSession, selfName, emptyList(), emptyList(), users, message)
-    }
-
-    fun sendChannelTextMessage(channel: Int, message: String?, tree: Boolean): Message? {
-        if (state.value.server.phase != SyncPhase.SYNCED) throw IllegalStateException("Not synced")
-        if (message == null) return null
-        if (tree) {
-            sendText(emptyList(), listOf(channel), emptyList(), message)
-        } else {
-            sendText(listOf(channel), emptyList(), emptyList(), message)
-        }
-        val s = state.value
-        val selfSession = s.server.selfSession ?: throw IllegalStateException("Not synced")
-        val selfName = s.server.users[selfSession]?.name
-        val targetChannels = ArrayList<IChannel>()
-        if (s.server.channels.containsKey(channel)) targetChannels.add(ChannelHandle(channel, state, talkActivity))
-        // Mirror the wire split (tree ids vs channel ids), not both.
-        return if (tree) {
-            Message(selfSession, selfName, emptyList(), targetChannels, emptyList(), message)
-        } else {
-            Message(selfSession, selfName, targetChannels, emptyList(), emptyList(), message)
-        }
-    }
-
     fun getVoiceTargetId(): Int = state.value.local.voiceTargetId
 
     fun getVoiceTargetMode(): VoiceTargetMode = VoiceTargetMode.fromInt(state.value.local.voiceTargetId)

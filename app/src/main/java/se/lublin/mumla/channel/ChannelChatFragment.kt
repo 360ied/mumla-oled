@@ -54,13 +54,13 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts.GetContent
 import androidx.appcompat.app.AlertDialog
-import androidx.fragment.app.viewModels
 import androidx.core.text.HtmlCompat
 import androidx.exifinterface.media.ExifInterface
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.launch
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -72,55 +72,25 @@ import java.text.SimpleDateFormat
 import java.util.ArrayList
 import java.util.Date
 import java.util.regex.Pattern
-import se.lublin.humla.IHumlaService
-import se.lublin.humla.model.IMessage
-import se.lublin.humla.util.HumlaDisconnectedException
-import se.lublin.humla.util.HumlaObserver
-import se.lublin.humla.util.IHumlaObserver
+import kotlinx.coroutines.launch
 import se.lublin.mumla.R
 import se.lublin.mumla.app.MumlaViewModelFactory
 import se.lublin.mumla.service.IChatMessage
 import se.lublin.mumla.util.BitmapUtils
 import se.lublin.mumla.util.ChatLinkPolicy
-import se.lublin.mumla.util.HumlaServiceFragment
 import se.lublin.mumla.util.MumbleImageGetter
 
-class ChannelChatFragment : HumlaServiceFragment() {
+class ChannelChatFragment : Fragment() {
 
-    /**
-     * The shared chat target lives in the parent screen's ViewModel, so the
-     * list and the chat read one value and no listener list is needed.
-     */
-    private val channelViewModel: ChannelViewModel by viewModels(
-        ownerProducer = { requireParentFragment() },
-    ) {
-        MumlaViewModelFactory(requireParentFragment())
-    }
-
-    private val mServiceObserver: IHumlaObserver = object : HumlaObserver() {
-
-        override fun onMessageLogged(message: IMessage?) {
-            addChatMessage(IChatMessage.TextMessage(message), true)
-        }
-
-        override fun onLogInfo(message: String?) {
-            addChatMessage(IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.INFO, message), true)
-        }
-
-        override fun onLogWarning(message: String?) {
-            addChatMessage(IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.WARNING, message), true)
-        }
-
-        override fun onLogError(message: String?) {
-            addChatMessage(IChatMessage.InfoMessage(IChatMessage.InfoMessage.Type.ERROR, message), true)
-        }
-
+    private val viewModel: ChatViewModel by viewModels {
+        MumlaViewModelFactory(this)
     }
 
     private var mChatList: ListView? = null
     private var mChatAdapter: ChannelChatAdapter? = null
     private var mChatTextEdit: EditText? = null
     private var mSendButton: ImageButton? = null
+    private var mLastMessageCount = 0
     // Tracked for pause-dismissal and rapid-tap dismiss-before-assign, like
     // the MumlaActivity dialogs: rotation/background with the preview up must
     // not leak the window.
@@ -133,7 +103,8 @@ class ChannelChatFragment : HumlaServiceFragment() {
         setHasOptionsMenu(true)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                channelViewModel.chatTargetDisplay.collect { updateChatTargetText(it) }
+                launch { viewModel.target.collect { updateChatTargetText(it) } }
+                launch { viewModel.messages.collect { renderMessages(it) } }
             }
         }
     }
@@ -149,20 +120,17 @@ class ChannelChatFragment : HumlaServiceFragment() {
         savedInstanceState: Bundle?
     ): View? {
         val view = inflater.inflate(R.layout.fragment_chat, container, false)
-        // NPE-exact: the original dereferenced every lookup unconditionally.
-        val chatList = view.findViewById(R.id.chat_list) as ListView?
-            ?: throw NullPointerException("chat_list")
+        val chatList = view.findViewById<ListView>(R.id.chat_list)
         mChatList = chatList
-        val chatTextEdit = view.findViewById(R.id.chatTextEdit) as EditText?
-            ?: throw NullPointerException("chatTextEdit")
+        chatList.adapter = ChannelChatAdapter(requireContext()).also { mChatAdapter = it }
+
+        val chatTextEdit = view.findViewById<EditText>(R.id.chatTextEdit)
         mChatTextEdit = chatTextEdit
 
-        val imageSendButton = view.findViewById(R.id.chatImageSend) as ImageButton?
-            ?: throw NullPointerException("chatImageSend")
+        val imageSendButton = view.findViewById<ImageButton>(R.id.chatImageSend)
         imageSendButton.setOnClickListener { imagePicker.launch("image/*") }
 
-        val sendButton = view.findViewById(R.id.chatTextSend) as ImageButton?
-            ?: throw NullPointerException("chatTextSend")
+        val sendButton = view.findViewById<ImageButton>(R.id.chatTextSend)
         mSendButton = sendButton
         sendButton.setOnClickListener(this::sendMessageFromEditor)
 
@@ -188,7 +156,7 @@ class ChannelChatFragment : HumlaServiceFragment() {
             }
         })
 
-        updateChatTargetText(channelViewModel.chatTargetDisplay.value)
+        updateChatTargetText(viewModel.target.value)
         return view
     }
 
@@ -199,6 +167,11 @@ class ChannelChatFragment : HumlaServiceFragment() {
         if (adapter != null) {
             adapter.shutdown()
         }
+        mChatList = null
+        mChatAdapter = null
+        mChatTextEdit = null
+        mSendButton = null
+        mLastMessageCount = 0
     }
 
     override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
@@ -228,30 +201,28 @@ class ChannelChatFragment : HumlaServiceFragment() {
     }
 
     /**
-     * Adds the passed text to the fragment chat body.
-     *
-     * @param message The message to add.
-     * @param scroll  Whether to scroll to the bottom after adding the message.
+     * Renders the collected log. The list is a full snapshot per emission, so
+     * the adapter is replaced and the view scrolls only when it grew.
      */
-    fun addChatMessage(message: IChatMessage, scroll: Boolean) {
+    private fun renderMessages(messages: List<IChatMessage>) {
         val adapter = mChatAdapter ?: return
-
-        adapter.add(message)
-
-        if (scroll) {
-            val chatList = mChatList ?: throw NullPointerException("mChatList")
+        adapter.submit(messages)
+        val chatList = mChatList
+        if (sizeGrew(messages.size) && chatList != null && messages.isNotEmpty()) {
             chatList.post {
-                chatList.smoothScrollToPosition(adapter.count - 1)
+                chatList.smoothScrollToPosition(messages.size - 1)
             }
         }
+        mLastMessageCount = messages.size
     }
+
+    private fun sizeGrew(size: Int): Boolean = size > mLastMessageCount
 
     private fun onImagePicked(uri: Uri?) {
         if (uri == null) {
             return
         }
-        val service = getService()
-        if (service == null || !service.isConnected()) {
+        if (!viewModel.isConnected()) {
             return
         }
 
@@ -337,30 +308,7 @@ class ChannelChatFragment : HumlaServiceFragment() {
     }
 
     private fun onImageConfirmed(initialBitmap: Bitmap) {
-        val service = getService()
-        if (service == null) {
-            Log.w(TAG, "onImageConfirmed: service or session is null")
-            return
-        }
-        // Session acquisition throws when the service tore down between the
-        // null check above and now (disconnect-then-confirm): fail soft like
-        // every other slice call site instead of escaping to the Looper.
-        val session = try {
-            service.HumlaSession()
-        } catch (e: HumlaDisconnectedException) {
-            Log.w(TAG, "onImageConfirmed: service or session is null", e)
-            return
-        } catch (e: IllegalStateException) {
-            Log.w(TAG, "onImageConfirmed: service or session is null", e)
-            return
-        }
-        val serverSettings = session.getServerSettings()
-        if (serverSettings == null) {
-            Log.w(TAG, "onImageConfirmed: service or session is null")
-            return
-        }
-
-        val maxSize = serverSettings.imageMessageLength
+        val maxSize = viewModel.limits().imageMessageLength
 
         var currentBitmap: Bitmap? = initialBitmap
         var formattedMessage: String? = null
@@ -415,68 +363,24 @@ class ChannelChatFragment : HumlaServiceFragment() {
             return
         }
 
-        try {
-            sendMessage(message)
-        } catch (e: HumlaDisconnectedException) {
-            Log.d(TAG, "exception from sendMessage: $e")
-        } catch (e: IllegalStateException) {
-            // Tap-send racing teardown: isConnected() was true at check but
-            // the session died before HumlaSession() (same contract as the
-            // adapter's 606-613 catches).
-            Log.d(TAG, "exception from sendMessage: $e")
+        if (viewModel.send(message, image = true) == ChatSendResult.TOO_LARGE) {
+            Toast.makeText(requireContext(), R.string.image_too_large, Toast.LENGTH_SHORT).show()
         }
     }
 
     /**
-     * Sends the message currently in
-     * {@link se.lublin.mumla.channel.ChannelChatFragment#mChatTextEdit}
-     * to the remote server. Clears the message box if the message was sent successfully.
+     * Sends the message currently in the editor to the remote server. Clears
+     * the message box only when the ViewModel handed it to the session.
      */
     private fun sendMessageFromEditor(v: View?) {
-        // NPE-exact: the original dereferenced mChatTextEdit unconditionally.
         val chatTextEdit = mChatTextEdit ?: throw NullPointerException("mChatTextEdit")
         if (chatTextEdit.length() == 0) {
             return
         }
         val message = chatTextEdit.text.toString()
-        try {
-            sendMessage(message)
+        if (viewModel.send(markupOutgoingMessage(message)) == ChatSendResult.SENT) {
             chatTextEdit.setText("")
-        } catch (e: HumlaDisconnectedException) {
-            Log.d(TAG, "exception from sendMessage: $e")
-        } catch (e: IllegalStateException) {
-            Log.d(TAG, "exception from sendMessage: $e")
         }
-    }
-
-    /**
-     * Sends a message to the remote server.
-     *
-     * @param message The message to send.
-     * @throws HumlaDisconnectedException If the service is disconnected.
-     */
-    @Throws(HumlaDisconnectedException::class)
-    private fun sendMessage(message: String) {
-        val service = getService()
-        if (service == null) {
-            Log.d(TAG, "getService()==null in sendMessage")
-            return
-        }
-        val session = service.HumlaSession()
-
-        val formattedMessage = markupOutgoingMessage(message)
-        val target = channelViewModel.chatTargetDisplay.value.target
-        val responseMessage = if (target == null) {
-            // NPE-exact: the original dereferenced getSessionChannel() unconditionally.
-            val sessionChannel = session.getSessionChannel() ?: throw NullPointerException("sessionChannel")
-            session.sendChannelTextMessage(sessionChannel.id, formattedMessage, false)
-        } else if (target.session != null) {
-            session.sendUserTextMessage(target.session, formattedMessage)
-        } else {
-            val channelId = target.channelId ?: throw NullPointerException("channelId")
-            session.sendChannelTextMessage(channelId, formattedMessage, false)
-        }
-        addChatMessage(IChatMessage.TextMessage(responseMessage, true), true)
     }
 
     /**
@@ -492,14 +396,7 @@ class ChannelChatFragment : HumlaServiceFragment() {
     }
 
     fun clear() {
-        val adapter = mChatAdapter
-        if (adapter != null) {
-            adapter.clear()
-        }
-        val service = getService()
-        if (service != null) {
-            service.clearMessageLog()
-        }
+        viewModel.clear()
     }
 
     /**
@@ -519,36 +416,16 @@ class ChannelChatFragment : HumlaServiceFragment() {
         chatTextEdit.requestLayout() // Needed to update bounds after hint change.
     }
 
-    override fun onServiceBound(service: IHumlaService) {
-        val svc = getService()
-        if (svc == null) {
-            return
-        }
-
-        val oldAdapter = mChatAdapter
-        if (oldAdapter != null) {
-            oldAdapter.shutdown()
-        }
-        // NPE-exact: the original passed getActivity() straight through.
-        val host = activity ?: throw NullPointerException("activity")
-        mChatAdapter = ChannelChatAdapter(host, service, svc.getMessageLog())
-        val chatList = mChatList ?: throw NullPointerException("mChatList")
-        val adapter = mChatAdapter ?: throw NullPointerException("mChatAdapter")
-        chatList.adapter = adapter
-        chatList.post {
-            chatList.setSelection(adapter.count - 1)
-        }
-    }
-
-    override fun getServiceObserver(): IHumlaObserver {
-        return mServiceObserver
-    }
-
-    private class ChannelChatAdapter(context: Context, service: IHumlaService, messages: List<IChatMessage>) :
-        ArrayAdapter<IChatMessage>(context, 0, ArrayList(messages)) {
+    private class ChannelChatAdapter(context: Context) :
+        ArrayAdapter<IChatMessage>(context, 0, ArrayList()) {
         private val mImageGetter: MumbleImageGetter = MumbleImageGetter(context, this::notifyDataSetChanged)
-        private val mService: IHumlaService = service
         private val mDateFormat: DateFormat = SimpleDateFormat.getTimeInstance()
+
+        fun submit(messages: List<IChatMessage>) {
+            clear()
+            addAll(messages)
+            notifyDataSetChanged()
+        }
 
         fun shutdown() {
             mImageGetter.shutdown()
@@ -563,56 +440,30 @@ class ChannelChatFragment : HumlaServiceFragment() {
             val row = v ?: throw NullPointerException("view")
 
             // NPE-exact: the original dereferenced each lookup unconditionally.
-            val chatBox = row.findViewById(R.id.list_chat_item_box) as LinearLayout?
+            val chatBox = row.findViewById<LinearLayout>(R.id.list_chat_item_box)
                 ?: throw NullPointerException("list_chat_item_box")
-            val targetText = row.findViewById(R.id.list_chat_item_target) as TextView?
+            val targetText = row.findViewById<TextView>(R.id.list_chat_item_target)
                 ?: throw NullPointerException("list_chat_item_target")
-            val messageText = row.findViewById(R.id.list_chat_item_text) as TextView?
+            val messageText = row.findViewById<TextView>(R.id.list_chat_item_text)
                 ?: throw NullPointerException("list_chat_item_text")
-            val timeText = row.findViewById(R.id.list_chat_item_time) as TextView?
+            val timeText = row.findViewById<TextView>(R.id.list_chat_item_time)
                 ?: throw NullPointerException("list_chat_item_time")
 
             // NPE-exact: the original dereferenced getItem(position) unconditionally.
             val message = getItem(position) ?: throw NullPointerException("item")
             message.accept(object : IChatMessage.Visitor {
                 override fun visit(message: IChatMessage.TextMessage) {
-                    // NPE-exact: the original dereferenced getMessage() unconditionally.
-                    val textMessage = message.getMessage() ?: throw NullPointerException("message")
-                    var targetMessage: String? = context.getString(R.string.unknown)
-                    var selfAuthored = message.isSelfAuthored
-                    if (!selfAuthored && mService.isConnected()) {
-                        try {
-                            val session = mService.HumlaSession()
-                            val sessionUser = session.getSessionUser()
-                            selfAuthored = sessionUser != null &&
-                                sessionUser.name == textMessage.actorName
-                        } catch (e: HumlaDisconnectedException) {
-                            selfAuthored = false
-                        } catch (e: IllegalStateException) {
-                            selfAuthored = false
-                        }
-                    }
-
-                    if (textMessage.targetChannels.isNotEmpty()) {
-                        val currentChannel = textMessage.targetChannels[0]
-                        if (currentChannel.name != null) {
-                            targetMessage = context.getString(R.string.chat_message_to, textMessage.actorName, currentChannel.name)
-                        }
-                    } else if (textMessage.targetTrees.isNotEmpty()) {
-                        val currentChannel = textMessage.targetTrees[0]
-                        if (currentChannel.name != null) {
-                            targetMessage = context.getString(R.string.chat_message_to, textMessage.actorName, currentChannel.name)
-                        }
-                    } else if (textMessage.targetUsers.isNotEmpty()) {
-                        val user = textMessage.targetUsers[0]
-                        if (user.name != null) {
-                            targetMessage = context.getString(R.string.chat_message_to, textMessage.actorName, user.name)
-                        }
+                    val targetMessage = if (message.targetNames.isNotEmpty()) {
+                        context.getString(
+                            R.string.chat_message_to,
+                            message.actorName,
+                            message.targetNames[0],
+                        )
                     } else {
-                        targetMessage = textMessage.actorName
+                        message.actorName ?: context.getString(R.string.unknown)
                     }
 
-                    val gravity = if (selfAuthored) Gravity.RIGHT else Gravity.LEFT
+                    val gravity = if (message.isSelfAuthored) Gravity.RIGHT else Gravity.LEFT
                     chatBox.gravity = gravity
                     messageText.gravity = gravity
                     targetText.text = targetMessage

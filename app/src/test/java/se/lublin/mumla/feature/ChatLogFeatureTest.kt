@@ -32,6 +32,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -45,16 +46,14 @@ import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.testTarget
 import se.lublin.humla.client.trustError
-import se.lublin.humla.model.Message
 import se.lublin.humla.model.Server
 import se.lublin.humla.net.VoiceEvent
 import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SessionEventRecord
-import se.lublin.humla.util.HumlaCallbacks
-import se.lublin.humla.util.HumlaObserver
 import se.lublin.mumla.AppLogLine
+import se.lublin.mumla.service.IChatMessage
 
-/** Chat-log history, LRU policy, event formatting and backpressure. */
+/** Chat-log history, LRU policy, text entries, event formatting and backpressure. */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -65,21 +64,19 @@ class ChatLogFeatureTest {
     @Before fun setUp() = Dispatchers.setMain(dispatcher)
     @After fun tearDown() = Dispatchers.resetMain()
 
-    private class Fixture(lineSink: (suspend (ChatLine) -> Unit)? = null) {
+    private class Fixture(lineSink: (suspend (ChatLogEntry) -> Unit)? = null) {
         val clientState = MutableStateFlow<ClientState>(ClientState.Idle)
         val events = MutableSharedFlow<SessionEventRecord>(extraBufferCapacity = 256)
         val voiceEvents = MutableSharedFlow<VoiceEvent>(extraBufferCapacity = 16)
         val appLog = MutableSharedFlow<AppLogLine>(extraBufferCapacity = 16)
-        val callbacks = HumlaCallbacks()
         val formatter = ChatEventFormatter(RuntimeEnvironment.getApplication())
         val feature = ChatLogFeature(
             RuntimeEnvironment.getApplication(), clientState, events, voiceEvents,
-            appLog, callbacks, formatter, lineSink,
+            appLog, formatter, lineSink,
         )
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
         fun start() {
-            callbacks.registerObserver(feature.receivedTextObserver)
             feature.start(scope)
         }
 
@@ -89,6 +86,22 @@ class ChatLogFeatureTest {
     private fun target(id: Long) = testTarget().copy(
         server = testTarget().server.copy(serverId = id),
     )
+
+    /** Logs a sent message the way the session does: one TextMessageSent record. */
+    private fun Fixture.sent(
+        body: String,
+        channels: List<Int> = emptyList(),
+        users: List<Int> = emptyList(),
+    ) {
+        kotlinx.coroutines.runBlocking {
+            events.emit(
+                SessionEventRecord(
+                    SessionEvent.TextMessageSent(channels, emptyList(), users, body, 0L),
+                    goldenState(),
+                ),
+            )
+        }
+    }
 
     @Test fun serverKeyOfNullIsEmpty() {
         assertEquals("", ChatLogFeature.serverKey(null))
@@ -126,7 +139,7 @@ class ChatLogFeatureTest {
     @Test fun messageLogCapacityEviction() {
         val f = Fixture()
         f.start()
-        repeat(550) { i -> f.feature.addSentText(Message("msg-$i")) }
+        repeat(550) { i -> f.sent("msg-$i") }
         val log = f.feature.currentMessages()
         assertEquals(500, log.size)
         assertEquals("msg-50", log[0].body)
@@ -138,15 +151,15 @@ class ChatLogFeatureTest {
         val f = Fixture()
         f.start()
         f.clientState.value = ClientState.Connecting(target(1), 0)
-        f.feature.addSentText(Message("s1-msg1"))
-        f.feature.addSentText(Message("s1-msg2"))
+        f.sent("s1-msg1")
+        f.sent("s1-msg2")
         assertEquals(2, f.feature.currentMessages().size)
 
         f.clientState.value = ClientState.Connecting(target(2), 0)
         assertTrue(f.feature.currentMessages().isEmpty())
-        f.feature.addSentText(Message("s2-msg1"))
-        f.feature.addSentText(Message("s2-msg2"))
-        f.feature.addSentText(Message("s2-msg3"))
+        f.sent("s2-msg1")
+        f.sent("s2-msg2")
+        f.sent("s2-msg3")
         assertEquals(3, f.feature.currentMessages().size)
 
         f.clientState.value = ClientState.Connecting(target(1), 0)
@@ -160,13 +173,13 @@ class ChatLogFeatureTest {
         val f = Fixture()
         f.start()
         f.clientState.value = ClientState.Connecting(target(1), 0)
-        f.feature.addSentText(Message("old-msg-1"))
+        f.sent("old-msg-1")
         f.feature.clear()
         assertTrue(f.feature.currentMessages().isEmpty())
-        f.feature.addSentText(Message("new-msg-1"))
+        f.sent("new-msg-1")
         assertEquals(1, f.feature.currentMessages().size)
         f.clientState.value = ClientState.Connecting(target(2), 0)
-        f.feature.addSentText(Message("s2-msg"))
+        f.sent("s2-msg")
         f.clientState.value = ClientState.Connecting(target(1), 0)
         assertEquals("new-msg-1", f.feature.currentMessages().single().body)
         f.close()
@@ -177,7 +190,7 @@ class ChatLogFeatureTest {
         f.start()
         for (id in 1L..11L) {
             f.clientState.value = ClientState.Connecting(target(id), 0)
-            f.feature.addSentText(Message("msg-from-server-$id"))
+            f.sent("msg-from-server-$id")
         }
         f.clientState.value = ClientState.Connecting(target(1), 0)
         assertTrue(f.feature.currentMessages().isEmpty())
@@ -189,17 +202,61 @@ class ChatLogFeatureTest {
     @Test fun readIsADefensiveSnapshot() {
         val f = Fixture()
         f.start()
-        f.feature.addSentText(Message("msg-1"))
+        f.sent("msg-1")
         val snapshot = f.feature.currentMessages()
         try {
             @Suppress("UNCHECKED_CAST")
-            (snapshot as MutableList<Any>).add(Message("illegal-add"))
+            (snapshot as MutableList<Any>).add("illegal-add")
             org.junit.Assert.fail("currentMessages() must be unmodifiable")
         } catch (expected: UnsupportedOperationException) {
         }
-        f.feature.addSentText(Message("msg-2"))
+        f.sent("msg-2")
         assertEquals(1, snapshot.size)
         assertEquals(2, f.feature.currentMessages().size)
+        f.close()
+    }
+
+    @Test fun receivedTextBecomesAValueEntryWithResolvedNames() {
+        val f = Fixture()
+        f.start()
+        f.clientState.value = ClientState.Connecting(target(1), 0)
+        kotlinx.coroutines.runBlocking {
+            f.events.emit(
+                SessionEventRecord(
+                    SessionEvent.TextMessageReceived(
+                        actor = 2,
+                        actorName = "Alice",
+                        channels = listOf(0),
+                        trees = emptyList(),
+                        users = listOf(3),
+                        message = "hi all",
+                        receivedAtMillis = 1234L,
+                    ),
+                    goldenState(),
+                ),
+            )
+        }
+        val entry = f.feature.currentMessages().single() as IChatMessage.TextMessage
+        assertEquals("Alice", entry.actorName)
+        assertEquals(listOf("Root", "Bob"), entry.targetNames)
+        assertEquals("hi all", entry.body)
+        assertEquals(1234L, entry.receivedTime)
+        assertFalse(entry.isSelfAuthored)
+        f.close()
+    }
+
+    @Test fun sentTextIsLoggedOnceWithTheSelfName() {
+        val f = Fixture()
+        f.start()
+        f.clientState.value = ClientState.Connecting(target(1), 0)
+        f.sent("hello", channels = listOf(0))
+        val entries = f.feature.currentMessages()
+        assertEquals(1, entries.size)
+        val entry = entries.single() as IChatMessage.TextMessage
+        assertEquals("Self", entry.actorName)
+        assertEquals(listOf("Root"), entry.targetNames)
+        assertEquals("hello", entry.body)
+        assertTrue(entry.isSelfAuthored)
         f.close()
     }
 
@@ -263,39 +320,32 @@ class ChatLogFeatureTest {
     @Test fun entryPointsRequireAStartedMainScope() {
         val f = Fixture()
         assertThrows(IllegalStateException::class.java) { f.feature.clear() }
-        assertThrows(IllegalStateException::class.java) {
-            f.feature.addSentText(Message("before-start"))
-        }
         f.close()
     }
 
-    @Test fun entryPointsWorkWhenCalledOffTheMainThread() {
+    @Test fun clearWorksWhenCalledOffTheMainThread() {
         val f = Fixture()
         f.start()
+        f.clientState.value = ClientState.Connecting(target(1), 0)
+        f.sent("from-worker")
         kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-            f.feature.addSentText(Message("from-worker"))
             f.feature.clear()
         }
         assertTrue(f.feature.currentMessages().isEmpty())
         f.close()
     }
 
-    @Test fun eventLineIsAppendedAndForwarded() {
+    @Test fun eventLineIsAppended() {
         val f = Fixture()
         f.start()
-        val forwarded = ArrayList<String>()
-        f.callbacks.registerObserver(object : HumlaObserver() {
-            override fun onLogInfo(message: String?) { forwarded.add(message ?: "") }
-        })
         f.scope.launch {
             f.events.emit(SessionEventRecord(SessionEvent.UserJoinedServer(2, "Alice"), goldenState()))
-        kotlinx.coroutines.yield()
+            kotlinx.coroutines.yield()
         }
         assertEquals(
             "<font color=\"#33b5e5\">Alice</font> connected.",
             f.feature.currentMessages().last().body,
         )
-        assertEquals(1, forwarded.size)
         f.close()
     }
 
