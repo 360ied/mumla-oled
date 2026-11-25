@@ -58,18 +58,13 @@ class CommentViewModel(
 
     private var requested = false
 
+    // Seeded from the current state, so a text already in state shows on the
+    // first frame instead of after a "Loading…" placeholder.
     val state: StateFlow<CommentUiState> = sessionState
         .map(::lookup)
         .distinctUntilChanged()
-        .map { found ->
-            when {
-                found == null -> CommentUiState()
-                found.text != null -> CommentUiState(found.text)
-                found.hasHash -> CommentUiState()
-                else -> CommentUiState("")
-            }
-        }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, CommentUiState())
+        .map(::uiState)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, uiState(lookup(sessionState.value)))
 
     init {
         // One request per dialog: the server answers over TCP and the text
@@ -91,6 +86,13 @@ class CommentViewModel(
 
     /** Persists the edited comment (user comments only in practice). */
     fun save(comment: String) = setComment(comment)
+
+    private fun uiState(found: Lookup?): CommentUiState = when {
+        found == null -> CommentUiState()
+        found.text != null -> CommentUiState(found.text)
+        found.hasHash -> CommentUiState()
+        else -> CommentUiState("")
+    }
 
     private fun lookup(state: SessionState): Lookup? = when (target) {
         is Target.User -> state.server.users[target.session]?.let {

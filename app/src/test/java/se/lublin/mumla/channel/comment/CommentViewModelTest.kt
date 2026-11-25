@@ -22,6 +22,7 @@ import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -154,6 +155,21 @@ class CommentViewModelTest {
         assertEquals(1, fixture.requests)
         fixture.withChannel(description = "the description", hash = ByteString.copyFromUtf8("h"))
         assertEquals("the description", fixture.viewModel.state.value.comment)
+    }
+
+    @Test
+    fun aTextAlreadyInStateShowsWithoutALoadingFrame() {
+        // A paused Main: nothing the ViewModel launches has run yet.
+        Dispatchers.setMain(StandardTestDispatcher())
+        val populated = Fixture(CommentViewModel.Target.User(SESSION))
+            .withUser(comment = "<p>hi</p>", hash = ByteString.copyFromUtf8("h"))
+        val viewModel = CommentViewModel(
+            target = CommentViewModel.Target.User(SESSION),
+            sessionState = populated.sessionState,
+            requestBlob = {},
+            setComment = {},
+        )
+        assertEquals("<p>hi</p>", viewModel.state.value.comment)
     }
 
     @Test

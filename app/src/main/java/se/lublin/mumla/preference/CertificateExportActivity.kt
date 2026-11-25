@@ -35,7 +35,9 @@ import se.lublin.mumla.app.BaseActivity
 import se.lublin.mumla.db.DatabaseCertificate
 import se.lublin.mumla.db.MumlaDatabase
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Created by andrew on 12/01/16.
@@ -142,18 +144,25 @@ class CertificateExportActivity : BaseActivity(), DialogInterface.OnClickListene
             showError(R.string.error_writing_to_storage)
             return
         }
-        try {
-            contentResolver.openOutputStream(uri).use { os ->
-                if (os == null) {
-                    Log.w(TAG, "No output stream for document picked by user")
-                    showError(R.string.error_writing_to_storage)
-                    return
+        // A document provider may be remote or slow; write off the main thread.
+        val written = withContext(Dispatchers.IO) {
+            try {
+                contentResolver.openOutputStream(uri).use { os ->
+                    if (os == null) {
+                        Log.w(TAG, "No output stream for document picked by user")
+                        false
+                    } else {
+                        os.write(data)
+                        os.flush()
+                        true
+                    }
                 }
-                os.write(data)
-                os.flush()
+            } catch (e: IOException) {
+                Log.w(TAG, "Failed to write exported certificate", e)
+                false
             }
-        } catch (e: IOException) {
-            Log.w(TAG, "Failed to write exported certificate", e)
+        }
+        if (!written) {
             showError(R.string.error_writing_to_storage)
             return
         }
