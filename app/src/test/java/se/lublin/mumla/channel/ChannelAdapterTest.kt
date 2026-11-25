@@ -28,6 +28,7 @@ import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.persistentSetOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -38,6 +39,7 @@ import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 import se.lublin.humla.model.TalkState
 import se.lublin.humla.state.UserInfo
+import se.lublin.humla.state.textureCacheKey
 import se.lublin.humla.voice.TalkActivity
 import se.lublin.mumla.R
 
@@ -136,6 +138,54 @@ class ChannelAdapterTest {
         )
         assertEquals(R.drawable.outline_circle_talking_on, iconRes(0))
         assertEquals(R.drawable.outline_circle_server_muted, iconRes(1))
+    }
+
+    @Test
+    fun everyIconBranchAndItsPrecedence() {
+        val base = user(101, "Alice")
+        val cases = listOf(
+            // Precedence: self-deafened beats everything, then server deafen,
+            // self mute, server mute, suppression, then the talk level.
+            base.copy(selfDeafened = true, muted = true) to TalkState.TALKING to R.drawable.outline_circle_deafened,
+            base.copy(deafened = true, selfMuted = true) to TalkState.TALKING to R.drawable.outline_circle_server_deafened,
+            base.copy(selfMuted = true, muted = true) to TalkState.TALKING to R.drawable.outline_circle_muted,
+            base.copy(muted = true, suppressed = true) to TalkState.TALKING to R.drawable.outline_circle_server_muted,
+            base.copy(suppressed = true) to TalkState.TALKING to R.drawable.outline_circle_suppressed,
+            base to TalkState.TALKING to R.drawable.outline_circle_talking_on,
+            base to TalkState.SHOUTING to R.drawable.outline_circle_talking_on,
+            base to TalkState.WHISPERING to R.drawable.outline_circle_talking_on,
+            base to TalkState.PASSIVE to R.drawable.outline_circle_talking_off,
+        )
+        for ((input, expected) in cases) {
+            val (user, talkState) = input
+            val drawable = adapter.getTalkStateDrawable(user, talkState)!!
+            assertEquals("$talkState $user", expected, Shadows.shadowOf(drawable).createdFromResId)
+        }
+    }
+
+    @Test
+    fun theAvatarCacheKeysOnTheDerivedTextureKey() {
+        val cache = AvatarCache()
+        val bytes = byteArrayOf(1, 2, 3)
+        val alice = user(101, "Alice").copy(texture = ByteString.copyFrom(bytes))
+        val first = cache.get(alice.session, alice.textureCacheKey(), bytes)
+        // Equal bytes in a new state value derive the same key: a cache hit,
+        // even with no texture to decode.
+        val copy = alice.copy(texture = ByteString.copyFrom(bytes.copyOf()))
+        assertSame(first, cache.get(copy.session, copy.textureCacheKey(), null))
+        // A changed avatar derives a new key, so the stale bitmap is dropped.
+        val changed = alice.copy(texture = null, textureHash = ByteString.copyFromUtf8("new"))
+        assertNull(cache.get(changed.session, changed.textureCacheKey(), null))
+        assertEquals(0, cache.size())
+    }
+
+    @Test
+    fun aShrinkToNoUsersRemovesEveryRow() {
+        submit(listOf(user(101, "Alice"), user(102, "Bob")))
+        assertEquals(2, recycler.childCount)
+        submit(emptyList())
+        assertEquals(0, adapter.itemCount)
+        assertEquals(0, recycler.childCount)
     }
 
     @Test

@@ -297,10 +297,16 @@ class AppContainerLifecycleTest {
         val transport = newTransport()
         val controller = connectAndStartService(transport)
         // A later connect asks the already-running service to start again.
+        val scopeField = ConnectionService::class.java.getDeclaredField("scope").apply { isAccessible = true }
+        val firstScope = scopeField.get(controller.get())
         controller.startCommand(0, 0)
         idle()
         val shadow = Shadows.shadowOf(controller.get())
         assertTrue(shadow.isLastForegroundNotificationAttached())
+        // One collector per instance: the scope and its single child survive.
+        assertSame(firstScope, scopeField.get(controller.get()))
+        val job = (firstScope as kotlinx.coroutines.CoroutineScope).coroutineContext[kotlinx.coroutines.Job]!!
+        assertEquals(1, job.children.count())
 
         for (message in syncSequence()) {
             transport.inboundChannel.trySend(message)
@@ -365,6 +371,10 @@ class AppContainerLifecycleTest {
         assertEquals(ServiceStart.START, serviceStartDecision(ClientState.Reconnecting(
             testTarget(), 1, 0L, ClientError.Connection("boom", null), null,
         ), null))
+        assertEquals(ServiceStart.START, serviceStartDecision(
+            ClientState.Connected(testTarget(), org.mockito.Mockito.mock(se.lublin.humla.client.Session::class.java)),
+            null,
+        ))
         assertEquals(ServiceStart.WAIT, serviceStartDecision(ClientState.Idle, null))
         // A Failed that predates the call is stale: keep waiting.
         assertEquals(ServiceStart.WAIT, serviceStartDecision(failed, failed))
@@ -408,7 +418,8 @@ class AppContainerLifecycleTest {
         // The process-lifetime route thread is still alive after the service
         // is gone: the process-lifetime answer is not a closed route.
         container().runtime.retrySco()
-        assertTrue(container().runtime.routeState.value is RouteState)
+        idle()
+        assertEquals(RouteState.Idle, container().runtime.routeState.value)
 
         val runtime = container().runtime
         val client = runtime.client
@@ -446,6 +457,9 @@ class AppContainerLifecycleTest {
         val controller = startService(intent)
         idle()
         val shadow = Shadows.shadowOf(controller.get())
+        // The post happened before the stop: Android's five-second rule holds
+        // even for a start that finds nothing to do.
+        assertEquals(1, shadow.lastForegroundNotificationId)
         assertTrue(shadow.isStoppedBySelf())
         assertTrue(shadow.isForegroundStopped())
         controller.destroy()

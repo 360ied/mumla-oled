@@ -533,7 +533,7 @@ internal fun serviceStartDecision(
     is ClientState.Idle -> ServiceStart.WAIT
 }
 
-/** Gestures from talk keys, the hot corner, and the service's binder bridge. */
+/** Gestures from talk keys and the hot corner. */
 sealed interface TalkKeyEvent {
     data object Down : TalkKeyEvent
     data object Up : TalkKeyEvent

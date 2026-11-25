@@ -114,6 +114,29 @@ class StateTest : TestCase() {
     }
 
     @Test
+    fun testTextureCacheKey() {
+        val base = userWithMute(1, false, false)
+        val bytes = ByteString.copyFrom(byteArrayOf(1, 2, 3))
+        val hash = ByteString.copyFromUtf8("announced")
+        // No avatar: absent or empty texture and hash.
+        assertEquals(0, base.textureCacheKey())
+        assertEquals(0, base.copy(texture = ByteString.EMPTY, textureHash = ByteString.EMPTY).textureCacheKey())
+        // Present bytes win over the announced hash and key by content.
+        assertEquals(bytes.hashCode(), base.copy(texture = bytes, textureHash = hash).textureCacheKey())
+        assertEquals(
+            base.copy(texture = bytes).textureCacheKey(),
+            base.copy(texture = ByteString.copyFrom(byteArrayOf(1, 2, 3))).textureCacheKey(),
+        )
+        assertFalse(
+            base.copy(texture = bytes).textureCacheKey() ==
+                base.copy(texture = ByteString.copyFrom(byteArrayOf(1, 2, 4))).textureCacheKey(),
+        )
+        // Hash only (texture not fetched yet): the hash keys the entry.
+        assertEquals(hash.hashCode(), base.copy(textureHash = hash).textureCacheKey())
+        assertFalse(base.copy(textureHash = hash).textureCacheKey() == 0)
+    }
+
+    @Test
     fun testUserIdNullWhenUnregistered() {
         val base = userWithMute(1, false, false)
         assertNull(base.userId)

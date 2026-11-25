@@ -37,6 +37,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
+import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.emptyConnectTarget
@@ -220,6 +221,40 @@ class ChannelViewModelTest {
         fixture.clientState.value = ClientState.Idle
         testScheduler.runCurrent()
         assertFalse(fixture.viewModel.state.value.selfTalking)
+    }
+
+    @Test
+    fun reconnectingAndFailedAreNotConnected() = runTest {
+        val error = ClientError.Connection("boom", null)
+        for (state in listOf(
+            ClientState.Reconnecting(emptyConnectTarget(), 1, 5_000L, error, null),
+            ClientState.Failed(emptyConnectTarget(), error),
+        )) {
+            val fixture = Fixture()
+            fixture.synced(selfMuted = true)
+            fixture.talk.value = TalkActivity.initial().copy(selfTalking = true)
+            subscribe(fixture)
+            fixture.clientState.value = state
+            testScheduler.runCurrent()
+            val ui = fixture.viewModel.state.value
+            assertFalse("$state", ui.connected)
+            assertFalse("$state", ui.selfTalking)
+            // The mute guard only applies while connected.
+            assertFalse("$state", ui.muted)
+            assertFalse("$state", ui.bluetoothMenuVisible)
+        }
+    }
+
+    @Test
+    fun connectedWithoutASelfUserIsMuted() = runTest {
+        // Connected before the self user is in the mirror: no talking yet.
+        val fixture = Fixture()
+        fixture.settings.value = testSnapshot(audioInputMethod = Settings.ARRAY_INPUT_METHOD_PTT)
+        subscribe(fixture)
+        val ui = fixture.viewModel.state.value
+        assertTrue(ui.connected)
+        assertTrue(ui.muted)
+        assertFalse(ui.showPttButton)
     }
 
     @Test

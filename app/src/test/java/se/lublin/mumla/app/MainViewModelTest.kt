@@ -61,6 +61,7 @@ class MainViewModelTest {
         val savedPasswords = ArrayList<Server>()
         var pinResult = true
         var newestCrash: String? = null
+        val drains = ArrayList<Boolean>()
         val seenCrash = ArrayList<String>()
         val pinned = HashMap<String, X509Certificate>()
         val pins = ArrayList<String>()
@@ -81,7 +82,10 @@ class MainViewModelTest {
             pinned[host] = certificate
             return true
         }
-        override suspend fun newestUnseenCrashReport(drain: Boolean): String? = newestCrash
+        override suspend fun newestUnseenCrashReport(drain: Boolean): String? {
+            drains.add(drain)
+            return newestCrash
+        }
         override suspend fun markCrashReportSeen(id: String) { seenCrash.add(id) }
         override fun clearChatNotifications() { calls.add("clearChat") }
     }
@@ -189,6 +193,38 @@ class MainViewModelTest {
     }
 
     @Test
+    fun cancelReconnectForwardsAndClearsAPendingSwitch() = runTest {
+        val f = Fixture()
+        f.viewModel.onActivityStarted()
+        f.clientState.value = ClientState.Reconnecting(
+            testTarget(), 1, 0L, ClientError.Connection("boom", null), null,
+        )
+        f.viewModel.confirmSwitch(server(host = "new.example.org"))
+        f.viewModel.cancelReconnect()
+        assertFalse(f.viewModel.pendingSwitch.value)
+        f.clientState.value = ClientState.Idle
+        assertEquals(listOf("disconnect", "cancelReconnect"), f.actions.calls)
+    }
+
+    @Test
+    fun aSwitchConfirmedThenPausedConnectsOnResume() = runTest {
+        val f = Fixture()
+        f.clientState.value = ClientState.Connected(
+            testTarget().copy(server = testTarget().server.copy(host = "other.example.org")),
+            mock(Session::class.java),
+        )
+        f.viewModel.onActivityStarted()
+        f.viewModel.confirmSwitch(server(host = "new.example.org"))
+        f.viewModel.onActivityStopped()
+        f.clientState.value = ClientState.Idle
+        assertEquals(listOf("disconnect"), f.actions.calls)
+
+        f.viewModel.onActivityStarted()
+        assertEquals(listOf("disconnect", "connect:new.example.org:null"), f.actions.calls)
+        assertFalse(f.viewModel.pendingSwitch.value)
+    }
+
+    @Test
     fun disconnectClearsAPendingSwitch() = runTest {
         val f = Fixture()
         f.viewModel.confirmSwitch(server(host = "new.example.org"))
@@ -216,6 +252,21 @@ class MainViewModelTest {
         f.viewModel.retryWithPassword(corrected)
         assertEquals(listOf("save:new-pass", "disconnect"), f.actions.calls)
         assertTrue(f.viewModel.pendingSwitch.value)
+    }
+
+    @Test
+    fun aSerializedPasswordRetryConnectsAtIdleWhileStarted() = runTest {
+        val f = Fixture()
+        f.viewModel.onActivityStarted()
+        f.clientState.value = ClientState.Connecting(testTarget(), 0)
+        val corrected = MainViewModel.serverOf(testTarget()).also { it.password = "new-pass" }
+        f.viewModel.retryWithPassword(corrected)
+        f.clientState.value = ClientState.Idle
+        assertEquals(
+            listOf("save:new-pass", "disconnect", "connect:${testTarget().server.host}:new-pass"),
+            f.actions.calls,
+        )
+        assertFalse(f.viewModel.pendingSwitch.value)
     }
 
     @Test
@@ -376,6 +427,15 @@ class MainViewModelTest {
         f.viewModel.recheckCrashReports()
         advanceTimeBy(MainViewModel.CRASH_RECHECK_DELAY_MS + 1_000)
         assertNull(f.viewModel.crashReportId.value)
+    }
+
+    @Test
+    fun onlyTheDelayedRecheckDrainsCrashReports() = runTest {
+        val f = Fixture()
+        f.viewModel.startCrashChecks()
+        assertEquals(listOf(false), f.actions.drains)
+        advanceTimeBy(MainViewModel.CRASH_RECHECK_DELAY_MS + 1)
+        assertEquals(listOf(false, true), f.actions.drains)
     }
 
     @Test

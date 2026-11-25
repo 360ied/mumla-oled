@@ -270,6 +270,52 @@ class ChatLogFeatureTest {
         f.close()
     }
 
+    /** One received line from [actor] named [actorName] against the golden state. */
+    private fun Fixture.received(
+        actor: Int?,
+        actorName: String,
+        channels: List<Int> = listOf(0),
+        trees: List<Int> = emptyList(),
+        users: List<Int> = emptyList(),
+    ): IChatMessage.TextMessage {
+        kotlinx.coroutines.runBlocking {
+            events.emit(
+                SessionEventRecord(
+                    SessionEvent.TextMessageReceived(actor, actorName, channels, trees, users, "x", 1L),
+                    goldenState(),
+                ),
+            )
+        }
+        return feature.currentMessages().last() as IChatMessage.TextMessage
+    }
+
+    @Test fun selfAuthorshipUsesTheSessionThenFallsBackToTheName() {
+        val f = Fixture()
+        f.start()
+        f.clientState.value = ClientState.Connecting(target(1), 0)
+        // No actor session: the name check decides.
+        assertTrue(f.received(actor = null, actorName = "Self").isSelfAuthored)
+        assertFalse(f.received(actor = null, actorName = "Alice").isSelfAuthored)
+        // A session wins over a matching name: another user named Self.
+        assertFalse(f.received(actor = 2, actorName = "Self").isSelfAuthored)
+        f.close()
+    }
+
+    @Test fun unknownTargetIdsAreSkippedInOrder() {
+        val f = Fixture()
+        f.start()
+        f.clientState.value = ClientState.Connecting(target(1), 0)
+        val entry = f.received(
+            actor = 2,
+            actorName = "Alice",
+            channels = listOf(99, 0),
+            trees = listOf(98),
+            users = listOf(77, 3),
+        )
+        assertEquals(listOf("Root", "Bob"), entry.targetNames)
+        f.close()
+    }
+
     @Test fun sentTextIsLoggedOnceWithTheSelfName() {
         val f = Fixture()
         f.start()

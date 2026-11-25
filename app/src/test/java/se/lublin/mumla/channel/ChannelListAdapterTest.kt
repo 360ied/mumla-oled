@@ -275,6 +275,35 @@ class ChannelListAdapterTest {
     }
 
     @Test
+    fun everyIconBranchAndItsPrecedence() {
+        addChannel(0, "Root")
+        join(5, "Eve")
+        val base = state.server.users.getValue(5)
+        val cases = listOf(
+            // Precedence: self-deafened beats everything, then server deafen,
+            // self mute, server mute, suppression, then the talk level.
+            base.copy(selfDeafened = true, muted = true) to TalkState.TALKING to R.drawable.outline_circle_deafened,
+            base.copy(deafened = true, selfMuted = true) to TalkState.TALKING to R.drawable.outline_circle_server_deafened,
+            base.copy(selfMuted = true, muted = true) to TalkState.TALKING to R.drawable.outline_circle_muted,
+            base.copy(muted = true, suppressed = true) to TalkState.TALKING to R.drawable.outline_circle_server_muted,
+            base.copy(suppressed = true) to TalkState.TALKING to R.drawable.outline_circle_suppressed,
+            base to TalkState.TALKING to R.drawable.outline_circle_talking_on,
+            base to TalkState.SHOUTING to R.drawable.outline_circle_talking_on,
+            base to TalkState.WHISPERING to R.drawable.outline_circle_talking_on,
+            base to TalkState.PASSIVE to R.drawable.outline_circle_talking_off,
+        )
+        for ((input, expected) in cases) {
+            val (user, talkState) = input
+            val drawable = adapter.getTalkStateDrawable(user, talkState)!!
+            assertEquals("$talkState $user", expected, Shadows.shadowOf(drawable).createdFromResId)
+        }
+        assertEquals(
+            R.drawable.outline_circle_talking_off,
+            Shadows.shadowOf(adapter.getTalkStateDrawable(null, TalkState.TALKING)!!).createdFromResId,
+        )
+    }
+
+    @Test
     fun pinnedOnlyModeUsesThePinnedRoots() {
         addChannel(0, "Root")
         addChannel(5, "General")

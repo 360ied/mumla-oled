@@ -118,8 +118,14 @@ class ConnectionNotificationFeatureTest {
     @Test fun explicitActionsReachTheContainer() {
         val f = Fixture()
         f.feature.handleAction(NotificationActionReceiver.ACTION_MUTE)
+        f.feature.handleAction(NotificationActionReceiver.ACTION_DEAFEN)
+        f.feature.handleAction(NotificationActionReceiver.ACTION_TOGGLE_OVERLAY)
         f.feature.handleAction(NotificationActionReceiver.ACTION_DISCONNECT)
-        assertEquals(listOf("mute", "disconnect"), f.actions.calls)
+        f.feature.handleAction(NotificationActionReceiver.ACTION_CANCEL_RECONNECT)
+        // Unknown and missing actions are ignored.
+        f.feature.handleAction("se.lublin.mumla.UNKNOWN")
+        f.feature.handleAction(null)
+        assertEquals(listOf("mute", "deafen", "overlay", "disconnect", "cancel"), f.actions.calls)
     }
 
     @Test fun slowNotificationManagerNeverStallsTheEmitter() = runFeature { scope ->

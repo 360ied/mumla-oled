@@ -177,6 +177,35 @@ class ServerInfoViewModelTest {
     }
 
     @Test
+    fun aDirectSessionSwapFollowsTheNewSessionOnly() = runTest {
+        // Connected(A) -> Connected(B) with no Idle between: the old session's
+        // stats flow never ends, so only flatMapLatest stops following it.
+        val fixture = Fixture()
+        fixture.setInfo(syncedInfo())
+        fixture.connect()
+        subscribe(fixture)
+        val statsB = MutableStateFlow(SessionStats.initial().copy(tcpLatencyMicros = 2_000))
+        val transportB = mock(Transport::class.java).also {
+            `when`(it.remoteHost).thenReturn("second.example.org")
+            `when`(it.remotePort).thenReturn(64740)
+        }
+        val sessionB = mock(Session::class.java).also {
+            `when`(it.stats).thenReturn(statsB)
+            `when`(it.transport).thenReturn(transportB)
+        }
+        fixture.clientState.value = ClientState.Connected(emptyConnectTarget(), sessionB)
+        testScheduler.runCurrent()
+        assertEquals("second.example.org", fixture.viewModel.state.value.host)
+        assertEquals(2_000L, fixture.viewModel.state.value.tcpLatencyMicros)
+
+        // A late update from session A must not overwrite B's values.
+        fixture.stats.value = fixture.stats.value.copy(tcpLatencyMicros = 9_999)
+        testScheduler.runCurrent()
+        assertEquals(2_000L, fixture.viewModel.state.value.tcpLatencyMicros)
+        assertEquals(64740, fixture.viewModel.state.value.port)
+    }
+
+    @Test
     fun disconnectDropsTheSessionFields() = runTest {
         val fixture = Fixture()
         fixture.setInfo(syncedInfo())

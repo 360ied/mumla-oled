@@ -33,6 +33,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -41,6 +42,7 @@ import org.mockito.Mockito.mock
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.testTarget
@@ -117,6 +119,30 @@ class ChatViewModelTest {
         fixture.clientState.value = ClientState.Idle
         assertEquals(ChatSendResult.NOT_CONNECTED, fixture.viewModel.send("hello"))
         assertTrue(fixture.sent.isEmpty())
+    }
+
+    @Test
+    fun everyStateButConnectedRefusesTheSend() = runTest {
+        val error = ClientError.Connection("boom", null)
+        for (state in listOf(
+            ClientState.Connecting(testTarget(), 0),
+            ClientState.Reconnecting(testTarget(), 1, 0L, error, null),
+            ClientState.Failed(testTarget(), error),
+        )) {
+            val fixture = Fixture()
+            fixture.clientState.value = state
+            assertEquals("$state", ChatSendResult.NOT_CONNECTED, fixture.viewModel.send("hello"))
+            assertFalse("$state", fixture.viewModel.isConnected())
+            assertTrue("$state", fixture.sent.isEmpty())
+        }
+    }
+
+    @Test
+    fun theImagePickerGateFollowsTheConnection() = runTest {
+        val fixture = Fixture()
+        assertTrue(fixture.viewModel.isConnected())
+        fixture.clientState.value = ClientState.Idle
+        assertFalse(fixture.viewModel.isConnected())
     }
 
     @Test

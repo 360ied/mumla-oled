@@ -98,6 +98,15 @@ class IntentTransitionsTest : TestCase() {
         val s = syncedSelf()
         assertEquals(7, applyVoiceTargetIntent(s, 7).state.local.voiceTargetId)
         assertEquals(s, applyVoiceTargetIntent(s, 32).state)
+        // 31 is server loopback, the top of the range (pinned by the deleted
+        // HumlaServiceVoiceTargetTest).
+        val loopback = applyVoiceTargetIntent(s, 31).state
+        assertEquals(31, loopback.local.voiceTargetId)
+        assertEquals(VoiceTargetMode.SERVER_LOOPBACK, loopback.local.voiceTargetMode())
+        // A rejected id leaves the previous target intact.
+        assertEquals(loopback, applyVoiceTargetIntent(loopback, -1).state)
+        // 0 returns to normal talking.
+        assertEquals(0, applyVoiceTargetIntent(loopback, 0).state.local.voiceTargetId)
     }
 
     @Test
