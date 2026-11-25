@@ -737,13 +737,38 @@ class TestServiceBinding(unittest.TestCase):
             self.assertEqual(2, len(hits))
             self.assertTrue(hits[0][0].endswith("Binder.kt"))
 
+    def test_detects_every_bind_variant_and_a_split_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "Binder.kt",
+                "bindIsolatedService(intent, 0, \"id\", executor, conn)\n"
+                "bindServiceAsUser(intent, conn, 0, user)\n"
+                "val bound = bindService\n"
+                "    (intent, conn, 0)\n",
+            )
+            hits = ca.scan_service_binding(root)
+            self.assertEqual([1, 2, 3], [hit[1] for hit in hits])
+
+    def test_comments_and_strings_count(self):
+        # Fail closed: both halves of the pattern treat a mention alike.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "Screen.kt",
+                "// bindService is not used here\n"
+                "val note = \"no ServiceConnection\"\n",
+            )
+            self.assertEqual(2, len(ca.scan_service_binding(root)))
+
     def test_clean_tree_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.write(
                 root, "Screen.kt",
                 "val state = container.runtime.client.state\n"
-                "val note = \"bindService is not used here\"\n",
+                "override fun onBind(intent: Intent?): IBinder? = null\n"
+                "context.startForegroundService(intent)\n",
             )
             self.assertEqual([], ca.scan_service_binding(root))
 

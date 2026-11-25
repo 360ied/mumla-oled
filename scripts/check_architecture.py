@@ -237,10 +237,12 @@ RE_ANY_START = re.compile(r"\b(?:suspend\s+)?fun\s+start\s*\(")
 
 # Step 7: nothing binds a service. Screens reach the client through the
 # container and collect flows; the binder surface was deleted with the
-# services. A bind call needs a ServiceConnection, so the two patterns cover
-# the whole surface (an unbind cannot exist without a bind).
+# services. The patterns match identifiers, not call shapes, so a call split
+# across lines and every bind variant (bindService, bindIsolatedService,
+# bindServiceAsUser) are caught. Comments and strings count too, as in the
+# render-thread check: the gate fails closed and a mention is reworded.
 NO_BIND_ROOT = "app/src/main"
-RE_SERVICE_BIND = re.compile(r"\bbindService\s*\(|\bServiceConnection\b")
+RE_SERVICE_BIND = re.compile(r"\bbind\w*Service\w*|\bServiceConnection\b")
 
 RE_RENDER_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*renderActive")
 RE_CAPTURE_ACTIVE_ASSERT = re.compile(r"assert\s*\(\s*!\S*captureActive")
