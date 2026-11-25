@@ -49,11 +49,10 @@ import se.lublin.humla.Constants
 import se.lublin.humla.HumlaRuntime
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.LocalFactsStore
-import se.lublin.humla.model.IChannel
 import se.lublin.humla.route.RoutePreferences
-import se.lublin.humla.state.ChannelHandle
 import se.lublin.humla.state.SessionEvent
-import se.lublin.humla.util.IHumlaObserver
+import se.lublin.humla.state.SessionState
+import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.voice.VoiceSettings
 import se.lublin.humla.voice.VoiceSettingsMapper
 import se.lublin.mumla.app.MumlaApplication
@@ -203,16 +202,8 @@ open class AppContainer(
         override fun overlayPosY(defaultY: Int) = settings.getOverlayPosY(defaultY)
         override fun setOverlayPosition(x: Int, y: Int) =
             settings.setOverlayPosition(x, y)
-        override fun sessionChannel(): IChannel? {
-            val state = runtime.sessionState.value
-            val id = state.server.self?.channelId ?: return null
-            return ChannelHandle(id, runtime.sessionState, runtime.talkActivity)
-        }
-        override fun selfSession(): Int? = runtime.sessionState.value.server.selfSession
-        override fun registerObserver(observer: IHumlaObserver) =
-            runtime.callbacks.registerObserver(observer)
-        override fun unregisterObserver(observer: IHumlaObserver) =
-            runtime.callbacks.unregisterObserver(observer)
+        override fun sessionState(): StateFlow<SessionState> = runtime.sessionState
+        override fun talkActivity(): StateFlow<TalkActivity> = runtime.talkActivity
     }
 
     // Intent functions: features take functions, never the client itself.

@@ -20,7 +20,6 @@ package se.lublin.mumla.channel
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.drawable.Drawable
-import android.graphics.drawable.Drawable.ConstantState
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -29,24 +28,55 @@ import android.widget.TextView
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.recyclerview.widget.RecyclerView
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.model.IUser
 import se.lublin.humla.model.TalkState
+import se.lublin.humla.state.UserInfo
+import se.lublin.humla.state.textureCacheKey
+import se.lublin.humla.voice.TalkActivity
 import se.lublin.mumla.R
 import se.lublin.mumla.drawable.CircleDrawable
 
 /**
  * Modern RecyclerView adapter to display channel members in the overlay HUD.
+ * Rows are keyed by user session and rendered from submitted values plus the
+ * live talk levels.
  */
-class ChannelAdapter(context: Context?, channel: IChannel?) : RecyclerView.Adapter<ChannelAdapter.ViewHolder>() {
+class ChannelAdapter(context: Context?) : RecyclerView.Adapter<ChannelAdapter.ViewHolder>() {
 
     private val mAvatarCache = AvatarCache()
     private val mContext: Context? = context
-    private var mChannel: IChannel? = channel
+    private var mUsers: List<UserInfo> = emptyList()
+    private var mTalkActivity: TalkActivity = TalkActivity.initial()
+    private var mSelfSession: Int? = null
 
     class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         val stateIcon: ImageView = itemView.findViewById(R.id.user_row_state)
         val userName: TextView = itemView.findViewById(R.id.user_row_name)
+    }
+
+    /**
+     * Replaces the rows. Users whose session list changed rebuild the list;
+     * a talk-state or user-value change repaints only the affected rows.
+     */
+    fun submit(users: List<UserInfo>, talkActivity: TalkActivity, selfSession: Int?) {
+        val previousSessions = mUsers.map { it.session }
+        val previousUsers = mUsers
+        val previousTalk = mTalkActivity
+        val previousSelf = mSelfSession
+        mUsers = users
+        mTalkActivity = talkActivity
+        mSelfSession = selfSession
+        if (users.map { it.session } != previousSessions) {
+            notifyDataSetChanged()
+            return
+        }
+        for (position in users.indices) {
+            if (users[position] != previousUsers[position] ||
+                talkStateOf(users[position].session, talkActivity, selfSession) !=
+                talkStateOf(previousUsers[position].session, previousTalk, previousSelf)
+            ) {
+                notifyItemChanged(position)
+            }
+        }
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -57,127 +87,61 @@ class ChannelAdapter(context: Context?, channel: IChannel?) : RecyclerView.Adapt
     }
 
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
-        val channel = mChannel
-        val users = channel?.users
-        if (channel == null || users == null || position < 0 || position >= users.size) {
+        if (position < 0 || position >= mUsers.size) {
             return
         }
-        val user = users[position]
-        if (user == null) {
-            return
-        }
-
+        val user = mUsers[position]
         holder.userName.text = user.name
-        holder.stateIcon.setImageDrawable(getTalkStateDrawable(user))
+        holder.stateIcon.setImageDrawable(
+            getTalkStateDrawable(
+                user,
+                talkStateOf(user.session, mTalkActivity, mSelfSession),
+            ),
+        )
     }
 
-    override fun getItemCount(): Int {
-        val users = mChannel?.users
-        return if (mChannel != null && users != null) users.size else 0
-    }
+    override fun getItemCount(): Int = mUsers.size
 
     override fun getItemId(position: Int): Long {
-        val users = mChannel?.users
-        if (mChannel != null && users != null && position >= 0 && position < users.size) {
-            val user = users[position]
-            if (user != null) {
-                return user.session.toLong()
-            }
+        if (position < 0 || position >= mUsers.size) {
+            return RecyclerView.NO_ID
         }
-        return RecyclerView.NO_ID
+        return mUsers[position].session.toLong()
     }
 
     // Widened to public: Kotlin has no package visibility (was package-visible
     // in Java for the same-package tests).
-    fun getTalkStateDrawable(user: IUser): Drawable? {
+    fun getTalkStateDrawable(user: UserInfo?, talkState: TalkState): Drawable? {
         val context = mContext
-        if (context == null) {
+        if (context == null || user == null) {
             return null
         }
-        if (user.isSelfDeafened) {
+        if (user.selfDeafened) {
             return AppCompatResources.getDrawable(context, R.drawable.outline_circle_deafened)
-        } else if (user.isDeafened) {
+        } else if (user.deafened) {
             return AppCompatResources.getDrawable(context, R.drawable.outline_circle_server_deafened)
-        } else if (user.isSelfMuted) {
+        } else if (user.selfMuted) {
             return AppCompatResources.getDrawable(context, R.drawable.outline_circle_muted)
-        } else if (user.isMuted) {
+        } else if (user.muted) {
             return AppCompatResources.getDrawable(context, R.drawable.outline_circle_server_muted)
-        } else if (user.isSuppressed) {
+        } else if (user.suppressed) {
             return AppCompatResources.getDrawable(context, R.drawable.outline_circle_suppressed)
-        } else if (user.talkState == TalkState.TALKING ||
-            user.talkState == TalkState.SHOUTING ||
-            user.talkState == TalkState.WHISPERING
+        } else if (talkState == TalkState.TALKING ||
+            talkState == TalkState.SHOUTING ||
+            talkState == TalkState.WHISPERING
         ) {
             return AppCompatResources.getDrawable(context, R.drawable.outline_circle_talking_on)
         } else {
-            val bitmap: Bitmap? = mAvatarCache.get(user)
+            val bitmap: Bitmap? = mAvatarCache.get(
+                user.session,
+                user.textureCacheKey(),
+                user.texture?.toByteArray(),
+            )
             if (bitmap != null) {
                 return CircleDrawable(context.resources, bitmap)
             }
         }
         return AppCompatResources.getDrawable(context, R.drawable.outline_circle_talking_off)
-    }
-
-    fun setChannel(channel: IChannel?) {
-        mChannel = channel
-        notifyDataSetChanged()
-    }
-
-    /**
-     * Immediately updates a user's display name and talk state icon on the visible view holder,
-     * bypassing RecyclerView rebind cycles and eliminating animation delays.
-     */
-    fun updateUserState(user: IUser?, view: RecyclerView?) {
-        val users = mChannel?.users
-        if (mChannel == null || users == null || user == null) {
-            return
-        }
-        val index = users.indexOfFirst { it == user }
-        if (index < 0) {
-            return
-        }
-        if (view != null) {
-            val vh = view.findViewHolderForAdapterPosition(index) as ViewHolder?
-            if (vh != null) {
-                val name = user.name
-                // ViewHolder fields are non-null by construction; the dead
-                // null comparisons below only obscured that. Diff text and
-                // drawable directly.
-                if (name != null && !name.contentEquals(vh.userName.text)) {
-                    vh.userName.text = name
-                }
-                run {
-                    val newState = getTalkStateDrawable(user)
-                    val currentDrawable = vh.stateIcon.drawable
-                    if (newState != null && currentDrawable != null) {
-                        val currentInner = currentDrawable.current
-                        val state: ConstantState? = currentInner?.constantState
-                        if (state == null || state != newState.constantState) {
-                            vh.stateIcon.setImageDrawable(newState)
-                        }
-                    } else if (newState != null) {
-                        vh.stateIcon.setImageDrawable(newState)
-                    }
-                }
-                return
-            }
-        }
-        notifyItemChanged(index)
-    }
-
-    fun notifyUserChanged(user: IUser?) {
-        val users = mChannel?.users
-        if (mChannel == null || users == null || user == null) {
-            return
-        }
-        val index = users.indexOfFirst { it == user }
-        if (index >= 0) {
-            notifyItemChanged(index)
-        }
-    }
-
-    fun getChannel(): IChannel? {
-        return mChannel
     }
 
     fun removeUser(session: Int) {
@@ -188,8 +152,23 @@ class ChannelAdapter(context: Context?, channel: IChannel?) : RecyclerView.Adapt
         mAvatarCache.clear()
     }
 
+    /** The users currently shown, for the adapter tests. */
+    @VisibleForTesting
+    fun users(): List<UserInfo> = mUsers
+
     @VisibleForTesting
     fun getAvatarCache(): AvatarCache {
         return mAvatarCache
     }
+
+    private fun talkStateOf(
+        session: Int,
+        talkActivity: TalkActivity,
+        selfSession: Int?,
+    ): TalkState =
+        if (talkActivity.selfTalking && session == selfSession) {
+            TalkState.TALKING
+        } else {
+            talkActivity.users[session] ?: TalkState.PASSIVE
+        }
 }

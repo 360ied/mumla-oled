@@ -19,9 +19,10 @@ package se.lublin.mumla.feature
 
 import android.app.Notification
 import android.content.BroadcastReceiver
-import se.lublin.humla.model.IChannel
+import kotlinx.coroutines.flow.StateFlow
 import se.lublin.humla.model.IMessage
-import se.lublin.humla.util.IHumlaObserver
+import se.lublin.humla.state.SessionState
+import se.lublin.humla.voice.TalkActivity
 
 /**
  * Android edges behind small interfaces: a feature's test passes a fake, the
@@ -122,10 +123,12 @@ interface OverlayHost {
     fun overlayPosX(defaultX: Int): Int
     fun overlayPosY(defaultY: Int): Int
     fun setOverlayPosition(x: Int, y: Int)
-    fun sessionChannel(): IChannel?
-    fun selfSession(): Int?
-    fun registerObserver(observer: IHumlaObserver)
-    fun unregisterObserver(observer: IHumlaObserver)
+
+    /** The process session-state mirror; the overlay collects it while shown. */
+    fun sessionState(): StateFlow<SessionState>
+
+    /** The live talk levels; the overlay collects them while shown. */
+    fun talkActivity(): StateFlow<TalkActivity>
 }
 
 interface OverlayView {

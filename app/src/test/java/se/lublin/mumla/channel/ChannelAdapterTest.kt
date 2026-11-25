@@ -1,0 +1,174 @@
+/*
+ * Copyright (C) 2026 Brian Zhu
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package se.lublin.mumla.channel
+
+import android.view.View
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.fragment.app.FragmentActivity
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.collections.immutable.persistentSetOf
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
+import org.robolectric.annotation.Config
+import se.lublin.humla.model.TalkState
+import se.lublin.humla.state.UserInfo
+import se.lublin.humla.voice.TalkActivity
+import se.lublin.mumla.R
+
+/** The overlay HUD adapter: value-keyed rows and talk-state icons. */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class ChannelAdapterTest {
+
+    private lateinit var recycler: RecyclerView
+    private lateinit var adapter: ChannelAdapter
+
+    @Before
+    fun setUp() {
+        val activity = Robolectric.buildActivity(FragmentActivity::class.java).setup().get()
+        recycler = RecyclerView(activity).also { activity.setContentView(it) }
+        recycler.layoutManager = LinearLayoutManager(activity)
+        adapter = ChannelAdapter(activity)
+        recycler.adapter = adapter
+    }
+
+    private fun user(
+        session: Int,
+        name: String,
+        muted: Boolean = false,
+        selfMuted: Boolean = false,
+    ): UserInfo = UserInfo(
+        session = session,
+        userId = session,
+        name = name,
+        channelId = 0,
+        certHash = null,
+        comment = null,
+        commentHash = null,
+        texture = null,
+        textureHash = null,
+        muted = muted,
+        deafened = false,
+        suppressed = false,
+        selfMuted = selfMuted,
+        selfDeafened = false,
+        prioritySpeaker = false,
+        recording = false,
+        listeningChannels = persistentSetOf(),
+        localMuted = false,
+        localIgnored = false,
+    )
+
+    private fun submit(users: List<UserInfo>, talk: TalkActivity = TalkActivity.initial(), self: Int? = 1) {
+        adapter.submit(users, talk, self)
+        repeat(2) {
+            recycler.measure(
+                View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(2000, View.MeasureSpec.EXACTLY),
+            )
+            recycler.layout(0, 0, 1080, 2000)
+        }
+    }
+
+    private fun iconRes(position: Int): Int {
+        val holder = recycler.findViewHolderForAdapterPosition(position)
+            ?: throw AssertionError("no holder at $position")
+        val icon = holder.itemView.findViewById<ImageView>(R.id.user_row_state)
+        return Shadows.shadowOf(icon.drawable).createdFromResId
+    }
+
+    @Test
+    fun rowsAreKeyedBySession() {
+        submit(listOf(user(101, "Alice"), user(102, "Bob")))
+        assertEquals(2, adapter.itemCount)
+        assertEquals(101L, adapter.getItemId(0))
+        assertEquals(102L, adapter.getItemId(1))
+        assertEquals(RecyclerView.NO_ID, adapter.getItemId(-1))
+        assertEquals(RecyclerView.NO_ID, adapter.getItemId(2))
+        assertEquals(
+            "Alice",
+            recycler.findViewHolderForAdapterPosition(0)!!
+                .itemView.findViewById<TextView>(R.id.user_row_name).text.toString(),
+        )
+    }
+
+    @Test
+    fun submitWithoutUsersClearsTheRows() {
+        submit(emptyList())
+        assertEquals(0, adapter.itemCount)
+        assertEquals(RecyclerView.NO_ID, adapter.getItemId(0))
+    }
+
+    @Test
+    fun talkAndMuteStatesPickTheIcon() {
+        submit(
+            listOf(user(101, "Alice"), user(102, "Bob", muted = true)),
+            talk = TalkActivity.initial().copy(
+                users = persistentMapOf(101 to TalkState.TALKING),
+                selfTalking = true,
+            ),
+        )
+        assertEquals(R.drawable.outline_circle_talking_on, iconRes(0))
+        assertEquals(R.drawable.outline_circle_server_muted, iconRes(1))
+    }
+
+    @Test
+    fun selfTalkingDrivesTheSelfRow() {
+        submit(listOf(user(1, "Self")), talk = TalkActivity.initial().copy(selfTalking = true), self = 1)
+        assertEquals(R.drawable.outline_circle_talking_on, iconRes(0))
+        submit(listOf(user(1, "Self")), talk = TalkActivity.initial(), self = 1)
+        assertEquals(R.drawable.outline_circle_talking_off, iconRes(0))
+    }
+
+    @Test
+    fun talkChangesRepaintWithoutRebuildingTheRows() {
+        submit(listOf(user(101, "Alice")))
+        val rounds = adapter.users()
+        submit(
+            listOf(user(101, "Alice")),
+            talk = TalkActivity.initial().copy(users = persistentMapOf(101 to TalkState.TALKING)),
+        )
+        assertEquals(rounds.map { it.session }, adapter.users().map { it.session })
+        assertEquals(R.drawable.outline_circle_talking_on, iconRes(0))
+    }
+
+    @Test
+    fun avatarCacheAccessorsWork() {
+        assertNotNull(adapter.getAvatarCache())
+        adapter.clearAvatarCache()
+        assertEquals(0, adapter.getAvatarCache().size())
+        submit(listOf(user(101, "Alice")))
+        adapter.removeUser(101)
+    }
+
+    @Test
+    fun nullContextAdapterIsInert() {
+        val headless = ChannelAdapter(null)
+        assertNull(headless.getTalkStateDrawable(user(1, "Self"), TalkState.PASSIVE))
+    }
+}

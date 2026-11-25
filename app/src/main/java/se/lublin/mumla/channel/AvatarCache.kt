@@ -21,7 +21,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.annotation.VisibleForTesting
 import androidx.collection.LruCache
-import se.lublin.humla.model.IUser
 import se.lublin.mumla.util.MumbleImageGetter
 
 /**
@@ -58,52 +57,6 @@ class AvatarCache {
                 return 1
             }
         }
-    }
-
-    /**
-     * Gets or decodes the avatar bitmap for a user.
-     *
-     * If the avatar is already cached and the user's texture cache key matches, returns the
-     * cached Bitmap without reading or copying the full texture byte array.
-     *
-     * @param user The user whose avatar to retrieve.
-     * @return Decoded avatar Bitmap, or null if user has no avatar or decoding fails.
-     */
-    fun get(user: IUser?): Bitmap? {
-        if (user == null) {
-            return null
-        }
-
-        val session = user.session
-        val key = user.textureCacheKey
-        if (key == 0) {
-            mCache.remove(session)
-            return null
-        }
-
-        val cached = mCache[session]
-        if (cached != null && cached.cacheKey == key) {
-            return cached.bitmap
-        }
-
-        // Cache miss or stale entry: decode new bitmap only if texture data is present
-        if (user.hasTexture()) {
-            val texture = user.texture
-            if (texture != null && texture.isNotEmpty()) {
-                val bitmap = decodeBoundedAvatar(texture)
-                if (bitmap != null) {
-                    mCache.put(session, Entry(key, bitmap))
-                    return bitmap
-                }
-            }
-            // Decoding failed or texture was unparseable: record negative entry to prevent repeated
-            // UI-thread toByteArray() allocations and decoding attempts on every scroll or talk event.
-            mCache.put(session, Entry(key, null))
-            return null
-        }
-
-        mCache.remove(session)
-        return null
     }
 
     /**

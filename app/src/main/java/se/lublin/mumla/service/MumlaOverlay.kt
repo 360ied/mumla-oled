@@ -17,7 +17,11 @@
 
 package se.lublin.mumla.service
 
-import se.lublin.mumla.container
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import se.lublin.mumla.feature.OverlayHost
 import android.content.Context
 import android.graphics.Insets
@@ -34,131 +38,36 @@ import android.view.WindowMetrics
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import kotlin.math.hypot
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.model.IUser
-import se.lublin.humla.util.HumlaException
-import se.lublin.humla.util.HumlaObserver
-import se.lublin.humla.util.IHumlaObserver
+import se.lublin.humla.state.SessionState
+import se.lublin.humla.state.UserInfo
 import se.lublin.mumla.R
 import se.lublin.mumla.Settings
 import se.lublin.mumla.channel.ChannelAdapter
 
 /**
  * A minimal onscreen floating voice HUD displaying active channel members.
+ *
+ * While shown, the overlay collects the session-state mirror and the talk
+ * levels itself and repaints its adapter; no observer registration and no
+ * live handle are involved.
  */
 class MumlaOverlay(private val mContext: Context, private val mHost: OverlayHost) {
 
-    /** Interim bridge: the bound service still owns the live session. */
-    constructor(service: MumlaService) : this(service, object : OverlayHost {
-        private val settings get() = service.container.settings
-        override fun overlayPinned() = settings.isOverlayPinned
-        override fun overlayLayout(): se.lublin.mumla.feature.OverlayLayout {
-            val layout = settings.overlayLayout()
-            return se.lublin.mumla.feature.OverlayLayout(
-                layout.pinned, layout.gravity, layout.placement,
-            )
-        }
-        override fun overlayPosX(defaultX: Int) = settings.getOverlayPosX(defaultX)
-        override fun overlayPosY(defaultY: Int) = settings.getOverlayPosY(defaultY)
-        override fun setOverlayPosition(x: Int, y: Int) =
-            settings.setOverlayPosition(x, y)
-        override fun sessionChannel(): IChannel? = try {
-            service.getSessionChannel()
-        } catch (e: IllegalStateException) {
-            null
-        }
-        override fun selfSession(): Int? = try {
-            service.getSessionId()
-        } catch (e: IllegalStateException) {
-            null
-        }
-        override fun registerObserver(observer: IHumlaObserver) = service.registerObserver(observer)
-        override fun unregisterObserver(observer: IHumlaObserver) = service.unregisterObserver(observer)
-    })
-    private val mObserver: HumlaObserver = object : HumlaObserver() {
-        override fun onUserTalkStateUpdated(user: IUser?) {
-            val channelAdapter = mChannelAdapter
-            if (channelAdapter != null && user?.channel != null &&
-                user.channel == sessionChannelOrNull()
-            ) {
-                channelAdapter.updateUserState(user, mOverlayList)
-            }
-        }
+    /** The collection scope, alive only while the overlay is shown. */
+    private var mScope: CoroutineScope? = null
 
-        override fun onUserStateUpdated(user: IUser?) {
-            val channelAdapter = mChannelAdapter
-            if (channelAdapter != null && user?.channel != null &&
-                user.channel == sessionChannelOrNull()
-            ) {
-                channelAdapter.updateUserState(user, mOverlayList)
-            }
+    /** Repaints the HUD from the latest mirror value. */
+    private fun render() {
+        val state = mHost.sessionState().value
+        val selfChannel = state.server.self?.channelId
+        val users = if (selfChannel != null) {
+            state.server.tree.users(selfChannel)
+        } else {
+            emptyList<UserInfo>()
         }
-
-        override fun onUserConnected(user: IUser?) {
-            val channelAdapter = mChannelAdapter
-            if (channelAdapter != null && user?.channel != null &&
-                user.channel == sessionChannelOrNull()
-            ) {
-                channelAdapter.notifyDataSetChanged()
-            }
-        }
-
-        override fun onUserRemoved(user: IUser?, reason: String?) {
-            val channelAdapter = mChannelAdapter
-            if (channelAdapter != null) {
-                if (user != null) {
-                    channelAdapter.removeUser(user.session)
-                }
-                channelAdapter.notifyDataSetChanged()
-            }
-        }
-
-        override fun onUserJoinedChannel(user: IUser?, newChannel: IChannel?, oldChannel: IChannel?) {
-            val selfSession = mHost.selfSession() ?: return
-
-            val channelAdapter = mChannelAdapter
-            if (channelAdapter != null && user != null) {
-                if (user.session == selfSession) {
-                    channelAdapter.setChannel(sessionChannelOrNull())
-                } else {
-                    val sessionChannel = sessionChannelOrNull()
-                    if (sessionChannel != null && (
-                            (newChannel != null && newChannel.id == sessionChannel.id) ||
-                                (oldChannel != null && oldChannel.id == sessionChannel.id)
-                            )
-                    ) {
-                        channelAdapter.notifyDataSetChanged()
-                    }
-                }
-            }
-        }
-
-        override fun onConnected() {
-            val channelAdapter = mChannelAdapter
-            if (channelAdapter != null) {
-                channelAdapter.setChannel(sessionChannelOrNull())
-            }
-        }
-
-        override fun onDisconnected(e: HumlaException?) {
-            val channelAdapter = mChannelAdapter
-            if (channelAdapter != null) {
-                channelAdapter.setChannel(null)
-                channelAdapter.clearAvatarCache()
-            }
-        }
+        mChannelAdapter?.submit(users, mHost.talkActivity().value, state.server.selfSession)
     }
 
-    // Fail-soft snapshot: getSessionChannel() throws IllegalStateException when
-    // unsynchronized or teardown-racing (cf. MumlaService's own try/catch
-    // around the same call). Observers must never throw out of fan-out.
-    private fun sessionChannelOrNull(): IChannel? {
-        return try {
-            mHost.sessionChannel()
-        } catch (e: IllegalStateException) {
-            null
-        }
-    }
     private val mWindowManager: WindowManager
     private val mOverlayView: View
     private val mOverlayList: RecyclerView
@@ -402,16 +311,20 @@ class MumlaOverlay(private val mContext: Context, private val mHost: OverlayHost
             return
         }
         applyLayoutParameters()
-        val adapter = ChannelAdapter(mContext, sessionChannelOrNull())
+        val adapter = ChannelAdapter(mContext)
         mChannelAdapter = adapter
         mOverlayList.adapter = adapter
-        mHost.registerObserver(mObserver)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        mScope = scope
+        scope.launch { mHost.sessionState().collect { render() } }
+        scope.launch { mHost.talkActivity().collect { render() } }
         try {
             mWindowManager.addView(mOverlayView, mOverlayParams)
             mShown = true
         } catch (e: Exception) {
             Log.e(TAG, "exception showing overlay: $e")
-            mHost.unregisterObserver(mObserver)
+            scope.cancel()
+            mScope = null
             mOverlayList.adapter = null
             mChannelAdapter = null
             mShown = false
@@ -423,7 +336,8 @@ class MumlaOverlay(private val mContext: Context, private val mHost: OverlayHost
             return
         }
         mShown = false
-        mHost.unregisterObserver(mObserver)
+        mScope?.cancel()
+        mScope = null
         mOverlayList.adapter = null
         val channelAdapter = mChannelAdapter
         if (channelAdapter != null) {

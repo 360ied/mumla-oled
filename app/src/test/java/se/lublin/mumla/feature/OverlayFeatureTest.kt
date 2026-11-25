@@ -47,10 +47,8 @@ class OverlayFeatureTest {
                 override fun overlayPosX(defaultX: Int) = error("unused")
                 override fun overlayPosY(defaultY: Int) = error("unused")
                 override fun setOverlayPosition(x: Int, y: Int) = error("unused")
-                override fun sessionChannel() = null
-                override fun selfSession(): Int? = null
-                override fun registerObserver(observer: se.lublin.humla.util.IHumlaObserver) = Unit
-                override fun unregisterObserver(observer: se.lublin.humla.util.IHumlaObserver) = Unit
+                override fun sessionState() = session
+                override fun talkActivity() = talk
             },
         ) { writes.add(it) }
     }
