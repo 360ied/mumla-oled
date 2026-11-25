@@ -25,8 +25,6 @@ import android.graphics.BitmapFactory
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
 import android.text.Html
 import android.util.Base64
 import android.util.Log
@@ -39,22 +37,40 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.URL
 import java.net.UnknownHostException
-import java.util.Collections
 import java.util.HashSet
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadFactory
 import javax.net.ssl.HttpsURLConnection
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import se.lublin.mumla.Settings
 
 /**
  * Implementation of ImageGetter designed for Mumble MOTDs and messages.
- * Reads base64-embedded images synchronously and fetches external image URLs asynchronously
- * on background worker threads without blocking the main UI thread. Caches loaded bitmaps.
- * Created by andrew on 07/02/14.
+ * Reads base64-embedded images synchronously and fetches external image URLs
+ * on a bounded IO dispatcher without blocking the main UI thread. Caches
+ * loaded bitmaps.
+ *
+ * All bookkeeping (the pending and failed sets, the bitmap cache write, the
+ * coalesced listener notification) stays on [mainDispatcher], where
+ * `Html.fromHtml` calls [getDrawable]; only the blocking download runs on
+ * [fetchDispatcher]. Created by andrew on 07/02/14.
  */
-class MumbleImageGetter : Html.ImageGetter {
+class MumbleImageGetter(
+    context: Context,
+    listener: OnImageLoadedListener? = null,
+    /** The blocking download; injected by tests, the SSRF-checked fetch by default. */
+    fetch: ((String) -> Bitmap?)? = null,
+    /** Where bookkeeping runs: the thread `Html.fromHtml` calls this on. */
+    mainDispatcher: CoroutineDispatcher = Dispatchers.Main,
+    /** Where downloads run; the two-download cap lives here. */
+    private val fetchDispatcher: CoroutineDispatcher =
+        Dispatchers.IO.limitedParallelism(MAX_PARALLEL_DOWNLOADS),
+) : Html.ImageGetter {
     /**
      * Callback interface invoked on the main UI thread when a background image finishes loading.
      */
@@ -64,33 +80,24 @@ class MumbleImageGetter : Html.ImageGetter {
 
     private val mContext: Context
     private val mSettings: Settings
-    // android.util.LruCache synchronizes get/put internally, so UI-thread
-    // reads (getDrawable) racing background-thread writes
-    // (fetchURLImageAsync) are memory-safe. Check-then-act sequences
-    // (get-then-put) are not atomic, but the worst case is a redundant
-    // decode, never corruption.
+    private val mFetch: (String) -> Bitmap?
+    // android.util.LruCache synchronizes get/put internally; every access is
+    // on the main dispatcher now, so the get-then-put sequences are atomic
+    // with respect to each other.
     private val mBitmapCache: LruCache<String, Bitmap>
-    private val mPendingDownloads: MutableSet<String>
-    private val mFailedDownloads: MutableSet<String>
-    private val mMainHandler: Handler
-    private val mExecutor: ExecutorService
-    private var mListener: OnImageLoadedListener?
+    // Main-confined: written only from the main dispatcher (getDrawable and
+    // the download coroutines' continuation).
+    private val mPendingDownloads: MutableSet<String> = HashSet()
+    private val mFailedDownloads: MutableSet<String> = HashSet()
+    private val mScope = CoroutineScope(SupervisorJob() + mainDispatcher)
+    private var mNotifyPending = false
+    private var mShutdown = false
+    private var mListener: OnImageLoadedListener? = listener
 
-    private val mNotifyRunnable: Runnable = object : Runnable {
-        override fun run() {
-            val listener = mListener
-            if (listener != null) {
-                listener.onImageLoaded()
-            }
-        }
-    }
-
-    constructor(context: Context) : this(context, null)
-
-    constructor(context: Context, listener: OnImageLoadedListener?) {
+    init {
         mContext = context.applicationContext
         mSettings = mContext.container.settings
-        mListener = listener
+        mFetch = fetch ?: { source -> fetchUrlImage(source) }
 
         // Allocate up to 1/8th of available runtime memory for the LRU bitmap cache (in KB)
         val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024).toInt()
@@ -104,19 +111,6 @@ class MumbleImageGetter : Html.ImageGetter {
                 return maxOf(1, b.byteCount / 1024)
             }
         }
-
-        mPendingDownloads = Collections.synchronizedSet(HashSet())
-        mFailedDownloads = Collections.synchronizedSet(HashSet())
-        mMainHandler = Handler(Looper.getMainLooper())
-        mExecutor = Executors.newFixedThreadPool(2, object : ThreadFactory {
-            private var mCount = 1
-
-            override fun newThread(r: Runnable): Thread {
-                val t = Thread(r, "MumbleImageLoader-" + mCount++)
-                t.isDaemon = true
-                return t
-            }
-        })
     }
 
     fun setOnImageLoadedListener(listener: OnImageLoadedListener?) {
@@ -124,17 +118,18 @@ class MumbleImageGetter : Html.ImageGetter {
     }
 
     /**
-     * Shuts down the background executor and clears callbacks to prevent memory/thread leaks.
-     * Also clears the failed-download set: it is keyed by URL within this
-     * adapter's lifetime, and a server-controlled stream of unique URLs
-     * would otherwise grow it without bound.
+     * Cancels the download scope and clears callbacks to prevent leaks. Also
+     * clears the failed-download set: it is keyed by URL within this
+     * getter's lifetime, and a server-controlled stream of unique URLs would
+     * otherwise grow it without bound. A getDrawable after this starts
+     * nothing.
      */
     fun shutdown() {
+        mShutdown = true
         mListener = null
-        mMainHandler.removeCallbacksAndMessages(null)
+        mScope.cancel()
         mPendingDownloads.clear()
         mFailedDownloads.clear()
-        mExecutor.shutdownNow()
     }
 
     override fun getDrawable(source: String?): Drawable? {
@@ -240,44 +235,53 @@ class MumbleImageGetter : Html.ImageGetter {
     }
 
     private fun fetchURLImageAsync(source: String) {
+        // A getDrawable after shutdown() (fragment teardown vs a lingering
+        // TextView drawable request) starts nothing: the scope is cancelled
+        // and this flag keeps the pending set from growing again.
+        if (mShutdown) {
+            return
+        }
         if (mFailedDownloads.contains(source)) {
             return
         }
         if (!mPendingDownloads.add(source)) {
             return // Already in flight
         }
-
-        // shutdown() (fragment teardown) vs a lingering TextView drawable
-        // request race: execute() after shutdownNow() throws
-        // RejectedExecutionException on the UI thread. Guard first, catch
-        // anyway (shutdown can land between the check and the submit).
-        if (mExecutor.isShutdown) {
-            mPendingDownloads.remove(source)
-            return
-        }
-        try {
-            mExecutor.execute {
-                try {
-                    val bitmap = fetchURLImage(source)
-                    if (bitmap != null) {
-                        mBitmapCache.put(source, bitmap)
-                        notifyImageLoaded()
-                    } else {
-                        mFailedDownloads.add(source)
-                    }
-                } finally {
-                    mPendingDownloads.remove(source)
+        mScope.launch {
+            try {
+                val bitmap = withContext(fetchDispatcher) { mFetch(source) }
+                // Back on the main dispatcher: cache, sets, notification.
+                if (bitmap != null) {
+                    mBitmapCache.put(source, bitmap)
+                    notifyImageLoaded()
+                } else {
+                    mFailedDownloads.add(source)
                 }
+            } finally {
+                mPendingDownloads.remove(source)
             }
-        } catch (e: java.util.concurrent.RejectedExecutionException) {
-            mPendingDownloads.remove(source)
-            Log.w(TAG, "executor shut down, dropping image fetch", e)
         }
     }
 
+    /**
+     * Coalesces notifications with a pending flag: every download that
+     * finishes in one main-looper turn produces one callback, as the
+     * removed removeCallbacks/post pair did. The launch runs on the main
+     * dispatcher (never Main.immediate), so it is queued behind the
+     * completions still running in this turn.
+     */
     private fun notifyImageLoaded() {
-        mMainHandler.removeCallbacks(mNotifyRunnable)
-        mMainHandler.post(mNotifyRunnable)
+        if (mNotifyPending) {
+            return
+        }
+        mNotifyPending = true
+        mScope.launch {
+            mNotifyPending = false
+            val listener = mListener
+            if (listener != null) {
+                listener.onImageLoaded()
+            }
+        }
     }
 
     private fun getBase64Image(base64: String): Bitmap? {
@@ -285,7 +289,7 @@ class MumbleImageGetter : Html.ImageGetter {
         return decodeBoundedImage(src, CHAT_MAX_DIMENSION, CHAT_MAX_PIXELS.toLong())
     }
 
-    private fun fetchURLImage(source: String): Bitmap? {
+    private fun fetchUrlImage(source: String): Bitmap? {
         try {
             var url = URL(source)
             var redirectsFollowed = 0
@@ -372,6 +376,9 @@ class MumbleImageGetter : Html.ImageGetter {
 
     companion object {
         private const val TAG = "MumbleImageGetter"
+
+        /** Concurrent downloads; carried over from the old two-thread pool. */
+        private const val MAX_PARALLEL_DOWNLOADS = 2
 
         /** The maximum image size in bytes to load. */
         private const val MAX_LENGTH = 10 * 1024 * 1024
@@ -569,7 +576,7 @@ class MumbleImageGetter : Html.ImageGetter {
          * inJustDecodeBounds, rejects bombs past the absolute ceiling, then
          * downsamples to the chat caps (4096 px / ~16 MP) before the full
          * decode. Synchronous by design: getDrawable runs base64 decode on the
-         * UI thread and fetchURLImage already runs on mExecutor, so no
+         * UI thread and the URL fetch already runs on the fetch dispatcher, so no
          * signature change or pop-in is needed. Returns null on rejection.
          */
         @JvmStatic
