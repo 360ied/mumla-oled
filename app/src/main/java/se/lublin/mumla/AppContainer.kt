@@ -130,7 +130,7 @@ open class AppContainer(
 
     open val localFactsStore: LocalFactsStore = AppLocalFactsStore(database, settings)
 
-    /** Interim deny formatter, now over the app's moved resources. */
+    /** Chat-line and deny-reason strings, built over the app's resources. */
     open val chatFormatter = ChatEventFormatter(context)
     open val denyFormatter: (SessionEvent.PermissionDenied) -> String =
         { chatFormatter.denyReason(it) }

@@ -138,9 +138,9 @@ private:
 
     std::atomic<bool> m_running{false};
     // Socket fd. Control owns its lifetime (start/stop, one thread);
-    // the interim send seam reads it from the capture thread, so the
-    // word is atomic. The receive thread takes its copy by value at
-    // creation and never reads this.
+    // the send thread reads it for outbound pings, so the word is atomic.
+    // The receive thread takes its copy by value at creation and never
+    // reads this.
     std::atomic<int> m_sock{-1};
     std::thread m_thread;
 

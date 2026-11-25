@@ -631,9 +631,8 @@ class VoiceEngine @JvmOverloads constructor(
         if (!usingUdp.get()) return
         if (!runningFlag.get()) return
         val engine = nativeRef.get() ?: return
-        // Step 5a.4: the control thread only enqueues; the send thread
-        // frames and sends. Ping framing is native, so the interim Kotlin
-        // codec bridge is no longer on this path.
+        // The control thread only enqueues; the send thread frames and
+        // sends the ping, so nothing here blocks or allocates a datagram.
         try {
             engine.enqueuePing(timestampMicros)
         } catch (e: Exception) {

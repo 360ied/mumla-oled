@@ -181,7 +181,7 @@ class ChatEventFormatter(private val context: Context) {
         )
     }
 
-    /** Interim deny formatter for the client's observer bridge. */
+    /** Formats the permission-denied dialog that MainViewModel shows. */
     fun denyReason(event: SessionEvent.PermissionDenied): String {
         return when (event.type) {
             Mumble.PermissionDenied.DenyType.ChannelName.number ->

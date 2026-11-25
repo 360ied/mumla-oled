@@ -308,8 +308,8 @@ void VoiceSend::loop() {
             }
             if (m_receive != nullptr) {
                 // Reuse the shared socket/crypt path: encrypt + sendto on
-                // the receive-owned socket, same as the interim seam.
-                // sendDatagram checks running/socket internally.
+                // the receive-owned socket, so pings never open a second
+                // one. sendDatagram checks running/socket internally.
                 if (!m_receive->sendDatagram(framed, framedLen)) {
                     m_droppedOutbound.fetch_add(1, std::memory_order_relaxed);
                 }
