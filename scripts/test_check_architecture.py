@@ -719,6 +719,49 @@ class TestFeatureIsolation(unittest.TestCase):
             self.assertEqual(len(errors), 1)
 
 
+class TestServiceBinding(unittest.TestCase):
+    def write(self, root: Path, name: str, text: str):
+        path = root / "app/src/main/java/se/lublin/mumla" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def test_detects_bind_and_service_connection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "Binder.kt",
+                "val bound = bindService(intent, connection, 0)\n"
+                "val connection = object : ServiceConnection {}\n",
+            )
+            hits = ca.scan_service_binding(root)
+            self.assertEqual(2, len(hits))
+            self.assertTrue(hits[0][0].endswith("Binder.kt"))
+
+    def test_clean_tree_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "Screen.kt",
+                "val state = container.runtime.client.state\n"
+                "val note = \"bindService is not used here\"\n",
+            )
+            self.assertEqual([], ca.scan_service_binding(root))
+
+    def test_missing_root_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual([], ca.scan_service_binding(Path(tmp)))
+
+    def test_run_all_reports_a_bind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "libraries/humla/src/main/java").mkdir(parents=True)
+            self.write(root, "Binder.kt", "bindService(intent, conn, 0)\n")
+            allowlist = root / "allowlist.txt"
+            allowlist.write_text("", encoding="utf-8")
+            errors, _ = ca.run_all(root, allowlist)
+            self.assertTrue(any("service-binding" in e for e in errors))
+
+
 class TestRunAll(unittest.TestCase):
     def test_missing_source_root_is_error(self):
         with tempfile.TemporaryDirectory() as tmp:
