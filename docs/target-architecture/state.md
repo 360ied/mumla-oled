@@ -384,8 +384,12 @@ records both directions from one stream.
 
 Screens and features render from `UserInfo` and `ChannelInfo` values, never
 from live objects. A screen keeps channel and user IDs across time and looks
-the value up in the latest state each render; the helpers below are the only
-derived reads:
+the value up in the latest state each time it uses it: each render, and again
+when a menu item, dialog button, or other action fires. A value read when a
+menu or dialog opens is only a fallback for an entry that has since left
+state. A type that stands in for a user or channel by ID is equal by that ID
+([why](history/lost-handle-semantics/README.md)). The helpers below are the
+only derived reads:
 
 | Read | Helper |
 |---|---|
