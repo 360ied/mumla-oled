@@ -204,7 +204,7 @@ public class MumlaConnectionNotificationMediaKeyTest {
 
     @Test
     public void customMuteActionUsesSilentToggle() {
-        mCallback.onCustomAction(MumlaService.ACTION_MUTE, null);
+        mCallback.onCustomAction(NotificationActionReceiver.ACTION_MUTE, null);
         assertEquals(1, mMuteToggles);
         assertEquals(0, mMediaKeyToggles);
     }

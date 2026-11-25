@@ -60,16 +60,16 @@ public class MumlaConnectionNotificationTest extends TestCase {
     public void testOverlayActionConstants() {
         assertEquals("Action constant must match expected intent filter action",
                 "se.lublin.mumla.action.TOGGLE_OVERLAY",
-                MumlaService.ACTION_TOGGLE_OVERLAY);
+                NotificationActionReceiver.ACTION_TOGGLE_OVERLAY);
     }
 
     public void testActionConstantsUniqueness() {
         String[] actions = {
-                MumlaService.ACTION_DISCONNECT,
-                MumlaService.ACTION_MUTE,
-                MumlaService.ACTION_DEAFEN,
-                MumlaService.ACTION_TOGGLE_OVERLAY,
-                MumlaService.ACTION_CANCEL_RECONNECT
+                NotificationActionReceiver.ACTION_DISCONNECT,
+                NotificationActionReceiver.ACTION_MUTE,
+                NotificationActionReceiver.ACTION_DEAFEN,
+                NotificationActionReceiver.ACTION_TOGGLE_OVERLAY,
+                NotificationActionReceiver.ACTION_CANCEL_RECONNECT
         };
         for (int i = 0; i < actions.length; i++) {
             assertNotNull(actions[i]);

@@ -54,15 +54,6 @@ open class MumlaService : HumlaService(), IMumlaService {
         super.onDestroy()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action
-        if (action != null && action in NOTIFICATION_ACTIONS) {
-            container.onNotificationAction(action)
-            return START_NOT_STICKY
-        }
-        return super.onStartCommand(intent, flags, startId)
-    }
-
     override fun runtime(): HumlaRuntime = container.runtime
 
     override fun foregroundNotification(): StateFlow<Notification> =
@@ -134,16 +125,5 @@ open class MumlaService : HumlaService(), IMumlaService {
         const val EXTRA_SERVER_ID = "server_id"
         /** CONNECT intent extra: full parcel, only for unsaved (ad-hoc) servers. */
         const val EXTRA_SERVER = "server"
-
-        const val ACTION_DISCONNECT = "se.lublin.mumla.action.DISCONNECT"
-        const val ACTION_MUTE = "se.lublin.mumla.action.MUTE"
-        const val ACTION_DEAFEN = "se.lublin.mumla.action.DEAFEN"
-        const val ACTION_TOGGLE_OVERLAY = "se.lublin.mumla.action.TOGGLE_OVERLAY"
-        const val ACTION_CANCEL_RECONNECT = "se.lublin.mumla.action.CANCEL_RECONNECT"
-
-        private val NOTIFICATION_ACTIONS = setOf(
-            ACTION_DISCONNECT, ACTION_MUTE, ACTION_DEAFEN,
-            ACTION_TOGGLE_OVERLAY, ACTION_CANCEL_RECONNECT,
-        )
     }
 }

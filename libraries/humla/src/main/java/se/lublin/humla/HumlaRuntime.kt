@@ -64,6 +64,8 @@ import se.lublin.humla.voice.TalkActivityPublisher
 import se.lublin.humla.voice.VoiceEngine
 import se.lublin.humla.voice.VoiceSettings
 import java.time.Clock
+import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
+import org.minidns.hla.ResolverApi
 
 /**
  * The library's public assembly point. The container builds one runtime for
@@ -136,6 +138,24 @@ class HumlaRuntime private constructor(
     companion object {
         private const val TAG = "HumlaRuntime"
 
+        /**
+         * Today's MiniDNS setup (link properties and the 800 ms resolver
+         * timeout), moved from HumlaService.init: the runtime is created once
+         * at process start, before any lookup.
+         */
+        private fun initMiniDns(appContext: Context) {
+            try {
+                AndroidUsingLinkProperties.setup(appContext)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not configure MiniDNS link properties: $e")
+            }
+            try {
+                ResolverApi.INSTANCE.client.dataSource.setTimeout(800)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not configure MiniDNS resolver timeout: $e")
+            }
+        }
+
         fun create(
             context: Context,
             scope: CoroutineScope,
@@ -143,6 +163,7 @@ class HumlaRuntime private constructor(
             edges: Edges = Edges.production(),
         ): HumlaRuntime {
             val appContext = context.applicationContext
+            initMiniDns(appContext)
             val callbacks = HumlaCallbacks()
             val talkPublisher = TalkActivityPublisher()
             val mirror = MutableStateFlow(emptySessionState())

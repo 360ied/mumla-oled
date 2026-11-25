@@ -36,7 +36,7 @@ import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SessionEventRecord
 import se.lublin.humla.state.emptySessionState
 import se.lublin.humla.voice.TalkActivity
-import se.lublin.mumla.service.MumlaService
+import se.lublin.mumla.service.NotificationActionReceiver
 
 /** Notification variants, permission re-show, actions and backpressure. */
 @RunWith(RobolectricTestRunner::class)
@@ -117,8 +117,8 @@ class ConnectionNotificationFeatureTest {
 
     @Test fun explicitActionsReachTheContainer() {
         val f = Fixture()
-        f.feature.handleAction(MumlaService.ACTION_MUTE)
-        f.feature.handleAction(MumlaService.ACTION_DISCONNECT)
+        f.feature.handleAction(NotificationActionReceiver.ACTION_MUTE)
+        f.feature.handleAction(NotificationActionReceiver.ACTION_DISCONNECT)
         assertEquals(listOf("mute", "disconnect"), f.actions.calls)
     }
 

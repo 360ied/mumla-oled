@@ -45,8 +45,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
-import org.minidns.dnsserverlookup.android21.AndroidUsingLinkProperties
-import org.minidns.hla.ResolverApi
 import se.lublin.humla.audio.AndroidAudioPlatform
 import se.lublin.humla.audio.BluetoothScoManager
 import se.lublin.humla.audio.ScoLink
@@ -166,19 +164,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
 
         private const val WAKELOCK_GRACE_MS = 15000L
         private const val NOTIFICATION_ID = 1
-
-        @JvmStatic
-        fun init(context: Context?) {
-            try {
-                val appContext = context?.applicationContext
-                if (appContext != null) {
-                    AndroidUsingLinkProperties.setup(appContext)
-                }
-                ResolverApi.INSTANCE.client.dataSource.setTimeout(800)
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not configure MiniDNS: $e")
-            }
-        }
 
         @JvmStatic
         fun getReconnectDelayForAttempts(attempts: Int): Int =
@@ -465,7 +450,6 @@ open class HumlaService : LifecycleService(), IHumlaService, IHumlaSession, Huml
             }
         }
 
-        init(this)
     }
 
     private fun ClientError.toHumlaException(): HumlaException {

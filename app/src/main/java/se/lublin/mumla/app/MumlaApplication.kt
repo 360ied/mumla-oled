@@ -23,7 +23,6 @@ import android.content.res.Configuration
 import androidx.appcompat.app.AppCompatDelegate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import se.lublin.humla.HumlaService
 import se.lublin.mumla.AppContainer
 import se.lublin.mumla.R
 import se.lublin.mumla.Settings
@@ -61,7 +60,6 @@ open class MumlaApplication : Application() {
                 }
             }
         }
-        HumlaService.init(this)
     }
 
     /** Test seam: a test application can build the real container with fake edges. */
