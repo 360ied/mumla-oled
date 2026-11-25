@@ -297,6 +297,42 @@ class ChannelListViewModelTest {
     }
 
     @Test
+    fun rapidPinTogglesPersistInTapOrder() = runTest {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val stored = mutableListOf(5)
+        var saves = 0
+        val viewModel = ChannelListViewModel(
+            clientState = MutableStateFlow(
+                ClientState.Connected(
+                    testTarget().copy(server = testTarget().server.copy(serverId = 42L)),
+                    mock(Session::class.java),
+                ),
+            ),
+            sessionState = MutableStateFlow(syncedState()),
+            talkActivity = MutableStateFlow(TalkActivity.initial()),
+            settings = MutableStateFlow(testSnapshot()),
+            loadPinnedChannels = { stored.toList() },
+            savePinnedChannel = { _, _, pinned ->
+                // The first save is slow; the second must not overtake it.
+                if (++saves == 1) gate.await()
+                if (pinned) stored.add(9) else stored.remove(9)
+            },
+            actions = RecordingActions(),
+        )
+        backgroundScope.launch { viewModel.state.collect {} }
+        testScheduler.runCurrent()
+
+        viewModel.setChannelPinned(9, true)
+        viewModel.setChannelPinned(9, false)
+        testScheduler.runCurrent()
+        gate.complete(Unit)
+        testScheduler.runCurrent()
+
+        assertEquals(listOf(5), stored)
+        assertEquals(listOf(5), viewModel.state.value.pinnedChannelIds)
+    }
+
+    @Test
     fun pinnedLoadingIsIgnoredWithoutAConnectedTarget() = runTest {
         val fixture = Fixture()
         fixture.clientState.value = ClientState.Idle

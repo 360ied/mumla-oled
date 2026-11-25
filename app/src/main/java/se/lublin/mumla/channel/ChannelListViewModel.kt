@@ -19,6 +19,7 @@ package se.lublin.mumla.channel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -98,6 +99,9 @@ class ChannelListViewModel(
 
     /** Only the newest pinned read may publish; a pin toggle outruns a load. */
     private var pinnedLoadGeneration = 0
+
+    /** Pin saves run in tap order, so rapid toggles persist the last one. */
+    private var pinnedSaveTail: Job? = null
 
     val state: StateFlow<ChannelListUiState> = combine(
         clientState,
@@ -186,7 +190,9 @@ class ChannelListViewModel(
 
     fun setChannelPinned(channelId: Int, pinned: Boolean) {
         val serverId = currentServerId() ?: return
-        viewModelScope.launch {
+        val previous = pinnedSaveTail
+        pinnedSaveTail = viewModelScope.launch {
+            previous?.join()
             savePinnedChannel(serverId, channelId, pinned)
             // Re-read: the menu's checkmark and pinned-only roots come from here.
             reloadPinnedChannels(serverId)
