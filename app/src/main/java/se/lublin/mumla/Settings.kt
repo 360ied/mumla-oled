@@ -39,34 +39,10 @@ import se.lublin.humla.Constants
  * @author morlunk
  */
 class Settings(val repository: SettingsRepository) {
-    // Concurrent map with atomic check-then-act (putIfAbsent): dropping the
-    // hand-rolled HashMap + synchronized without losing the
-    // duplicate-registration guard below.
-    private val listenerAdapters =
-        java.util.concurrent.ConcurrentHashMap<OnSettingChangedListener, java.util.function.Consumer<String>>()
-
     // One snapshot read. Compound derived accessors below may call this more
     // than once; paired reads that must agree should snapshot once into a
     // local and derive both values from it (see isOverlayPinned/overlayGravity).
     private fun snapshot(): PrefSnapshot = repository.state.value.snapshot
-
-    fun registerListener(listener: OnSettingChangedListener) {
-        val adapter: java.util.function.Consumer<String> =
-            java.util.function.Consumer { key -> listener.onSettingChanged(key) }
-        // Re-registering the same listener refreshes nothing: without this
-        // guard the old adapter would stay live in the repository and fire twice.
-        if (listenerAdapters.putIfAbsent(listener, adapter) != null) {
-            return
-        }
-        repository.registerListener(adapter)
-    }
-
-    fun unregisterListener(listener: OnSettingChangedListener) {
-        val adapter = listenerAdapters.remove(listener)
-        if (adapter != null) {
-            repository.unregisterListener(adapter)
-        }
-    }
 
     var inputMethod: String
         get() {
@@ -437,9 +413,6 @@ class Settings(val repository: SettingsRepository) {
     }
 
     /** Listener for settings changes; delivers the legacy PREF_* key strings. */
-    fun interface OnSettingChangedListener {
-        fun onSettingChanged(key: String?)
-    }
 
     // Pure placement helpers shared by the single-snapshot getters above:
     // no DataStore read, so paired callers stay consistent by construction.

@@ -74,7 +74,7 @@ class ConnectTargetsTest {
     }
 
     @Test
-    fun savedServerIsReReadFromTheDatabase() {
+    fun savedServerIsReReadFromTheDatabase(): Unit = runBlocking {
         val stored = Server(-1L, "Saved", "saved.example.org", 64738, "alice", null)
         database.addServer(stored)
         // The handed-in row is stale; the database is the source of truth.
@@ -90,7 +90,7 @@ class ConnectTargetsTest {
     }
 
     @Test
-    fun unsavedServerIsUsedAsGiven() {
+    fun unsavedServerIsUsedAsGiven(): Unit = runBlocking {
         val server = Server(-1L, "Ad hoc", "adhoc.example.org", 64738, "bob", "pw")
 
         val target = build(server)!!
@@ -101,13 +101,13 @@ class ConnectTargetsTest {
     }
 
     @Test
-    fun aMissingServerOrHostYieldsNoTarget() {
+    fun aMissingServerOrHostYieldsNoTarget(): Unit = runBlocking {
         assertNull(build(Server(999L, "Gone", "gone.example.org", 64738, "alice", null)))
         assertNull(build(Server(-1L, "No host", null, 64738, "alice", null)))
     }
 
     @Test
-    fun accessTokensAreFrozenIntoTheTarget() {
+    fun accessTokensAreFrozenIntoTheTarget(): Unit = runBlocking {
         val server = Server(-1L, "Ad hoc", "adhoc.example.org", 64738, "alice", null)
         database.addServer(server)
         database.addAccessToken(server.id, "token-one")
@@ -119,7 +119,7 @@ class ConnectTargetsTest {
     }
 
     @Test
-    fun certificateIsMappedWhenTheSettingUsesOne() {
+    fun certificateIsMappedWhenTheSettingUsesOne(): Unit = runBlocking {
         val server = Server(-1L, "Ad hoc", "adhoc.example.org", 64738, "alice", null)
         database.addServer(server)
         val certificate = database.addCertificate("client", byteArrayOf(1, 2, 3), "secret")
@@ -137,7 +137,7 @@ class ConnectTargetsTest {
     }
 
     @Test
-    fun forceTcpAndClientNameComeFromTheSettings() {
+    fun forceTcpAndClientNameComeFromTheSettings(): Unit = runBlocking {
         val server = Server(-1L, "Ad hoc", "adhoc.example.org", 64738, "alice", null)
         database.addServer(server)
         settings.repository.updateTyped { it.forceTcp = true }
@@ -152,7 +152,7 @@ class ConnectTargetsTest {
     }
 
     @Test
-    fun trustStoreIsUsedOnlyWhenInitialized() {
+    fun trustStoreIsUsedOnlyWhenInitialized(): Unit = runBlocking {
         val server = Server(-1L, "Ad hoc", "adhoc.example.org", 64738, "alice", null)
         database.addServer(server)
         assertNull("no store file yet", build(server)?.trustStore)

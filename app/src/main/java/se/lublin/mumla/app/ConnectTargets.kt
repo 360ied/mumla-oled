@@ -52,18 +52,16 @@ object ConnectTargets {
         server: Server,
     ): ConnectTarget? {
         val saved = if (server.isSaved()) {
-            database.query { db -> db.getServers().firstOrNull { it.id == server.id } }
+            database.getServers().firstOrNull { it.id == server.id }
         } else {
             server
         }
         val host = saved?.host ?: return null
-        val accessTokens = database.query { db -> db.getAccessTokens(saved.id) }
+        val accessTokens = database.getAccessTokens(saved.id)
         val certificate = if (settings.isUsingCertificate) {
             val certificateId = settings.defaultCertificate
-            database.query { db ->
-                db.getCertificateData(certificateId)?.let { data ->
-                    data to db.getCertificatePassword(certificateId)
-                }
+            database.getCertificateData(certificateId)?.let { data ->
+                data to database.getCertificatePassword(certificateId)
             }
         } else {
             null

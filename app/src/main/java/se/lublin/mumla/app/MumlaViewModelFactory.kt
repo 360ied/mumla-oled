@@ -116,27 +116,21 @@ class MumlaViewModelFactory private constructor(
                 sessionState = container.runtime.sessionState,
                 talkActivity = container.runtime.talkActivity,
                 settings = container.settingsRepository.snapshot,
-                loadPinnedChannels = { serverId ->
-                    container.database.query { it.getPinnedChannels(serverId) }
-                },
+                loadPinnedChannels = { serverId -> container.database.getPinnedChannels(serverId) },
                 savePinnedChannel = { serverId, channelId, pinned ->
-                    container.database.query {
-                        if (pinned) {
-                            it.addPinnedChannel(serverId, channelId)
-                        } else {
-                            it.removePinnedChannel(serverId, channelId)
-                        }
+                    if (pinned) {
+                        container.database.addPinnedChannel(serverId, channelId)
+                    } else {
+                        container.database.removePinnedChannel(serverId, channelId)
                     }
                 },
                 actions = sessionActions(),
             )
             modelClass.isAssignableFrom(AccessTokenViewModel::class.java) -> AccessTokenViewModel(
                 serverId = args.getLong(ARG_SERVER),
-                loadTokens = { id -> container.database.query { it.getAccessTokens(id) } },
-                addToken = { id, token -> container.database.query { it.addAccessToken(id, token) } },
-                removeToken = { id, token ->
-                    container.database.query { it.removeAccessToken(id, token) }
-                },
+                loadTokens = { id -> container.database.getAccessTokens(id) },
+                addToken = { id, token -> container.database.addAccessToken(id, token) },
+                removeToken = { id, token -> container.database.removeAccessToken(id, token) },
                 sendTokens = { tokens -> client.currentSession.value?.sendAccessTokens(tokens) },
             )
             modelClass.isAssignableFrom(CommentViewModel::class.java) -> {
@@ -211,7 +205,7 @@ class MumlaViewModelFactory private constructor(
 
             override suspend fun saveServerPassword(server: Server) {
                 if (server.isSaved()) {
-                    container.database.query { it.updateServer(server) }
+                    container.database.updateServer(server)
                 }
             }
 

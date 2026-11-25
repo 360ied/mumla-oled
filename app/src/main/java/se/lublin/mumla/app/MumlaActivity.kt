@@ -60,8 +60,10 @@ import java.net.MalformedURLException
 import java.security.GeneralSecurityException
 import java.security.MessageDigest
 import java.security.cert.X509Certificate
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -75,12 +77,11 @@ import se.lublin.mumla.Settings
 import se.lublin.mumla.channel.AccessTokenFragment
 import se.lublin.mumla.channel.ChannelFragment
 import se.lublin.mumla.channel.ServerInfoFragment
-import se.lublin.mumla.db.DatabaseCertificate
 import se.lublin.mumla.db.MumlaDatabase
 import se.lublin.mumla.feature.ChatLogFeature
 import se.lublin.mumla.feature.displayMessage
 import se.lublin.mumla.preference.CrashReportsFragment
-import se.lublin.mumla.preference.MumlaCertificateGenerateTask
+import se.lublin.mumla.preference.generateClientCertificate
 import se.lublin.mumla.preference.SettingsActivity
 import se.lublin.mumla.servers.FavouriteServerListFragment
 import se.lublin.mumla.servers.ServerEditFragment
@@ -116,8 +117,9 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
     // OnDismissListener with first-run side effects that must never fire for
     // the TLS dialogs hosted by mCertDialog above (round-2 D2).
     private var mFirstRunDialog: AlertDialog? = null
-    // True while the first-run certificate generation task owns StartupAction.
+    // True while the first-run certificate generation coroutine owns StartupAction.
     private var mFirstRunGenerateInFlight = false
+    private var mGenerateProgressDialog: AlertDialog? = null
 
     /** The prompt the current certificate dialog renders; null when dismissed. */
     private var mShownTrust: TrustPrompt? = null
@@ -368,6 +370,11 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         }
         dismissCertDialog()
         dismissFirstRunDialog()
+        val progress = mGenerateProgressDialog
+        mGenerateProgressDialog = null
+        if (progress != null) {
+            progress.dismiss()
+        }
     }
 
     /**
@@ -531,11 +538,32 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             .setMessage(msg)
             .setPositiveButton(R.string.generate) { _, _ ->
                 mFirstRunGenerateInFlight = true
-                val generateTask = object : MumlaCertificateGenerateTask(this@MumlaActivity) {
-                    override fun onPostExecute(result: DatabaseCertificate?) {
-                        super.onPostExecute(result)
+                settings.isFirstRun = false
+                val progress = MaterialAlertDialogBuilder(this@MumlaActivity)
+                    .setTitle(R.string.generateCertProgress)
+                    .setView(R.layout.dialog_progress)
+                    .setCancelable(false)
+                    .create()
+                progress.show()
+                mGenerateProgressDialog = progress
+                val appContext = applicationContext
+                container.appScope.launch {
+                    val result = generateClientCertificate(appContext)
+                    withContext(Dispatchers.Main.immediate) {
+                        val dialog = mGenerateProgressDialog
+                        mGenerateProgressDialog = null
+                        if (!isFinishing && !isDestroyed) {
+                            dialog?.dismiss()
+                        }
                         mFirstRunGenerateInFlight = false
                         if (result != null) settings.defaultCertificateId = result.id
+                        if (result == null && !isFinishing && !isDestroyed) {
+                            Toast.makeText(
+                                this@MumlaActivity,
+                                R.string.generateCertFailure,
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
                         // The news dialog shows from this activity's window token; skip
                         // it if the activity died while generation was in flight —
                         // and hand StartupAction to the recreated instance via
@@ -547,8 +575,6 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                         }
                     }
                 }
-                generateTask.execute()
-                settings.isFirstRun = false
             }
             // The dismiss listener below owns the flag-clear/StartupAction path,
             // so every dismissal (button, back-press, outside-tap, onPause)
@@ -1274,11 +1300,11 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         // NPE-exact: the original dereferenced mDatabase unconditionally.
         val database = mDatabase ?: throw NullPointerException("mDatabase")
         when (action) {
-            ServerEditFragment.Action.ADD_ACTION -> {
+            ServerEditFragment.Action.ADD_ACTION -> lifecycleScope.launch {
                 database.addServer(server)
                 loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES)
             }
-            ServerEditFragment.Action.EDIT_ACTION -> {
+            ServerEditFragment.Action.EDIT_ACTION -> lifecycleScope.launch {
                 database.updateServer(server)
                 loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES)
             }

@@ -19,9 +19,11 @@ package se.lublin.mumla.preference
 
 import se.lublin.mumla.container
 import android.os.Bundle
+import android.widget.Toast
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.launch
 import se.lublin.mumla.R
-import se.lublin.mumla.Settings
 import se.lublin.mumla.app.BaseActivity
 import se.lublin.mumla.db.DatabaseCertificate
 
@@ -29,46 +31,34 @@ import se.lublin.mumla.db.DatabaseCertificate
  * Created by andrew on 12/01/16.
  */
 class CertificateGenerateActivity : BaseActivity() {
-    // Retained so onDestroy can cancel a rotation-in-flight task: without
-    // this the AsyncTask completes on the dead instance and shows its dialog
-    // on a dead window token (BadTokenException).
-    private var generateTask: MumlaCertificateGenerateTask? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val task = object : MumlaCertificateGenerateTask(this@CertificateGenerateActivity) {
-            override fun onPostExecute(result: DatabaseCertificate?) {
-                super.onPostExecute(result)
-                generateTask = null
-                if (result == null) {
-                    finish()
-                    return
-                }
-
-                val settings = this@CertificateGenerateActivity.container.settings
-                settings.defaultCertificateId = result.id
-                // Rotation during generate() leaves this instance dead: never
-                // show on a dead window token (base onPostExecute already
-                // guards its own Toast the same way).
-                if (isFinishing || isDestroyed) {
-                    finish()
-                    return
-                }
-                showCompletionDialog(result)
+        val progress = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.generateCertProgress)
+            .setView(R.layout.dialog_progress)
+            .setCancelable(false)
+            .create()
+        progress.show()
+        // lifecycleScope cancels with the activity, so a rotation mid-generate
+        // never shows a dialog on the dead instance's window token.
+        lifecycleScope.launch {
+            val result = generateClientCertificate(applicationContext)
+            progress.dismiss()
+            if (result == null) {
+                Toast.makeText(
+                    this@CertificateGenerateActivity,
+                    R.string.generateCertFailure,
+                    Toast.LENGTH_SHORT,
+                ).show()
+                finish()
+                return@launch
             }
+            val settings = this@CertificateGenerateActivity.container.settings
+            settings.defaultCertificateId = result.id
+            showCompletionDialog(result)
         }
-        generateTask = task
-        task.execute()
-    }
-
-    override fun onDestroy() {
-        // Cancel first: a completing task would otherwise drive onPostExecute
-        // (and its dialog) on this dying instance.
-        val task = generateTask
-        generateTask = null
-        task?.cancel(true)
-        super.onDestroy()
     }
 
     private fun showCompletionDialog(result: DatabaseCertificate) {
