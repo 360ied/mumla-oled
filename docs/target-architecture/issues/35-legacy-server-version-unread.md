@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Decided 2026-11-25: delete the chain, with `UdpFormat` replacing `VoiceFormat`. Scheduled for [step 8](../steps/8-clean-up.md) (commit 7) |
+| Status | Resolved ([step 8](../steps/8-clean-up.md)): `VoiceFormat` and the legacy-version parameter chain are deleted, `UdpFormat` carries the one decision (`DEFAULT`, `fromServerVersion`) through `Transport.udpFormat`, `VoiceCommand.Start`, `VoiceEngine`, and `nativeSetFormat`, and both native `setFormat`s take the format only. |
 | Category | Benign drift |
 | Severity | Benign (dead parameter chain) |
 | Verified | Yes, by search of `libraries/humla/src/main` for `legacyServerVersion` and `m_legacyVersion` after the codec tail commits |

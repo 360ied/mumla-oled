@@ -18,7 +18,7 @@ under [`steps/`](steps/); progress is tracked in
 | [5b AAudio](steps/5b-aaudio.md) | done |
 | [6 Container, storage, and features](steps/6-container-storage-and-features.md) | done |
 | [7 Screens and service cut-over](steps/7-screens-and-service-cut-over.md) | done |
-| [8 Clean up](steps/8-clean-up.md) | not started |
+| [8 Clean up](steps/8-clean-up.md) | done |
 
 The step files of finished steps are records of the plan as it was
 executed. They are not updated to track later code; the living specs

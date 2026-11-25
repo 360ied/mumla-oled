@@ -42,14 +42,14 @@ cannot become a bottleneck.
 
 ### `ConnectTarget`
 
-Everything a connection needs, frozen when `connect` is called, as today's
-`ConnectionParams` snapshot is:
+Everything a connection needs, frozen when `connect` is called, as the
+pre-migration `ConnectionParams` snapshot was:
 
 ```kotlin
 data class ConnectTarget(
     val server: ServerEndpoint,
     val certificate: ClientCertificate?,
-    val trustStore: TrustStoreRef?,           // today's ConfigDelta.TrustStoreRef (strings only)
+    val trustStore: TrustStoreRef?,           // pinned trust store (strings only)
     val forceTcp: Boolean,
     val clientName: String,
     val accessTokens: PersistentList<String>,
@@ -70,10 +70,10 @@ data class ServerEndpoint(                    // immutable copy of the Room Serv
 )
 ```
 
-The Room `Server` entity has mutable fields (and SRV resolution writes
-`resolvedHost`/`resolvedPort` into it today), so the target copies the
+The Room `Server` entity has mutable fields, so the target copies the
 fields it needs into `ServerEndpoint` when `connect` is called. SRV
-results stay inside the transport.
+results stay inside the transport's `SrvResolver`: nothing writes them
+back into the row.
 
 Local mute/ignore history and the persisted self-mute state are not in the
 target; the session loads them from `LocalFactsStore` when it starts, so a
@@ -159,8 +159,9 @@ against exactly these edges (see [testing](testing.md#virtual-time-tests)).
 
 ### Reconnect policy
 
-Unchanged from today's `HumlaService`, now in a pure `ReconnectPolicy`
-object tested by the existing `ReconnectBackoffTest` truth table:
+Unchanged from the pre-migration `HumlaService`, now in a pure
+`ReconnectPolicy` object tested by the existing `ReconnectBackoffTest`
+truth table:
 
 - **Which errors reconnect:** only `ClientError.Connection` (today's
   `CONNECTION_ERROR`). `Rejected`, `Removed`, and `Trust` go to `Failed`,
@@ -227,8 +228,9 @@ class Session internal constructor(
    dispatcher. If loading fails, the session starts with empty lists and
    the stored self-mute values treated as unset, and the error is logged;
    a database problem never blocks connecting.
-2. The client creates the `Transport`, which resolves the host (SRV first,
-   with today's lookup and fallback to the plain host name), opens the TLS
+2. The client creates the `Transport`, which resolves the host through
+   `SrvResolver` (SRV first, falling back to the typed host and the default
+   port), opens the TLS
    socket, and verifies the certificate. All of this runs on the I/O
    dispatcher inside the attempt's scope, so `disconnect` or a new
    `connect` cancels it; cancellation closes any socket already opened. A
@@ -249,11 +251,9 @@ class Session internal constructor(
    if one is set.
 7. The client publishes `Connected(session)`, sends `SessionStarted` to
    `RouteControl`, and submits `VoiceCommand.Start` with the server's UDP
-   address, the crypt keys, the UDP packet format and the server's legacy
-   version (retained from `Version` but unread now that the 1.2.2 workaround
-   is gone), both from the transport's `voiceFormat`, and the tunnel sink,
-   which is the transport's `sendTunnelled`
-   (see [voice](voice.md#kotlin-facade)).
+   address, the crypt keys, the UDP packet format from the transport's
+   `udpFormat`, and the tunnel sink, which is the transport's
+   `sendTunnelled` (see [voice](voice.md#kotlin-facade)).
    Codec and input settings reach the `VoiceEngine` from the settings flow,
    not through the client.
 

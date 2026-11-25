@@ -21,8 +21,8 @@ The transport lives in `se.lublin.humla.net` and is owned by one
 interface the `VoiceEngine` implements (`setKeys`, `setDecryptIv`,
 `encryptIv`, `submit(SetVoiceRoute)`, `submit(SendPing)`,
 `queueTunnelled`, `removeUser`, and the `UdpPing`, `CryptResyncRequested`, and `UdpUnavailable` events), so
-transport tests use a fake. It reuses today's framing, SRV lookup
-([`HumlaTCP`](../../libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt)),
+transport tests use a fake. It reuses today's framing, the SRV rule
+([`SrvResolver`](../../libraries/humla/src/main/java/se/lublin/humla/net/SrvResolver.kt)),
 frame validation
 ([`FrameValidator`](../../libraries/humla/src/main/java/se/lublin/humla/net/FrameValidator.kt)),
 and TLS
@@ -38,10 +38,8 @@ interface Transport {
     val failure: Deferred<ClientError>        // completes once on a fatal transport error
     fun send(message: MessageLite, type: HumlaTCPMessageType)   // never blocks
     fun sendTunnelled(packet: ByteArray)      // voice over TCP (UDPTunnel); never blocks
-    val voiceFormat: VoiceFormat              // UDP format + legacy version, fixed at the first Version
+    val udpFormat: UdpFormat                  // framing, fixed at the first Version
 }
-
-data class VoiceFormat(val udp: UdpFormat, val legacyServerVersion: Int)
 
 data class CryptKeys(                         // each exactly 16 bytes (AES block size)
     val key: ByteString,
@@ -152,15 +150,14 @@ Chosen once per session by the transport from the server's first
 `Version` message, with today's rule (`Constants.isProtobufUdpSupported`):
 protobuf UDP when the server version is at least 1.5.0, legacy otherwise.
 If no `Version` has arrived by `ServerSync`, the transport fixes the
-default (legacy, version 0) there, since voice starts right after. A later
+default (legacy) there, since voice starts right after. A later
 `Version` does not change it, and neither does the version in a
 protobuf UDP ping, which is only reported (`VoiceEvent.UdpPing`, then
-`ServerState.info`). The transport exposes the choice, with the server's
-legacy version, as `voiceFormat`; the client passes both to the
-`VoiceEngine` in `VoiceCommand.Start`. `ServerState.info.versionV2` is not
-a source for the format, since UDP pings rewrite it. The legacy version
-stays in `VoiceFormat` and reaches `nativeSetFormat`, where both native
-halves discard the argument. The 1.2.2 legacy codec workaround is gone;
+`ServerState.info`). The transport exposes the choice as `udpFormat`; the
+client passes it to the `VoiceEngine` in `VoiceCommand.Start`.
+`ServerState.info.versionV2` is not a source for the format, since UDP
+pings rewrite it. Nothing carries the server's legacy version past the
+choice: the 1.2.2 legacy codec workaround that read it is gone, and
 upstream 1.5 drops non-Opus legacy voice instead of swapping its ordinals
 (see [issue 35](issues/35-legacy-server-version-unread.md)).
 
@@ -177,14 +174,14 @@ the `VoiceEngine` instead of a Kotlin `CryptState`:
 | Not all three, `server_nonce` present but not 16 bytes | Protocol violation: fail the session |
 | Any other combination (including empty, or a key without nonces) | The server asks for our nonce: reply with `CryptSetup(client_nonce = VoiceLink.encryptIv())` |
 
-This is today's `HumlaConnection.messageCryptSetup` decision order,
-unchanged.
+This is the pre-migration `HumlaConnection.messageCryptSetup` decision
+order, unchanged.
 
 The client's `VoiceCommand.Start` includes the keys from `cryptKeys`, so a
 `CryptSetup` that arrives before voice starts is never lost.
 
-**Client-requested resync** is kept exactly as today's `HumlaUDP` does it
-(and as desktop Mumble's `ServerHandler` does): when a packet fails to
+**Client-requested resync** is kept exactly as the pre-native `HumlaUDP`
+did it (and as desktop Mumble's `ServerHandler` does): when a packet fails to
 decrypt, more than 5 s have passed since the last good packet, and more
 than 5 s since the last request, the receive thread emits
 `VoiceEvent.CryptResyncRequested`. The transport answers with an empty

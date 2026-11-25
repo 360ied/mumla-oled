@@ -88,18 +88,13 @@ The investigations:
 
 Paths are relative to
 [`libraries/humla/src/main/jni`](../../libraries/humla/src/main/jni/).
-The existing JNI bridges for the engines
-(`NativeAudioInputEngineJni.cpp`, `NativeAudioOutputEngineJni.cpp`) and
-crypt (`NativeCryptStateJni.cpp`) are deleted when their Kotlin callers are
-(output engine in 5a.3a, crypt in 5a.3b, input engine in 5a.4); `voice_io`
-owns the voice JNI surface once it lands in 5a.3a. Until 5a.4 the one
-exception is 5a.2's interim codec bridge,
-`voice_codec/NativeVoiceCodecJni.cpp`, which exists only because Kotlin
-still frames voice; it holds that directory's single `<jni.h>` allowlist
-entry and leaves with the file.
+`voice_io` owns the only voice JNI surface
+(`NativeVoiceEngineJni.cpp`); the older engine and crypt bridges
+(`NativeAudioInputEngineJni.cpp`, `NativeAudioOutputEngineJni.cpp`,
+`NativeCryptStateJni.cpp`) and the interim codec bridge that 5a.2 added
+were deleted with their Kotlin callers by 5a.4.
 `NativeCrashTestJni.cpp` (the crash reporter's native crash test, not part
-of voice) moves to `jni/diagnostics/` in step 5a, outside the native
-tripwire's scope.
+of voice) lives in `jni/diagnostics/`, outside the native tripwire's scope.
 
 ## Engine refactor
 
@@ -351,17 +346,19 @@ bool parseDatagram(UdpFormat, const uint8_t* data, size_t length,
 until the packet ends; real servers send one frame per datagram, so frames
 beyond the twelfth are dropped and counted, a bound today's code lacks.
 
-Formats, ported byte-for-byte from today's Kotlin:
+Formats, ported byte-for-byte from the Kotlin framing the pre-native path
+used and pinned by its goldens:
 
-- **Legacy voice** (`AudioHandler.onAudioPacketEncoded`,
+- **Legacy voice** (the pre-native `AudioHandler.onAudioPacketEncoded` and
   `AudioOutput` legacy parsing): header byte
   `(UDPVoiceOpus << 5) | (target & 0x1F)`; then, in Mumble's
-  variable-length integer encoding (today's `PacketBuffer.writeLong` /
-  `readLong`), the frame number and a size header (`length & 0x1FFF`, bit
-  13 = end of transmission); then the Opus payload. Inbound packets carry
-  the sender session after the header byte and may chain several
-  size/payload pairs; a trailing 12-byte positional block after at least
-  one frame ends parsing, as today.
+  variable-length integer encoding (`PacketBuffer`'s `writeLong` /
+  `readLong`, which the codec goldens still generate), the frame number
+  and a size header (`length & 0x1FFF`, bit 13 = end of transmission); then
+  the Opus payload. Inbound packets carry the sender session after the
+  header byte and may chain several size/payload pairs; a trailing 12-byte
+  positional block after at least one frame ends parsing, as the
+  pre-native parser did.
 - **Protobuf voice**: a `0x00` type byte, then a `MumbleUDP.Audio` message
   with `target` (only when non-zero), `frame_number`, `opus_data`, and
   `is_terminator` (only when set). Inbound messages use `context`,
@@ -431,8 +428,9 @@ without a full protobuf runtime in the native build.
   against the Java-generated classes.
 
 The legacy format is not protobuf: it is Mumble's own variable-length
-integer encoding, already hand-written in Kotlin (`PacketBuffer`), and is
-ported as is.
+integer encoding, hand-written natively in `VoiceCodec.cpp`. The
+test-only `PacketBuffer` remains the Kotlin reference the goldens are
+generated from.
 
 ## Voice I/O layer
 
@@ -473,11 +471,12 @@ flowchart LR
   Apart from the stream code and the disconnect flag, nothing else changes
   between 5a and 5b. The callbacks run on AAudio's threads, never attach
   to the JVM, and follow the [realtime rules](#realtime-rules).
-- **Half duplex** (today's `AudioOutput.setHalfDuplexMuted`): the capture
-  thread publishes "self is talking" in one atomic flag owned by the I/O
-  layer; while the effective half-duplex flag (raw `VoiceSettings.halfDuplex`
-  gated to push-to-talk at the native push) is set and the flag is set, the
-  render thread writes silence instead of the mix. As today, half duplex
+- **Half duplex** (the pre-native `AudioOutput.setHalfDuplexMuted` rule):
+  the capture thread publishes "self is talking" in one atomic flag owned
+  by the I/O layer; while the effective half-duplex flag (raw
+  `VoiceSettings.halfDuplex` gated to push-to-talk at the native push) is
+  set and the flag is set, the render thread writes silence instead of the
+  mix. As today, half duplex
   only applies in push-to-talk mode. The engines are unaware of it.
 - The capture entry point accepts any block size (AAudio bursts vary by
   device) and feeds the input engine in exact 10 ms frames, carrying the
@@ -493,8 +492,9 @@ rings, allocated at start. Nothing blocks. A completely full ring drops the
 new item and increments a counter reported in `VoiceStatus` (the producer
 cannot safely remove old items from a single-producer ring).
 
-**The outbound queue keeps today's drop-oldest behavior** (today's
-`HumlaUDP` send channel uses `DROP_OLDEST` with a bound of about 200 ms):
+**The outbound queue keeps the pre-native drop-oldest behavior** (the
+pre-native `HumlaUDP` send channel used `DROP_OLDEST` with a bound of about
+200 ms):
 the send thread, when it wakes, skips every queued packet older than
 200 ms of audio before sending, and counts them as dropped. The ring holds
 twice that, so in practice the drop-newest path never runs.
@@ -550,10 +550,10 @@ queued.
   reports it passive about 100 ms after its buffered audio runs out.
 - **UDP race.** A UDP frame from the leaving user that was filtered before
   the removal can still reach the render thread after it, from the inbound
-  ring, and briefly reopen a voice slot. Today's code has the same window:
-  `AudioOutput` checks `getUser` on the UDP coroutine, the session
-  coroutine's `removeUser` runs, then the late `queuePacket` lands. The
-  dead-voice rule releases the slot the same way.
+  ring, and briefly reopen a voice slot. The pre-native path had the same
+  window: `AudioOutput` checked `getUser` on the UDP coroutine, the
+  session coroutine's `removeUser` ran, then the late `queuePacket`
+  landed. The dead-voice rule releases the slot the same way.
 
 ### Render idle and wake
 
@@ -622,13 +622,14 @@ settings flow, reusing today's conversion code from `InputModes` and
 `ActivityInputMode`. The mapper stores the raw half-duplex preference so a
 transmit-mode round trip preserves it (`PUSH_TO_TALK` with half duplex on,
 away to another mode, and back stays on); storing the effective value would
-collapse the middle step to false and lose the preference. Today
-`VoiceControl` gates the raw flag to push-to-talk when building the pipeline;
-from 5a.4 `VoiceEngine` derives the effective value at each native push
-(`setSettings` / `pushSettings`), so Kotlin keeps intent while native render
-reads one gated flag. Everything today's engine sets at creation and never
-changes (RNNoise enabled when its model loads, VAD hold frames, squelch
-floor, jitter margin of 4 frames) stays a constant of the I/O layer.
+collapse the middle step to false and lose the preference. The pre-native
+`VoiceControl` gated the raw flag to push-to-talk when building the
+pipeline; since 5a.4 `VoiceEngine` derives the effective value at each
+native push (`setSettings` / `pushSettings`), so Kotlin keeps intent while
+native render reads one gated flag. Everything the pre-native engine set at
+creation and never changes (RNNoise enabled when its model loads, VAD hold
+frames, squelch floor, jitter margin of 4 frames) stays a constant of the
+I/O layer.
 
 Each is stored in a **sequence lock**: one writer (the JNI call), any
 number of readers (capture, receive, render, and the tunnel caller). The
@@ -647,8 +648,8 @@ and goes through no lock.
 ### Sender filter
 
 Both inbound paths, UDP and tunnel, drop voice from a sender that is
-locally muted or not a known session, as today's `AudioOutput` does for
-both formats (`user == null || user.isLocalMuted`). Dropping unknown
+locally muted or not a known session, as the pre-native `AudioOutput` did
+for both formats (`user == null || user.isLocalMuted`). Dropping unknown
 senders is retained, not listed as a behavior change. Until 5a.3b, which
 brings the first native reader, Kotlin applies the filter before pushing
 frames into the rings (5a.3a).
@@ -664,8 +665,8 @@ frames into the rings (5a.3a).
   while it is set the unknown-sender check is skipped and only the muted
   check applies, because a truncated allowlist would silence real users.
 - **Collector lag, accepted.** Native code learns of a new user one
-  collector hop (microseconds to about a millisecond) after
-  `Session.getUser` does today. This does not matter in practice. A
+  collector hop (microseconds to about a millisecond) after the session
+  applies it. This does not matter in practice. A
   joining user's `UserState` is sent when they authenticate, and their
   first voice comes at least their own sync round trip later. At our own
   connect, both paths drop everything until state is published at
@@ -743,9 +744,10 @@ and destroys an engine only while its thread is stopped. Starting and
 stopping that thread orders the handoff: `Thread.start` and `join` in 5a,
 and in 5b `AAudioStream_close`, after which no callback runs (stop alone
 may never report stopped on a disconnected stream). Lifecycle calls assert
-in debug builds that the thread is stopped. Until `VoiceEngine` keeps the
-engines across sessions (5a.3b), each start constructs a fresh output
-engine, as `AudioOutput.startPlaying` does today, so 5a.3a needs no reset.
+in debug builds that the thread is stopped. In 5a.3a, before `VoiceEngine`
+kept the engines across sessions, each start constructed a fresh output
+engine, as the pre-native `AudioOutput.startPlaying` did, so that sub-step
+needed no reset.
 
 ### Failures
 
@@ -781,7 +783,7 @@ fun voicePolicy(s: SessionState, v: VoiceSettings): VoicePolicy {
     val transmit = s.server.phase == SyncPhase.SYNCED && self != null &&
         !effectiveSelfMute(s) && !self.muted && !self.deafened && !self.suppressed
     val encoder = computeEffectiveConfig(v.targetBitrate, v.targetFramesPerPacket,
-        s.server.info.maxBandwidth)        // today's AudioHandler function, moved as is
+        s.server.info.maxBandwidth)        // the pre-native rule, as is
     return VoicePolicy(
         transmitAllowed = transmit,
         pttPressed = s.local.pttPressed,
@@ -796,8 +798,9 @@ fun voicePolicy(s: SessionState, v: VoiceSettings): VoicePolicy {
 ```
 
 The server's bandwidth cap (from `ServerSync`, `ServerConfig`, or a
-protobuf UDP ping) lowers bitrate and frames per packet exactly as today's
-`AudioHandler.setMaxBandwidth` does. When the cap changes the effective
+protobuf UDP ping) lowers bitrate and frames per packet exactly as the
+pre-native `AudioHandler.setMaxBandwidth` did. When the cap changes the
+effective
 values, the policy collector emits `VoiceEvent.EncoderLimited`, which the
 chat log feature formats with today's `audio_max_bandwidth` string.
 
@@ -836,7 +839,6 @@ class VoiceEngine(context: Context, settings: StateFlow<VoiceSettings>,
 sealed interface VoiceCommand {
     data class Start(val host: InetAddress, val port: Int, val keys: CryptKeys,
         val format: UdpFormat,
-        val legacyServerVersion: Int,
         val tunnelSink: (ByteArray) -> Unit) : VoiceCommand
     data object Stop : VoiceCommand
     data class SetVoiceRoute(val udp: Boolean) : VoiceCommand
@@ -863,11 +865,10 @@ a second writer: a switch submitted between the client reading the
 transport's decision and the client submitting `Start` would be
 overwritten. The socket opens once voice is started and the route is
 UDP, whichever comes last, and stays open across tunnel switches until
-`Stop`. `format` and
-`legacyServerVersion` come from the transport, which fixes them at the
-server's first `Version` (see [transport](transport.md#udp-packet-format)).
-The version is retained in `VoiceFormat` and passed to `nativeSetFormat`,
-which discards it; no codec path reads it (see
+`Stop`. `format` comes from the transport, which fixes it at the server's
+first `Version` (see [transport](transport.md#udp-packet-format)). The
+format is the whole decision: nothing carries the server's legacy version
+past it, because the 1.2.2 workaround that read the version is gone (see
 [issue 35](issues/35-legacy-server-version-unread.md)).
 
 ### Outputs
@@ -934,14 +935,3 @@ IDs. `selfTalking` is set from `AudioHandler`'s Kotlin talking callback
 from 5a.3a (`AudioHandler.shutdown` reports not talking, after the
 capture join; see Writers above) and from
 the capture thread's self-talking flag from 5a.4.
-
-## Interim mute (step 4, before 5a)
-
-Before the native path exists, the policy collector publishes a
-`StateFlow<VoicePolicy>` instead of calling native code. The Kotlin capture
-thread reads its value each frame and calls the current engine's
-`setMuted` and `setPttTalking` only when `transmitAllowed` or `pttPressed`
-changes. It is the same thread that drives the engine, so there is no
-cross-thread contention, and native code keeps owning the
-end-of-transmission marker. Step 5a replaces the Kotlin reader with
-`VoiceEngine.setPolicy`; the collector and `voicePolicy()` stay.

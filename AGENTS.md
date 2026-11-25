@@ -51,7 +51,11 @@
   modifying state, networking, routing, or voice code. Migration steps
   start only on explicit request, and `scripts/check_architecture.py`
   enforces concurrency, Android-free package, native-layer, and
-  `voice_io` `RenderGuard` checks;
+  `voice_io` `RenderGuard` checks, plus the boundary-only rule (the
+  allowlist and `BOUNDARY_FILES` must list the same paths), the R8
+  keep-rule check (every `se.lublin.` name in `app/proguard-rules.pro`
+  must have production code), and the unreferenced-type check (no
+  production top-level type may be declared and never named again);
   `scripts/architecture-allowlist.txt` only ratchets downward (lower a
   file's count in the same commit when removing matched lines, or
   remove the entry if it reaches `0`).

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Open — independent bugfix, not gating. |
+| Status | Open, narrowed (checked in step 8). The service-destroy race is gone: the client lives in the process-scoped container, and `ConnectionService.onDestroy` cancels only its own scope before calling `client.disconnect()`. The spec rule that cancelling the transport or session scope closes the socket is still missing (`TransportImpl` has no completion handler), so the fix directions stand. |
 | Category | Confirmed regression (introduced by step 3) |
 | Severity | Harmful (resource leak and ghost user on a rare path) |
 | Verified | Yes, by code reading against the current tree and the pre-step-3 tree |

@@ -63,20 +63,21 @@ resolution, and [35](35-legacy-server-version-unread.md) from the 5a codec
 tail; they are the entries in this queue that the audit snapshot could not
 have seen. The spec-only fixes (12, 13, 24, 25, 27, 31, and the interim
 entries for 14, 15, 18) are applied on `master`, and 08, 23, and 28 are
-fixed and tested; the decisions for 09, 10, 11, and 19 are recorded; 19
-and 06's `ServerSync` lambda are fixed on branch
-`session-serversync-update-hygiene`, pending merge, and the review skills
+fixed and tested; the decisions for 09, 10, and 11 are recorded; 19 and
+06's `ServerSync` lambda are fixed and merged
+(`session-serversync-update-hygiene`, `89dd9b57`), and the review skills
 that were to carry 06's two rules were deleted (`8e88589f`), leaving rule 1
-with no enforcement artifact. What remains
-is code, tests, and the two sweeps listed below. Each issue file carries
-the same state in its `Status` row.
+with no enforcement artifact. [Step 8](../steps/8-clean-up.md) then
+resolved 31, 33, and 35, and re-checked 02 and 14 against the code. What
+remains is code, tests, and the two sweeps listed below. Each issue file
+carries the same state in its `Status` row.
 
 ### Confirmed regressions
 
 | # | Issue | Introduced by | State |
 |---|---|---|---|
 | [01](01-sco-manager-two-thread-mutation.md) | `BluetoothScoManager` is mutated from two threads (route and main); spec's route-thread confinement not done | Step 4 | Resolved (`485453c7`..`c47e06d6`) |
-| [02](02-service-destroy-leaks-transport.md) | Service destroy can leak the TLS connection; transport not closed by scope cancellation | Step 3 | Open; independent bugfix, not gating |
+| [02](02-service-destroy-leaks-transport.md) | Service destroy can leak the TLS connection; transport not closed by scope cancellation | Step 3 | Open, narrowed: the service-destroy race is gone (`ConnectionService` cancels only its own scope; the client is process-scoped), but cancelling a transport or session scope still does not close the socket |
 | [32](32-route-decision-cached-sco-state.md) | The route decision cached the SCO link state, so leaving SCO stranded the call route | Step 4 | Resolved (`1089ad05`) |
 
 ### Verification gaps
@@ -105,12 +106,12 @@ the same state in its `Status` row.
 
 | # | Issue | State |
 |---|---|---|
-| [14](14-local-facts-self-mute-stub.md) | Persisted self-mute/deafen never reaches the session; `LocalFactsStore` self-mute half is a stub | Interim documented; code fix at step 6 |
+| [14](14-local-facts-self-mute-stub.md) | Persisted self-mute/deafen never reaches the session; `LocalFactsStore` self-mute half is a stub | Resolved (step 6): `AppLocalFactsStore` reads and writes the settings and the session is the only owner; checked in step 8 |
 | [15](15-current-bandwidth-bypasses-stats.md) | `getCurrentBandwidth` reads `AudioHandler`, not session stats | Resolved (5a.4): reads session stats (`Session.getCurrentBandwidth`) |
 | [16](16-voice-link-owns-udp-route.md) | The voice link, not the transport, decides the initial UDP/TCP route | Resolved (`aba7011b`, `6b72a255`); teardown-window residual documented |
 | [17](17-udp-format-per-packet.md) | UDP packet format re-decided per packet via an extra `VoiceLink` method | Resolved (`aba7011b`, `7a439caf`) |
 | [18](18-native-mute-writers-bypass-policy.md) | Native mute/PTT gates have writers outside the interim policy path | Resolved (5a.4): single writer via `VoiceEngine.setPolicy` (serialized) |
-| [19](19-pre-sync-local-intents-published.md) | Local intents published before `SYNCED`, merged back at `ServerSync` | Resolved on `session-serversync-update-hygiene` (`89dd9b57`), pending merge |
+| [19](19-pre-sync-local-intents-published.md) | Local intents published before `SYNCED`, merged back at `ServerSync` | Resolved (`89dd9b57`, merged) |
 
 ### Benign drift
 
@@ -127,9 +128,9 @@ the same state in its `Status` row.
 | [28](28-local-facts-load-failure-silent.md) | A failed `LocalFacts` load is not logged | Resolved (`7459c0de`) |
 | [29](29-half-duplex-raw-preference.md) | `VoiceSettings.halfDuplex` is the raw preference | Resolved (spec) |
 | [30](30-connected-races-sync-tail.md) | `Connected` can run before the session's `ServerSync` tail | Open; revisit once 14 restores self-mute in the session |
-| [31](31-boundary-files-mismatch.md) | `BOUNDARY_FILES` has an entry `enforcement.md` does not list | Resolved (spec); `HumlaTCP` deleted and list-equality test in [step 8](../steps/8-clean-up.md) |
-| [33](33-route-control-unused-bridge-api.md) | `RouteControl`'s `ConfigDelta` bridge setters and getters have no callers | Open; scheduled for [step 8](../steps/8-clean-up.md) |
-| [35](35-legacy-server-version-unread.md) | The legacy server version reaches the voice layer but nothing reads it | Decided: delete; scheduled for [step 8](../steps/8-clean-up.md) |
+| [31](31-boundary-files-mismatch.md) | `BOUNDARY_FILES` has an entry `enforcement.md` does not list | Resolved ([step 8](../steps/8-clean-up.md)): both lists hold the same five paths, the list-equality test fails on drift, and `HumlaTCP` is deleted |
+| [33](33-route-control-unused-bridge-api.md) | `RouteControl`'s `ConfigDelta` bridge setters and getters have no callers | Resolved ([step 8](../steps/8-clean-up.md)): the five members are deleted and both preference fields are route-thread confined |
+| [35](35-legacy-server-version-unread.md) | The legacy server version reaches the voice layer but nothing reads it | Resolved ([step 8](../steps/8-clean-up.md)): `VoiceFormat` and the version parameter chain are deleted; `UdpFormat` carries the one decision |
 
 ## Remaining work
 
@@ -151,17 +152,14 @@ a decision, made 2026-11-12). Rows 2 to 4 gate only 5a.3b (see [open items](../o
 
 | Batch | Issues | Notes |
 |---|---|---|
-| Small library fixes (one worktree) | [27](27-failed-with-connection-error.md), [19](19-pre-sync-local-intents-published.md) together with [06](06-update-conventions-not-enforced.md)'s `ServerSync` lambda | All in `libraries/humla`. 27 adds `ClientError.Internal`; `HumlaService`'s exhaustive `when` must handle it, and the app has no `ClientError` switches. 19 and 06 are the same branch of `Session.handleMessage`. `HumlaClientTest` already drives sync through a fake transport, so 19's test needs no new harness. |
+| Small library fixes (one worktree) | [27](27-failed-with-connection-error.md) | All in `libraries/humla`. 27 adds `ClientError.Internal`; the app has no `ClientError` switches. [19](19-pre-sync-local-intents-published.md) and [06](06-update-conventions-not-enforced.md)'s `ServerSync` lambda landed on their branch (`89dd9b57`, merged). |
 | Service destroy leak | [02](02-service-destroy-leaks-transport.md) | Independent bugfix. |
 | Rule-2 review sweep | [06](06-update-conventions-not-enforced.md) | Read-then-act pass over `Session`, `PolicyCollector`, and `RouteControl` (the audit did not do it). Sweep `RouteControl` after row 1, since confinement changes its reads. |
 | Spike test | [07](07-channel-adapter-spike-weaker.md) | Test-only. |
-| Unused route API | [33](33-route-control-unused-bridge-api.md) | Deletion only; in [step 8](../steps/8-clean-up.md). The issue 01 branch has merged; its confinement test drops the `setScoRequested` call. |
-| Legacy version plumbing | [35](35-legacy-server-version-unread.md) | Decided 2026-11-25: delete; in [step 8](../steps/8-clean-up.md). |
 
 ### Blocked
 
 | Issues | Waiting on |
 |---|---|
 | [20](20-batch-drain-publishes-per-message.md) | A decision: implement publish-once, or correct the spec's cost model. |
-| [14](14-local-facts-self-mute-stub.md) | Step 6 (real `LocalFactsStore`). |
-| [30](30-connected-races-sync-tail.md) | 14: the race only matters once the session restores self-mute. |
+| [30](30-connected-races-sync-tail.md) | A review now that [14](14-local-facts-self-mute-stub.md) restored the session's self-mute: the race matters again. |

@@ -215,7 +215,7 @@ transitions in the state package; the others are handled where noted.
 | `Version` | State, [transport](transport.md) | `info.versionV2/release/os/osVersion`; the transport derives the UDP format from the version |
 | `CodecVersion` | State | `info.opus`. Today's code also records a CELT fallback, but nothing reads it: voice is Opus-only today and stays so |
 | `ChannelState` | State | Create or update `ChannelInfo`. Links are applied in today's order, each step only when its field is present: replace with `links`, then remove `links_remove`, then add `links_add` |
-| `ChannelRemove` | State | Remove the channel and its whole subtree (never the root); drop them from other channels' links; users inside lose their `channelId` until the server moves them, as `ModelHandler` does today. Also drop every removed ID from every user's `listeningChannels`: **an intentional fix**, since today's code only drops the top removed channel and leaks listeners on its subchannels |
+| `ChannelRemove` | State | Remove the channel and its whole subtree (never the root); drop them from other channels' links; users inside lose their `channelId` until the server moves them, as the pre-migration handler did. Also drop every removed ID from every user's `listeningChannels`: **an intentional fix**, since today's code only drops the top removed channel and leaks listeners on its subchannels |
 | `UserState` | State, [events](#events) | Create or update `UserInfo` (see [self-mute](#self-mute-and-deafen)); for the local user, apply `listening_volume_adjustment` to `local.listeningVolumes`; emit join, move, recording, and other users' self-mute events |
 | `UserRemove` | State, client, [voice](voice.md#queues) | Other user: remove, emit `UserLeft`, and call `VoiceLink.removeUser` so playback drops the voice. Self: the session fails with reason `USER_REMOVE` (no reconnect) |
 | `ServerSync` | State, transport, client | `selfSession`, `rootPermissions`, `maxBandwidth`, `welcomeText`; phase `SYNCED`; emit `WelcomeText` when present; transport starts pings; client publishes `Connected` |
@@ -230,8 +230,8 @@ transitions in the state package; the others are handled where noted.
 | `ACL`, `BanList`, `QueryUsers`, `UserList`, `UserStats`, `ContextAction`, `ContextActionModify`, `SuggestConfig`, `PluginDataTransmission` | Ignored | Not handled today; unchanged |
 | `Authenticate`, `VoiceTarget`, `RequestBlob` | Client-sent only | Never arrive from the server; sent by the session (see [intents](#user-intents)) |
 
-`ModelHandler`'s current handlers are the reference for every field-level
-detail: partial-update semantics, temporary channels, `can_enter` (copied
+The pre-migration `ModelHandler` handlers are the reference for every
+field-level detail: partial-update semantics, temporary channels, `can_enter` (copied
 from the message), cycle and self-parent guards, placeholder channels for
 unknown parents, re-sorting on position or name changes, falling back to
 the root for users in unknown channels, and clearing comment and texture
@@ -246,10 +246,11 @@ Today's behavior, kept exactly:
   self-mute or self-deafen, the session writes `local.selfMuteDesired` /
   `local.selfDeafDesired`, writes the same values optimistically into the
   self `UserInfo` (so screens update at once), and sends `UserState`. This
-  is what today's `AudioHandler.setSelfMutedOptimistic` latch does: once a
+  is what the pre-native `AudioHandler.setSelfMutedOptimistic` latch did: once a
   desired value exists, the server's echo of `self_mute` no longer moves the
   gate.
-- **Coercion before sending**, as `setSelfMuteDeafState` does today: deafen
+- **Coercion before sending**, as the pre-migration `setSelfMuteDeafState`
+  did: deafen
   implies mute, and unmute implies undeafen.
 - **The echo updates the model.** The server's `UserState` for self
   overwrites the self `UserInfo` (the model confirm), but not `local`.
@@ -259,8 +260,8 @@ Today's behavior, kept exactly:
 - **Restore on connect.** Self-mute and self-deafen are persisted settings,
   as today. A new session starts with `selfMuteDesired`/`selfDeafDesired`
   from settings when either is set, and sends the `UserState` right after
-  `ServerSync`, as `MumlaService.onConnectionSynchronized` does today. Every
-  change is written back to settings off the main thread.
+  `ServerSync`, as the pre-migration service did there. Every change is
+  written back to settings off the main thread.
 
 The voice gate is computed from these by
 [`VoicePolicy`](voice.md#voicepolicy):
@@ -294,7 +295,7 @@ exception: a `UserState` echo for the local user carrying
 | `unregisterWhisperTarget(id)` | Frees the ID (IDs outside 1–30 are ignored) | none, as today |
 | `setListening(channel, on)` | none until echo | `UserState(listening_channel_add/remove)` |
 | `setListeningVolume(channel, v)` | `local.listeningVolumes` | `UserState(listening_volume_adjustment)`, as today |
-| All others (join, move, text, comment, kick, link, register, requests, admin mute/deafen) | none until echo | one TCP message each, with today's `HumlaService` coercions (deaf implies mute, unmute implies undeafen, admin unmute clears `suppress`) |
+| All others (join, move, text, comment, kick, link, register, requests, admin mute/deafen) | none until echo | one TCP message each, with the pre-migration `HumlaService` coercions (deaf implies mute, unmute implies undeafen, admin unmute clears `suppress`) |
 
 Intents that need a connection fail as today when the session is not yet
 `SYNCED`: they are no-ops returning nothing (or `-1` for whisper
@@ -328,8 +329,8 @@ inline**: features hand anything slow (TTS synthesis, database writes,
 notifications) to their own scope and return at once. A collector that
 stops (a closed screen, a crashed feature) unsubscribes and no longer
 holds the buffer. Events
-are semantic; the app turns them into text (replacing the
-`chat_notify_*` and `deny_reason_*` strings `ModelHandler` formats today).
+are semantic; the app turns them into text (`chat_notify_*` and
+`deny_reason_*` strings, which the pre-migration `ModelHandler` formatted).
 
 ```kotlin
 sealed interface SessionEvent {

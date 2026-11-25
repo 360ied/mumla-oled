@@ -147,7 +147,7 @@ The test certificate is self-signed for `127.0.0.1`, committed under test
 resources, and trusted by the test's client configuration. It is test
 material only.
 
-Until step 3, the harness drives today's `HumlaConnection` under
+Until step 3, the harness drove the then-live `HumlaConnection` under
 Robolectric's paused main looper (Robolectric is added to
 `:libraries:humla`'s test dependencies, at the version `:app` already
 pins). From step 3 on, it drives `HumlaClient` directly.
@@ -307,7 +307,13 @@ there are:
   connect, mute while the route settles);
 - **step 5b**, AAudio glitches (xrun counts are logged), echo
   cancellation on the speaker, Bluetooth reopening, and connection
-  survival on battery with the screen off.
+  survival on battery with the screen off;
+- **step 8**, the server list filling in pings (including a host that only
+  resolves through SRV, saved with port 0) and connecting to that host,
+  which together are the step's only real SRV lookups; external and base64
+  chat images loading, and leaving the chat while they load; and the
+  crash-test buttons enabling only while disconnected, with the ANR test
+  still freezing.
 
 Android 11–12 support (the minSdk 30 floor) is theoretical and stays
 untested; the spec does not plan device work for it.

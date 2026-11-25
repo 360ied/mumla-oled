@@ -29,7 +29,8 @@ step 1 and only ever gets stricter.
 `\bnewSingleThreadContext\b`,
 `\bGlobalScope\b`, `\basExecutor\b`, `\bTimer\s*\(`, `\bHandlerCompat\b`,
 `\bAlarmManager\b`, `\bWorkManager\b`,
-`\bkotlin\.concurrent\.thread\b`.
+`\bkotlin\.concurrent\.thread\b`, `\bAsyncTask\b`,
+`\bExecutorService\b`, `\bThreadFactory\b`.
 
 `\bThread\s*[({]` catches both `Thread(...)` and Kotlin's `Thread { … }`.
 The word boundaries keep `currentThread(` from matching the `Thread`
@@ -45,7 +46,10 @@ in comments) is too noisy. The constructor-form pools are listed
 separately: `\bThreadPoolExecutor\b` does not match
 `ScheduledThreadPoolExecutor`, because the preceding `d` is a word
 character. Comments are not stripped: a pattern named in a comment
-counts, which keeps the script simple and the comments honest.
+counts, which keeps the script simple and the comments honest. The last
+three are step 8's additions: an `AsyncTask` queue, an `ExecutorService`
+field, and a `ThreadFactory` each create threads without matching
+`Executors.` or `Thread(`.
 
 **Allowlist:** `scripts/architecture-allowlist.txt`, one entry per line:
 
