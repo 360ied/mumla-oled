@@ -92,8 +92,9 @@ class ConnectionNotificationFeature(
                 .collect { queue.offer(Refresh.REBUILD) }
         }
         child.launch {
-            // Media-session metadata follows talk activity from step 7; the
-            // notification itself is state-only, so no slow work here.
+            // The feature table lists talkActivity among this feature's
+            // flows; the notification content is state-only, so a talk tick
+            // never runs slow work here.
             talkActivity.collect { }
         }
         child.launch {
