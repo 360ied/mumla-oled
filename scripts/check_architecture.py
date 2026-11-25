@@ -29,6 +29,8 @@ Checks (see docs/target-architecture/enforcement.md):
   7. No binder surface: nothing under app/src/main binds a service (step 7).
   8. R8 keep rules: every se.lublin. name in app/proguard-rules.pro must
      match production code (step 8).
+  9. Unreferenced types: no production top-level class, interface, or
+     object may be declared and never named again (step 8).
 
 The check fails if a file not on the allowlist has a match, if a listed
 file has more matches than its count, or if it has fewer (the count must
@@ -654,6 +656,129 @@ def check_native(found, allowed_native):
     return errors
 
 
+# Step 8: a top-level type whose last caller was deleted, or a test-only
+# type left in main, is caught by name. The check is deliberately narrow: it
+# only knows declarations in the three roots below, ignores the generated
+# protobuf package, and only fails a name that appears exactly once in its
+# own file and in no other production file. Production references are
+# Kotlin, Java, XML resources and manifests, proguard-rules.pro, and C++
+# under jni (JNI looks classes up by name), so tests never count.
+UNREFERENCED_DECL_ROOTS = (
+    "app/src/main",
+    "app/src/foss",
+    "libraries/humla/src/main/java",
+)
+UNREFERENCED_REF_ROOTS = (
+    "app/src/main",
+    "app/src/foss",
+    "libraries/humla/src/main",
+)
+UNREFERENCED_REF_EXTS = (".kt", ".java", ".xml")
+JNI_ROOT = "libraries/humla/src/main/jni"
+JNI_SUBMODULES = ("opus", "rnnoise", "nanopb")
+RE_TOP_LEVEL_TYPE = re.compile(
+    r"^(?:(?:public|private|internal|protected|abstract|open|final|data|sealed|"
+    r"static|inner|annotation|enum|value|fun)\s+)*"
+    r"(?:class|interface|object)\s+([A-Za-z_]\w*)"
+)
+RE_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+
+
+def declared_top_level_types(root: Path):
+    """Return [(simple name, file)] for production top-level type declarations."""
+    declared = []
+    for base in UNREFERENCED_DECL_ROOTS:
+        base_dir = root / base
+        if not base_dir.is_dir():
+            continue
+        for full in sorted(base_dir.rglob("*")):
+            if full.suffix not in (".kt", ".java"):
+                continue
+            rel = full.relative_to(root).as_posix()
+            if GENERATED_MARKER in rel:
+                continue
+            try:
+                text = full.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            # Top-level declarations start at column 0; nested ones are
+            # indented, and the rule is about top-level types only.
+            for line in text.splitlines():
+                m = RE_TOP_LEVEL_TYPE.match(line)
+                if m:
+                    declared.append((m.group(1), full))
+    return declared
+
+
+def production_reference_files(root: Path):
+    """Every production file whose mentions of a type name count."""
+    files = []
+    for base in UNREFERENCED_REF_ROOTS:
+        base_dir = root / base
+        if not base_dir.is_dir():
+            continue
+        for full in sorted(base_dir.rglob("*")):
+            if full.suffix in UNREFERENCED_REF_EXTS:
+                files.append(full)
+    proguard = root / "app/proguard-rules.pro"
+    if proguard.is_file():
+        files.append(proguard)
+    jni = root / JNI_ROOT
+    if jni.is_dir():
+        for full in sorted(jni.rglob("*")):
+            if full.suffix not in NATIVE_EXTS:
+                continue
+            parts = full.relative_to(jni).parts
+            if parts and parts[0] in JNI_SUBMODULES:
+                continue
+            files.append(full)
+    return files
+
+
+def count_type_names(root: Path, names):
+    """Return {name: {file: occurrences}} over production files."""
+    counts = {name: {} for name in names}
+    for full in production_reference_files(root):
+        try:
+            text = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if full.suffix in NATIVE_EXTS:
+            # JNI mangles names with '_' (Java_se_lublin_..._Type_method),
+            # so a class name appears inside an identifier, not as a token.
+            for name in counts:
+                if name in text:
+                    counts[name][full] = counts[name].get(full, 0) + text.count(name)
+            continue
+        for token in RE_IDENTIFIER.findall(text):
+            if token in counts:
+                counts[token][full] = counts[token].get(full, 0) + 1
+    return counts
+
+
+def check_unreferenced_types(root: Path):
+    """Fail on a production type that no production file names again."""
+    declared = declared_top_level_types(root)
+    by_name = {}
+    for name, path in declared:
+        by_name.setdefault(name, set()).add(path)
+    counts = count_type_names(root, by_name)
+    errors = []
+    for name, own_paths in sorted(by_name.items()):
+        per_file = counts[name]
+        total = sum(per_file.values())
+        for path in sorted(own_paths):
+            own = per_file.get(path, 0)
+            if own == 1 and total == own:
+                rel = path.relative_to(root).as_posix()
+                errors.append(
+                    f"unreferenced-type: {rel} declares {name}, which no "
+                    f"production file names again; delete it, or move a "
+                    f"test-only type out of main"
+                )
+    return errors
+
+
 def check_boundaries(allowed):
     """Fail unless the allowlist and BOUNDARY_FILES list the same paths.
 
@@ -780,6 +905,7 @@ def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
     errors.extend(check_feature_set_closed(root))
     errors.extend(check_feature_isolation(root))
     errors.extend(check_r8_keep_rules(root))
+    errors.extend(check_unreferenced_types(root))
     return errors, actual
 
 

@@ -926,6 +926,132 @@ class TestEnforcementDoc(unittest.TestCase):
         self.assertEqual(paths, list(ca.BOUNDARY_FILES))
 
 
+class TestUnreferencedTypes(unittest.TestCase):
+    def write(self, root, rel, text=""):
+        full = root / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(text, encoding="utf-8")
+        return full
+
+    def test_dead_type_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/Dead.kt",
+                "package se.lublin.mumla\n\nclass Dead\n",
+            )
+            errors = ca.check_unreferenced_types(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Dead", errors[0])
+
+    def test_type_named_again_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "libraries/humla/src/main/java/se/lublin/state/Live.kt",
+                "package se.lublin.state\n\nclass Live\n",
+            )
+            self.write(
+                root, "libraries/humla/src/main/java/se/lublin/state/User.kt",
+                "package se.lublin.state\n\nclass User(val live: Live)\n\n"
+                "val sample = User(Live())\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_type_used_only_in_its_own_file_passes(self):
+        # The name appears twice in the file (declaration and use), so the
+        # narrow rule leaves it alone.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "app/src/main/java/se/lublin/mumla/Own.kt",
+                "package se.lublin.mumla\n\nclass Own\n\nval own = Own()\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_type_named_from_a_manifest_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "app/src/main/java/se/lublin/mumla/Boot.kt",
+                "package se.lublin.mumla\n\nclass Boot\n",
+            )
+            self.write(
+                root, "app/src/main/AndroidManifest.xml",
+                '<manifest><application android:name="se.lublin.mumla.Boot"/></manifest>\n',
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_type_named_from_cpp_passes(self):
+        # JNI looks classes up by name, so C++ mentions count even inside a
+        # mangled symbol where the name is surrounded by underscores.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "libraries/humla/src/main/java/se/lublin/humla/Jni.kt",
+                "package se.lublin.humla\n\nclass Jni\n",
+            )
+            self.write(
+                root, "libraries/humla/src/main/jni/voice_io/Entry.cpp",
+                "Java_se_lublin_humla_Jni_nativeDo(JNIEnv*, jclass) {}\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_submodule_cpp_does_not_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "libraries/humla/src/main/java/se/lublin/humla/Solo.kt",
+                "package se.lublin.humla\n\nclass Solo\n",
+            )
+            self.write(
+                root, "libraries/humla/src/main/jni/opus/Solo.cpp",
+                "// Solo appears in a third-party submodule only\n",
+            )
+            errors = ca.check_unreferenced_types(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Solo", errors[0])
+
+    def test_type_named_only_from_a_test_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "app/src/main/java/se/lublin/mumla/OnlyTest.kt",
+                "package se.lublin.mumla\n\nclass OnlyTest\n",
+            )
+            self.write(
+                root, "app/src/test/java/se/lublin/mumla/OnlyTestTest.kt",
+                "package se.lublin.mumla\n\nval x = OnlyTest()\n",
+            )
+            errors = ca.check_unreferenced_types(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("OnlyTest", errors[0])
+
+    def test_nested_declaration_is_not_top_level(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "app/src/main/java/se/lublin/mumla/Outer.kt",
+                "package se.lublin.mumla\n\nclass Outer {\n    class Inner\n}\n\n"
+                "val outer = Outer()\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_generated_protobuf_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/protobuf/Gen.java",
+                "package se.lublin.humla.protobuf;\n\nclass Gen {}\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_committed_tree_passes(self):
+        self.assertEqual(ca.check_unreferenced_types(ca.ROOT_DIR), [])
+
+
 class TestRunAll(unittest.TestCase):
     def test_missing_source_root_is_error(self):
         with tempfile.TemporaryDirectory() as tmp:
