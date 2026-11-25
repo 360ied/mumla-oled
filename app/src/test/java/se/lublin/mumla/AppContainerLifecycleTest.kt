@@ -291,6 +291,28 @@ class AppContainerLifecycleTest {
     }
 
     @Test
+    fun aRepeatedStartStillStopsCleanly(): Unit = runBlocking {
+        val transport = newTransport()
+        val controller = connectAndStartService(transport)
+        // A later connect asks the already-running service to start again.
+        controller.startCommand(0, 0)
+        idle()
+        val shadow = Shadows.shadowOf(controller.get())
+        assertTrue(shadow.isLastForegroundNotificationAttached())
+
+        for (message in syncSequence()) {
+            transport.inboundChannel.trySend(message)
+        }
+        awaitState(ClientState.Connected::class)
+        container().runtime.client.disconnect()
+        awaitState(ClientState.Idle::class)
+        idle()
+        assertTrue(shadow.isForegroundStopped())
+        assertTrue(shadow.isStoppedBySelf())
+        controller.destroy()
+    }
+
+    @Test
     fun failedStopsTheServiceAndRemovesTheNotification(): Unit = runBlocking {
         val transport = newTransport()
         val controller = connectAndStartService(transport)

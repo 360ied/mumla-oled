@@ -87,15 +87,19 @@ class ConnectionService : Service() {
         val app = applicationContext.container
         // Meets the five-second rule however late client.state moves.
         postForeground(app.connectionNotification.notification.value)
-        val job = SupervisorJob()
-        val serviceScope = CoroutineScope(job + Dispatchers.Main.immediate)
-        scope = serviceScope
-        serviceScope.launch {
-            combine(
-                app.runtime.client.state,
-                app.connectionNotification.notification,
-            ) { state, notification -> state to notification }
-                .collect { (state, notification) -> onConnectionState(state, notification) }
+        // A later connect starts the already-running service again; keep one
+        // collector for the instance instead of one per start request.
+        if (scope == null) {
+            val job = SupervisorJob()
+            val serviceScope = CoroutineScope(job + Dispatchers.Main.immediate)
+            scope = serviceScope
+            serviceScope.launch {
+                combine(
+                    app.runtime.client.state,
+                    app.connectionNotification.notification,
+                ) { state, notification -> state to notification }
+                    .collect { (state, notification) -> onConnectionState(state, notification) }
+            }
         }
         return START_NOT_STICKY
     }

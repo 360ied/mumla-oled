@@ -374,6 +374,9 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             mBackPressDialog = null
         }
         dismissCertDialog()
+        // The prompt is rebuilt from ClientState on the next STARTED, like
+        // the error dialog: a lifecycle dismissal is not a user decision.
+        mShownTrust = null
         dismissFirstRunDialog()
         val progress = mGenerateProgressDialog
         mGenerateProgressDialog = null
