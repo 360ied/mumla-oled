@@ -35,6 +35,7 @@ import se.lublin.mumla.channel.comment.UserCommentFragment
 import se.lublin.humla.client.Session
 import se.lublin.humla.state.WhisperTarget
 import se.lublin.mumla.container
+import se.lublin.mumla.preference.CrashReportsViewModel
 
 /**
  * The one [ViewModelProvider.Factory]. It reads the container from the
@@ -67,6 +68,9 @@ class MumlaViewModelFactory private constructor(
             modelClass.isAssignableFrom(ServerInfoViewModel::class.java) -> ServerInfoViewModel(
                 clientState = client.state,
                 sessionState = container.runtime.sessionState,
+            )
+            modelClass.isAssignableFrom(CrashReportsViewModel::class.java) -> CrashReportsViewModel(
+                clientState = client.state,
             )
             modelClass.isAssignableFrom(ChannelViewModel::class.java) -> ChannelViewModel(
                 clientState = client.state,
