@@ -47,7 +47,8 @@ class AccessTokenViewModelTest {
             serverId = SERVER_ID,
             loadTokens = { id -> stored[id].orEmpty().toList() },
             addToken = { id, token -> stored.getOrPut(id) { ArrayList() }.add(token) },
-            removeToken = { id, token -> stored[id]?.remove(token) },
+            // The DAO deletes every row with the value.
+            removeToken = { id, token -> stored[id]?.removeAll { it == token } },
             sendTokens = { tokens -> sent.add(tokens) },
         )
     }
@@ -88,7 +89,7 @@ class AccessTokenViewModelTest {
             serverId = SERVER_ID,
             loadTokens = { gate.await(); stored.toList() },
             addToken = { _, token -> stored.add(token) },
-            removeToken = { _, token -> stored.remove(token) },
+            removeToken = { _, token -> stored.removeAll { it == token } },
             sendTokens = { tokens -> sent.add(tokens) },
         )
         // The load is suspended; the edit waits for it instead of racing it.
@@ -109,12 +110,12 @@ class AccessTokenViewModelTest {
     }
 
     @Test
-    fun removeDeletesOneOccurrenceAndSendsTheFullList() = runTest {
+    fun removeDeletesEveryOccurrenceAsTheStoreDoes() = runTest {
         val fixture = Fixture(initial = listOf("alpha", "beta", "alpha"))
         fixture.viewModel.remove("alpha")
-        assertEquals(listOf("beta", "alpha"), fixture.viewModel.tokens.value)
-        assertEquals(listOf("beta", "alpha"), fixture.stored[SERVER_ID])
-        assertEquals(listOf(listOf("beta", "alpha")), fixture.sent)
+        assertEquals(listOf("beta"), fixture.viewModel.tokens.value)
+        assertEquals(fixture.stored[SERVER_ID], fixture.viewModel.tokens.value)
+        assertEquals(listOf(listOf("beta")), fixture.sent)
     }
 
     @Test

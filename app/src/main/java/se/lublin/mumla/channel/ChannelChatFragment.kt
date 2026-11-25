@@ -90,7 +90,7 @@ class ChannelChatFragment : Fragment() {
     private var mChatAdapter: ChannelChatAdapter? = null
     private var mChatTextEdit: EditText? = null
     private var mSendButton: ImageButton? = null
-    private var mLastMessageCount = 0
+    private var mLastMessage: IChatMessage? = null
     // Tracked for pause-dismissal and rapid-tap dismiss-before-assign, like
     // the MumlaActivity dialogs: rotation/background with the preview up must
     // not leak the window.
@@ -171,7 +171,7 @@ class ChannelChatFragment : Fragment() {
         mChatAdapter = null
         mChatTextEdit = null
         mSendButton = null
-        mLastMessageCount = 0
+        mLastMessage = null
     }
 
     override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
@@ -202,21 +202,21 @@ class ChannelChatFragment : Fragment() {
 
     /**
      * Renders the collected log. The list is a full snapshot per emission, so
-     * the adapter is replaced and the view scrolls only when it grew.
+     * the adapter is replaced and the view scrolls when a new message arrived:
+     * the newest entry changed. Its size alone stops growing at the log cap.
      */
     private fun renderMessages(messages: List<IChatMessage>) {
         val adapter = mChatAdapter ?: return
         adapter.submit(messages)
         val chatList = mChatList
-        if (sizeGrew(messages.size) && chatList != null && messages.isNotEmpty()) {
+        val newest = messages.lastOrNull()
+        if (newest != null && newest !== mLastMessage && chatList != null) {
             chatList.post {
                 chatList.smoothScrollToPosition(messages.size - 1)
             }
         }
-        mLastMessageCount = messages.size
+        mLastMessage = newest
     }
-
-    private fun sizeGrew(size: Int): Boolean = size > mLastMessageCount
 
     private fun onImagePicked(uri: Uri?) {
         if (uri == null) {

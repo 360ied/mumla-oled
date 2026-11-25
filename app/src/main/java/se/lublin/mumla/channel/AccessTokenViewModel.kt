@@ -80,14 +80,15 @@ class AccessTokenViewModel(
         }
     }
 
-    /** Removes one occurrence of [token] (the tapped row) and pushes the list. */
+    /**
+     * Removes every occurrence of [token] and pushes the list. The store
+     * deletes by value, so dropping only the tapped row would leave the list
+     * and the store disagreeing after the next load.
+     */
     fun remove(token: String) {
         enqueueStorage {
-            val index = _tokens.value.indexOf(token)
-            if (index >= 0) {
-                _tokens.update { current ->
-                    current.toMutableList().also { it.removeAt(index) }
-                }
+            if (token in _tokens.value) {
+                _tokens.update { current -> current.filter { it != token } }
                 removeToken(serverId, token)
                 sendTokens(_tokens.value)
             }

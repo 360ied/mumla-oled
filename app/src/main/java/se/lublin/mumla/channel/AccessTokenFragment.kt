@@ -43,8 +43,6 @@ class AccessTokenFragment : Fragment() {
         MumlaViewModelFactory(this)
     }
 
-    private var mTokenList: ListView? = null
-    private var mTokenAdapter: TokenAdapter? = null
     private var mTokenField: EditText? = null
 
     override fun onCreateView(
@@ -55,9 +53,7 @@ class AccessTokenFragment : Fragment() {
         val view = inflater.inflate(R.layout.fragment_tokens, container, false)
 
         val tokenList = view.findViewById<ListView>(R.id.tokenList)
-        mTokenList = tokenList
         val adapter = TokenAdapter(requireContext())
-        mTokenAdapter = adapter
         tokenList.adapter = adapter
 
         val tokenField = view.findViewById<EditText>(R.id.tokenField)
@@ -75,7 +71,16 @@ class AccessTokenFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.tokens.collect { tokens -> adapter.submit(tokens) }
+                var shown = -1
+                viewModel.tokens.collect { tokens ->
+                    adapter.submit(tokens)
+                    // Scroll once the added token is in the list; the first
+                    // emission and removals keep the position.
+                    if (shown >= 0 && tokens.size > shown) {
+                        tokenList.smoothScrollToPosition(tokens.size - 1)
+                    }
+                    shown = tokens.size
+                }
             }
         }
         return view
@@ -89,12 +94,9 @@ class AccessTokenFragment : Fragment() {
         }
         tokenField.setText("")
         viewModel.add(tokenText)
-        mTokenList?.smoothScrollToPosition((mTokenAdapter?.count ?: 1) - 1)
     }
 
     override fun onDestroyView() {
-        mTokenList = null
-        mTokenAdapter = null
         mTokenField = null
         super.onDestroyView()
     }
