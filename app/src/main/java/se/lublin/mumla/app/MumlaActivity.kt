@@ -28,6 +28,7 @@ import android.os.Build
 import android.os.Bundle
 import android.text.InputType
 import android.text.TextUtils
+import android.text.format.DateUtils
 import android.util.Log
 import android.view.KeyEvent
 import android.view.Menu
@@ -62,6 +63,7 @@ import java.security.MessageDigest
 import java.security.cert.X509Certificate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -275,20 +277,29 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         mLastRendered = viewModel.connection.value
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch { viewModel.connection.collect { renderConnection(it) } }
-                launch { viewModel.connectionError.collect { updateConnectionDialogs() } }
-                launch { viewModel.trustPrompt.collect { renderTrustPrompt(it) } }
-                launch { viewModel.permissionDenied.collect { renderPermissionDenied(it) } }
-                launch { viewModel.crashReportId.collect { renderCrashPrompt(it) } }
-                // Volume keys follow the live route, never the SCO link itself.
-                launch {
-                    runtime.routeState
-                        .map { runtime.isMediaRouteActive }
-                        .distinctUntilChanged()
-                        .collect {
-                            applyVolumeControlStream()
-                            supportInvalidateOptionsMenu()
+                // The pending switch (and nothing else) keys off "started":
+                // a switch confirmed just before leaving connects on return.
+                viewModel.onActivityStarted()
+                try {
+                    coroutineScope {
+                        launch { viewModel.connection.collect { renderConnection(it) } }
+                        launch { viewModel.connectionError.collect { updateConnectionDialogs() } }
+                        launch { viewModel.trustPrompt.collect { renderTrustPrompt(it) } }
+                        launch { viewModel.permissionDenied.collect { renderPermissionDenied(it) } }
+                        launch { viewModel.crashReportId.collect { renderCrashPrompt(it) } }
+                        // Volume keys follow the live route, never the SCO link itself.
+                        launch {
+                            runtime.routeState
+                                .map { runtime.isMediaRouteActive }
+                                .distinctUntilChanged()
+                                .collect {
+                                    applyVolumeControlStream()
+                                    supportInvalidateOptionsMenu()
+                                }
                         }
+                    }
+                } finally {
+                    viewModel.onActivityStopped()
                 }
             }
         }
@@ -316,16 +327,6 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
                 }
             }
         }
-    }
-
-    override fun onStart() {
-        super.onStart()
-        viewModel.onActivityStarted()
-    }
-
-    override fun onStop() {
-        viewModel.onActivityStopped()
-        super.onStop()
     }
 
     override fun onResume() {
@@ -780,10 +781,15 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
     }
 
     private fun reconnectMessage(connection: ConnectionUi.Reconnecting, error: se.lublin.humla.client.ClientError): String {
-        val remaining = ((connection.retryAtMillis - System.currentTimeMillis()) / 1000)
-            .coerceAtLeast(0)
+        // The countdown is the platform's localized relative time, so no new
+        // untranslated string is introduced.
+        val countdown = DateUtils.getRelativeTimeSpanString(
+            connection.retryAtMillis,
+            System.currentTimeMillis(),
+            DateUtils.SECOND_IN_MILLIS,
+        )
         val cause = error.displayMessage() ?: "unknown"
-        return getString(R.string.attempting_reconnect, cause) + "\n" + remaining + " s"
+        return getString(R.string.attempting_reconnect, cause) + "\n" + countdown
     }
 
     /** Re-renders the countdown once a second while the dialog is up. */
@@ -1345,31 +1351,6 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         // before execute). Without this, the news dialog is silently skipped
         // for that launch.
         private var pendingFirstRunStartup = false
-
-        /**
-         * Widened to public: Kotlin has no package visibility (was package-visible
-         * static in Java for the same-package tests).
-         */
-        @JvmStatic
-        fun isSameServer(a: Server?, b: Server?): Boolean {
-            if (a == null || b == null) {
-                return a == b
-            }
-            // A corrected password must reconnect, not no-op: compare it even
-            // when the endpoint identity matches (saved or unsaved). Null and
-            // empty both mean "no password" (DB columns are nullable while the
-            // edit dialog produces ""), so normalize before comparing.
-            var pwA = a.password
-            var pwB = b.password
-            if (pwA == null) pwA = ""
-            if (pwB == null) pwB = ""
-            val samePassword = pwA == pwB
-            if (a.isSaved() && b.isSaved()) {
-                return a.id == b.id && samePassword
-            }
-            // Fall back to the chat-log identity convention (normalized endpoint + username).
-            return samePassword && ChatLogFeature.serverKey(a) == ChatLogFeature.serverKey(b)
-        }
 
         private val HEX_ARRAY = "0123456789abcdef".toCharArray()
 
