@@ -37,6 +37,8 @@ import java.io.IOException
 import kotlinx.coroutines.launch
 import java.security.GeneralSecurityException
 import java.security.cert.X509Certificate
+import se.lublin.humla.client.ClientState
+import se.lublin.humla.client.HumlaClient
 import se.lublin.humla.client.Session
 import se.lublin.humla.model.Server
 import se.lublin.humla.state.WhisperTarget
@@ -96,9 +98,9 @@ class MumlaViewModelFactory private constructor(
                 talkActivity = container.runtime.talkActivity,
                 settings = container.settingsRepository.snapshot,
                 emitTalkKey = container::emitTalkKey,
-                setVoiceTargetId = { id -> client.currentSession.value?.setVoiceTarget(id) },
+                setVoiceTargetId = { id -> connectedSession(client)?.setVoiceTarget(id) },
                 unregisterVoiceTarget = { id ->
-                    client.currentSession.value?.unregisterWhisperTarget(id)
+                    connectedSession(client)?.unregisterWhisperTarget(id)
                 },
             )
             modelClass.isAssignableFrom(ChatViewModel::class.java) -> ChatViewModel(
@@ -107,7 +109,7 @@ class MumlaViewModelFactory private constructor(
                 clientState = client.state,
                 sessionState = container.runtime.sessionState,
                 sendText = { channels, trees, users, message ->
-                    client.currentSession.value?.sendText(channels, trees, users, message)
+                    connectedSession(client)?.sendText(channels, trees, users, message)
                 },
                 clearLog = { container.chatLog.clear() },
             )
@@ -131,7 +133,7 @@ class MumlaViewModelFactory private constructor(
                 loadTokens = { id -> container.database.getAccessTokens(id) },
                 addToken = { id, token -> container.database.addAccessToken(id, token) },
                 removeToken = { id, token -> container.database.removeAccessToken(id, token) },
-                sendTokens = { tokens -> client.currentSession.value?.sendAccessTokens(tokens) },
+                sendTokens = { tokens -> connectedSession(client)?.sendAccessTokens(tokens) },
             )
             modelClass.isAssignableFrom(CommentViewModel::class.java) -> {
                 val target = if (args.containsKey(UserCommentFragment.ARG_SESSION)) {
@@ -147,15 +149,15 @@ class MumlaViewModelFactory private constructor(
                     requestBlob = {
                         when (target) {
                             is CommentViewModel.Target.User ->
-                                client.currentSession.value?.requestComment(target.session)
+                                connectedSession(client)?.requestComment(target.session)
                             is CommentViewModel.Target.Channel ->
-                                client.currentSession.value?.requestDescription(target.channelId)
+                                connectedSession(client)?.requestDescription(target.channelId)
                         }
                     },
                     setComment = { comment ->
                         when (target) {
                             is CommentViewModel.Target.User ->
-                                client.currentSession.value?.setComment(target.session, comment)
+                                connectedSession(client)?.setComment(target.session, comment)
                             is CommentViewModel.Target.Channel -> throw UnsupportedOperationException(
                                 "Channel description editing is not supported",
                             )
@@ -168,6 +170,14 @@ class MumlaViewModelFactory private constructor(
         @Suppress("UNCHECKED_CAST")
         return model as T
     }
+
+    /**
+     * The one session access for ViewModel actions: the current session only
+     * while the client is Connected, never a session held across a state
+     * change. A pre-sync session is deliberately invisible here.
+     */
+    private fun connectedSession(client: HumlaClient): Session? =
+        (client.state.value as? ClientState.Connected)?.session
 
     /** The main screen's connection, notification, trust and crash actions. */
     private fun mainActions(): MainViewModel.MainActions {
@@ -275,7 +285,7 @@ class MumlaViewModelFactory private constructor(
     /** Session intents for the channel list's rows and menus. */
     private fun sessionActions(): ChannelListActions {
         val client = application.container.runtime.client
-        fun current(): Session? = client.currentSession.value
+        fun current(): Session? = connectedSession(client)
         return object : ChannelListActions {
             override fun joinChannel(channelId: Int) {
                 current()?.joinChannel(channelId)
