@@ -101,12 +101,6 @@ class ChannelChatFragment : Fragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setHasOptionsMenu(true)
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch { viewModel.target.collect { updateChatTargetText(it) } }
-                launch { viewModel.messages.collect { renderMessages(it) } }
-            }
-        }
     }
 
     override fun onPause() {
@@ -157,6 +151,12 @@ class ChannelChatFragment : Fragment() {
         })
 
         updateChatTargetText(viewModel.target.value)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { viewModel.target.collect { updateChatTargetText(it) } }
+                launch { viewModel.messages.collect { renderMessages(it) } }
+            }
+        }
         return view
     }
 
@@ -363,13 +363,7 @@ class ChannelChatFragment : Fragment() {
             return
         }
 
-        when (viewModel.send(message, image = true)) {
-            ChatSendResult.TOO_LARGE ->
-                Toast.makeText(requireContext(), R.string.image_too_large, Toast.LENGTH_SHORT).show()
-            ChatSendResult.LIMITS_UNKNOWN ->
-                Log.w(TAG, "image send before the server's message limits are known")
-            else -> Unit
-        }
+        reportSendResult(viewModel.send(message, image = true), image = true)
     }
 
     /**
@@ -382,9 +376,28 @@ class ChannelChatFragment : Fragment() {
             return
         }
         val message = chatTextEdit.text.toString()
-        if (viewModel.send(markupOutgoingMessage(message)) == ChatSendResult.SENT) {
+        val result = viewModel.send(markupOutgoingMessage(message))
+        if (result == ChatSendResult.SENT) {
             chatTextEdit.setText("")
         }
+        reportSendResult(result, image = false)
+    }
+
+    /** Tells the user why a send was refused; every result is handled. */
+    private fun reportSendResult(result: ChatSendResult, image: Boolean) {
+        val messageRes = when (result) {
+            ChatSendResult.SENT -> return
+            ChatSendResult.LIMITS_UNKNOWN -> {
+                Log.w(TAG, "image send before the server's message limits are known")
+                return
+            }
+            ChatSendResult.TOO_LARGE ->
+                if (image) R.string.image_too_large else R.string.chat_send_too_long
+            ChatSendResult.NOT_CONNECTED -> R.string.chat_send_not_connected
+            ChatSendResult.NO_TARGET -> R.string.chat_send_no_target
+        }
+        val ctx = context ?: return
+        Toast.makeText(ctx, messageRes, Toast.LENGTH_SHORT).show()
     }
 
     /**

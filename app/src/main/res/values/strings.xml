@@ -199,6 +199,9 @@
     <string name="default_">Default</string>
     <string name="image_confirm_send">Send this image?</string>
     <string name="image_too_large">Image is too large to send to server.</string>
+    <string name="chat_send_too_long">Message is too long to send to server.</string>
+    <string name="chat_send_not_connected">Not connected; message not sent.</string>
+    <string name="chat_send_no_target">The chat target is gone; message not sent.</string>
 
     <plurals name="notification_unread_many">
         <item quantity="one">%d new message</item>
