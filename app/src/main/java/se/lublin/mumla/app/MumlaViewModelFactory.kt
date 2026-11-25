@@ -24,12 +24,16 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
 import se.lublin.mumla.channel.AccessTokenViewModel
+import se.lublin.mumla.channel.ChannelListActions
+import se.lublin.mumla.channel.ChannelListViewModel
 import se.lublin.mumla.channel.ChannelViewModel
 import se.lublin.mumla.channel.ChatViewModel
 import se.lublin.mumla.channel.ServerInfoViewModel
 import se.lublin.mumla.channel.comment.ChannelDescriptionFragment
 import se.lublin.mumla.channel.comment.CommentViewModel
 import se.lublin.mumla.channel.comment.UserCommentFragment
+import se.lublin.humla.client.Session
+import se.lublin.humla.state.WhisperTarget
 import se.lublin.mumla.container
 
 /**
@@ -85,6 +89,25 @@ class MumlaViewModelFactory private constructor(
                 },
                 clearLog = { container.chatLog.clear() },
             )
+            modelClass.isAssignableFrom(ChannelListViewModel::class.java) -> ChannelListViewModel(
+                clientState = client.state,
+                sessionState = container.runtime.sessionState,
+                talkActivity = container.runtime.talkActivity,
+                settings = container.settingsRepository.snapshot,
+                loadPinnedChannels = { serverId ->
+                    container.database.query { it.getPinnedChannels(serverId) }
+                },
+                savePinnedChannel = { serverId, channelId, pinned ->
+                    container.database.query {
+                        if (pinned) {
+                            it.addPinnedChannel(serverId, channelId)
+                        } else {
+                            it.removePinnedChannel(serverId, channelId)
+                        }
+                    }
+                },
+                actions = sessionActions(),
+            )
             modelClass.isAssignableFrom(AccessTokenViewModel::class.java) -> AccessTokenViewModel(
                 serverId = args.getLong(ARG_SERVER),
                 loadTokens = { id -> container.database.query { it.getAccessTokens(id) } },
@@ -128,6 +151,84 @@ class MumlaViewModelFactory private constructor(
         }
         @Suppress("UNCHECKED_CAST")
         return model as T
+    }
+
+    /** Session intents for the channel list's rows and menus. */
+    private fun sessionActions(): ChannelListActions {
+        val client = application.container.runtime.client
+        fun current(): Session? = client.currentSession.value
+        return object : ChannelListActions {
+            override fun joinChannel(channelId: Int) {
+                current()?.joinChannel(channelId)
+            }
+
+            override fun moveUserToChannel(session: Int, channelId: Int) {
+                current()?.moveUserToChannel(session, channelId)
+            }
+
+            override fun kickBanUser(session: Int, reason: String?, ban: Boolean) {
+                current()?.kickBanUser(session, reason, ban)
+            }
+
+            override fun setMuteDeafState(session: Int, mute: Boolean, deaf: Boolean) {
+                current()?.setMuteDeafState(session, mute, deaf)
+            }
+
+            override fun setPrioritySpeaker(session: Int, priority: Boolean) {
+                current()?.setPrioritySpeaker(session, priority)
+            }
+
+            override fun setSelfMuteDeaf(mute: Boolean, deaf: Boolean) {
+                current()?.setSelfMuteDeaf(mute, deaf)
+            }
+
+            override fun setLocalMute(session: Int, muted: Boolean) {
+                current()?.setLocalMute(session, muted)
+            }
+
+            override fun setLocalIgnore(session: Int, ignored: Boolean) {
+                current()?.setLocalIgnore(session, ignored)
+            }
+
+            override fun setUserComment(session: Int, comment: String) {
+                current()?.setComment(session, comment)
+            }
+
+            override fun registerUser(session: Int) {
+                current()?.registerUser(session)
+            }
+
+            override fun linkChannels(channelId: Int, otherChannelId: Int) {
+                current()?.linkChannels(channelId, otherChannelId)
+            }
+
+            override fun unlinkChannels(channelId: Int, otherChannelId: Int) {
+                current()?.unlinkChannels(channelId, otherChannelId)
+            }
+
+            override fun unlinkAllChannels(channelId: Int) {
+                current()?.unlinkAllChannels(channelId)
+            }
+
+            override fun setListening(channelId: Int, listening: Boolean) {
+                current()?.setListening(channelId, listening)
+            }
+
+            override fun requestPermissions(channelId: Int) {
+                current()?.requestPermissions(channelId)
+            }
+
+            override fun registerWhisperTarget(target: WhisperTarget): Int =
+                current()?.registerWhisperTarget(target) ?: -1
+
+            override fun unregisterWhisperTarget(id: Int) {
+                current()?.unregisterWhisperTarget(id)
+            }
+
+            override fun setVoiceTarget(id: Int) {
+                current()?.setVoiceTarget(id)
+            }
+        }
     }
 
     /**

@@ -21,6 +21,8 @@ import com.google.protobuf.ByteString
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.PersistentSet
 import kotlinx.collections.immutable.persistentMapOf
+import se.lublin.humla.model.TalkState
+import se.lublin.humla.voice.TalkActivity
 
 /**
  * Immutable session state. See
@@ -187,6 +189,37 @@ fun SessionState.activeWhisperTarget(): WhisperTarget? =
     if (local.voiceTargetId in 1..30) local.whisperTargets[local.voiceTargetId] else null
 
 fun UserInfo.hasTexture(): Boolean = texture != null && !texture.isEmpty
+
+/**
+ * Avatar cache identity: today's handle-derived key. A present texture
+ * hashes its bytes; otherwise the announced hash does; 0 means "no avatar".
+ * A zero hash maps to 1 so it never collides with the no-avatar sentinel.
+ */
+fun UserInfo.textureCacheKey(): Int {
+    val texture = texture
+    if (texture != null && !texture.isEmpty) {
+        val h = texture.hashCode()
+        return if (h != 0) h else 1
+    }
+    val hash = textureHash
+    if (hash != null && !hash.isEmpty) {
+        val h = hash.hashCode()
+        return if (h != 0) h else 1
+    }
+    return 0
+}
+
+/**
+ * The talk state a row renders for [session]: the local session's level lives
+ * in [TalkActivity.selfTalking], every other session in the remote table
+ * (absent means passive). The same rule the compatibility handle used.
+ */
+fun SessionState.talkStateOf(session: Int, activity: TalkActivity): TalkState {
+    if (activity.selfTalking && session == server.selfSession) {
+        return TalkState.TALKING
+    }
+    return activity.users[session] ?: TalkState.PASSIVE
+}
 
 /** Self-mute gate. Desired value drives the gate; echo updates the model. */
 fun effectiveSelfMute(s: SessionState): Boolean {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015 Andrew Comminos <andrew@comminos.com>
+ * Copyright (C) 2015 Andrew Comminos
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,7 +19,6 @@ package se.lublin.mumla.channel
 
 import android.content.Context
 import android.os.Bundle
-import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -29,126 +28,76 @@ import android.widget.Toast
 import androidx.appcompat.widget.PopupMenu
 import androidx.fragment.app.FragmentManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import se.lublin.humla.IHumlaService
-import se.lublin.humla.IHumlaSession
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.model.Server
-import se.lublin.humla.model.WhisperTargetChannel
-import se.lublin.humla.util.HumlaDisconnectedException
-import se.lublin.humla.util.VoiceTargetMode
+import se.lublin.humla.state.ChannelInfo
+import se.lublin.humla.state.VoiceTargetMode
+import se.lublin.humla.state.WhisperTarget
+import se.lublin.humla.state.voiceTargetMode
 import se.lublin.mumla.R
 import se.lublin.mumla.channel.comment.AbstractCommentFragment
 import se.lublin.mumla.channel.comment.ChannelDescriptionFragment
-import se.lublin.mumla.db.MumlaDatabase
 
 /**
+ * The context menu of one channel row. It holds the channel's current values
+ * and calls the screen's ViewModel for every action.
  * Created by andrew on 22/11/15.
  */
 class ChannelMenu(
     context: Context,
-    channel: IChannel,
-    service: IHumlaService,
-    database: MumlaDatabase,
-    fragmentManager: FragmentManager
+    private val channel: ChannelInfo,
+    private val viewModel: ChannelListViewModel,
+    private val fragmentManager: FragmentManager,
 ) : PermissionsPopupMenu.IOnMenuPrepareListener, PopupMenu.OnMenuItemClickListener {
     private val mContext: Context = context
-    private val mChannel: IChannel = channel
-    private val mService: IHumlaService = service
-    private val mDatabase: MumlaDatabase = database
-    private val mFragmentManager: FragmentManager = fragmentManager
-
-    // Null instead of throw: menu taps race teardown (isConnected() checked
-    // by callers, service can die before acquisition). Callers return false.
-    private fun sessionOrNull(): IHumlaSession? {
-        return try {
-            mService.HumlaSession()
-        } catch (e: HumlaDisconnectedException) {
-            Log.d(TAG, "menu with torn-down session: $e")
-            null
-        } catch (e: IllegalStateException) {
-            Log.d(TAG, "menu with torn-down session: $e")
-            null
-        }
-    }
 
     override fun onMenuPrepare(menu: Menu, permissions: Int) {
         menu.findItem(R.id.context_channel_view_description)
             .setVisible(
-                mChannel.description != null ||
-                    mChannel.descriptionHash != null
+                channel.description != null ||
+                    channel.descriptionHash != null
             )
-        val server: Server? = mService.getTargetServer()
-        if (server != null) {
-            menu.findItem(R.id.context_channel_pin)
-                .setChecked(mDatabase.isChannelPinned(server.id, mChannel.id))
-        }
-        if (mService.isConnected()) {
-            var ourChan: IChannel? = null
-            try {
-                ourChan = sessionOrNull()?.getSessionChannel()
-            } catch (e: IllegalStateException) {
-                Log.d(TAG, "exception in onMenuPrepare: $e")
-            }
-            if (ourChan != null) {
-                menu.findItem(R.id.context_channel_link).setChecked(mChannel.links.any { it == ourChan })
-            }
+        menu.findItem(R.id.context_channel_pin)
+            .setChecked(viewModel.isChannelPinned(channel.id))
+        if (viewModel.selfChannelId() != null) {
+            val ourChan = viewModel.selfChannelId()
+            menu.findItem(R.id.context_channel_link).setChecked(
+                channel.links.contains(ourChan)
+            )
             val listenItem = menu.findItem(R.id.context_channel_listen)
             if (listenItem != null) {
-                val isListening = mChannel.isListening
+                val isListening = viewModel.isListening(channel.id)
                 listenItem.setChecked(isListening)
-                listenItem.setTitle(if (isListening) R.string.context_channel_stop_listen else R.string.context_channel_listen)
+                listenItem.setTitle(
+                    if (isListening) R.string.context_channel_stop_listen
+                    else R.string.context_channel_listen
+                )
             }
         }
     }
 
     override fun onMenuItemClick(item: MenuItem): Boolean {
-        if (!mService.isConnected()) {
-            return false
-        }
-
         val itemId = item.itemId
         if (itemId == R.id.context_channel_join) {
-            (sessionOrNull() ?: return false).joinChannel(mChannel.id)
+            viewModel.joinChannel(channel.id)
         } else if (itemId == R.id.context_channel_view_description) {
             val commentArgs = Bundle()
-            commentArgs.putInt(ChannelDescriptionFragment.ARG_CHANNEL, mChannel.id)
+            commentArgs.putInt(ChannelDescriptionFragment.ARG_CHANNEL, channel.id)
             commentArgs.putBoolean(AbstractCommentFragment.ARG_EDITING, false)
             val commentFragment = ChannelDescriptionFragment()
             commentFragment.arguments = commentArgs
-            commentFragment.show(mFragmentManager, ChannelDescriptionFragment::class.java.name)
+            commentFragment.show(fragmentManager, ChannelDescriptionFragment::class.java.name)
         } else if (itemId == R.id.context_channel_pin) {
-            val targetServer = mService.getTargetServer()
-            if (targetServer == null) {
-                return false
-            }
-            val serverId = targetServer.id
-            val pinned = mDatabase.isChannelPinned(serverId, mChannel.id)
-            if (!pinned) {
-                mDatabase.addPinnedChannel(serverId, mChannel.id)
-            } else {
-                mDatabase.removePinnedChannel(serverId, mChannel.id)
-            }
+            viewModel.setChannelPinned(channel.id, !item.isChecked)
         } else if (itemId == R.id.context_channel_link) {
-            val session = sessionOrNull() ?: return false
-            val channel = try {
-                session.getSessionChannel()
-            } catch (e: HumlaDisconnectedException) {
-                Log.d(TAG, "exception in onMenuItemClick: $e")
-                return false
-            } catch (e: IllegalStateException) {
-                Log.d(TAG, "exception in onMenuItemClick: $e")
-                return false
-            }
+            val ourChan = viewModel.selfChannelId() ?: return false
             if (!item.isChecked) {
-                session.linkChannels(channel, mChannel)
+                viewModel.linkChannels(ourChan, channel.id)
             } else {
-                session.unlinkChannels(channel, mChannel)
+                viewModel.unlinkChannels(ourChan, channel.id)
             }
         } else if (itemId == R.id.context_channel_listen) {
-            val isListening = mChannel.isListening
-            (sessionOrNull() ?: return false).setListeningChannel(mChannel.id, !isListening)
+            viewModel.setListening(channel.id, !viewModel.isListening(channel.id))
         } else if (itemId == R.id.context_channel_unlink_all) {
-            (sessionOrNull() ?: return false).unlinkAllChannels(mChannel)
+            viewModel.unlinkAllChannels(channel.id)
         } else if (itemId == R.id.context_channel_shout) {
             val layout = LinearLayout(mContext)
             layout.orientation = LinearLayout.VERTICAL
@@ -162,21 +111,13 @@ class ChannelMenu(
                 .setTitle(R.string.shout_configure)
                 .setView(layout)
                 .setPositiveButton(R.string.confirm) { _, _ ->
-                    if (!mService.isConnected()) {
-                        return@setPositiveButton
-                    }
-                    // Same TOCTOU as the item paths: the dialog outlives the
-                    // check, so acquisition can still throw on confirm tap.
-                    val session: IHumlaSession = sessionOrNull() ?: return@setPositiveButton
-                    // Unregister any existing voice target.
-                    if (session.getVoiceTargetMode() == VoiceTargetMode.WHISPER) {
-                        session.unregisterWhisperTarget(session.getVoiceTargetId())
-                    }
-                    val channelTarget = WhisperTargetChannel(mChannel, linkedBox.isChecked, subchannelBox.isChecked, null)
-                    val id = session.registerWhisperTarget(channelTarget)
-                    if (id > 0.toByte()) {
-                        session.setVoiceTargetId(id)
-                    } else {
+                    val target = WhisperTarget(
+                        channelId = channel.id,
+                        includeLinked = linkedBox.isChecked,
+                        includeSubchannels = subchannelBox.isChecked,
+                        group = null,
+                    )
+                    if (!viewModel.shout(target)) {
                         Toast.makeText(mContext, R.string.shout_failed, Toast.LENGTH_LONG).show()
                     }
                 }
@@ -191,12 +132,10 @@ class ChannelMenu(
     fun showPopup(anchor: View) {
         val popupMenu = PermissionsPopupMenu(
             mContext, anchor,
-            R.menu.context_channel, this, this, mChannel, mService
+            R.menu.context_channel, this, this,
+            permissions = viewModel.permissionsFor(channel.id),
+            requestPermissions = { viewModel.requestPermissions(channel.id) },
         )
         popupMenu.show()
-    }
-
-    companion object {
-        private val TAG: String = ChannelMenu::class.java.name
     }
 }

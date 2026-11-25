@@ -106,6 +106,37 @@ class AvatarCache {
         return null
     }
 
+    /**
+     * Value-based lookup for screens that hold state ([UserInfo]) instead of
+     * live handles: [cacheKey] is [se.lublin.humla.state.textureCacheKey].
+     */
+    fun get(session: Int, cacheKey: Int, texture: ByteArray?): Bitmap? {
+        if (cacheKey == 0) {
+            mCache.remove(session)
+            return null
+        }
+
+        val cached = mCache[session]
+        if (cached != null && cached.cacheKey == cacheKey) {
+            return cached.bitmap
+        }
+
+        if (texture != null && texture.isNotEmpty()) {
+            val bitmap = decodeBoundedAvatar(texture)
+            if (bitmap != null) {
+                mCache.put(session, Entry(cacheKey, bitmap))
+                return bitmap
+            }
+            // Decoding failed or texture was unparseable: record negative entry to prevent repeated
+            // UI-thread allocations and decoding attempts on every scroll or talk event.
+            mCache.put(session, Entry(cacheKey, null))
+            return null
+        }
+
+        mCache.remove(session)
+        return null
+    }
+
     fun remove(session: Int) {
         mCache.remove(session)
     }
