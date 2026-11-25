@@ -20,6 +20,7 @@ package se.lublin.mumla
 import android.content.Context
 import android.content.Intent
 import android.os.Looper
+import java.time.Duration
 import kotlin.reflect.KClass
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -38,6 +39,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowPowerManager
 import se.lublin.humla.HumlaRuntime
 import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.ClientState
@@ -446,6 +448,34 @@ class AppContainerLifecycleTest {
         val shadow = Shadows.shadowOf(controller.get())
         assertTrue(shadow.isStoppedBySelf())
         assertTrue(shadow.isForegroundStopped())
+        controller.destroy()
+    }
+
+    @Test
+    fun aNotificationRebuildKeepsTheConnectingGraceWindow(): Unit = runBlocking {
+        // A settings change rebuilds the notification; that must not restart
+        // the 15 s wake-lock window, which only a client.state move sets.
+        val transport = newTransport()
+        val controller = connectAndStartService(transport)
+        val lock = ShadowPowerManager.getLatestWakeLock()
+        assertTrue("connecting holds the lock", lock.isHeld)
+
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(10))
+        val before = container().connectionNotification.notification.value
+        val showUserCount = container().settingsRepository.state.value.snapshot.showUserCount
+        container().settingsRepository.updateTyped { it.showUserCount = !showUserCount }
+        withTimeout(5_000) {
+            while (container().connectionNotification.notification.value === before) {
+                runWaiter()
+                idle()
+                delay(10)
+            }
+        }
+        idle()
+        assertTrue(container().runtime.client.state.value is ClientState.Connecting)
+        Shadows.shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(6))
+
+        assertFalse("the window ran from the Connecting transition", lock.isHeld)
         controller.destroy()
     }
 }

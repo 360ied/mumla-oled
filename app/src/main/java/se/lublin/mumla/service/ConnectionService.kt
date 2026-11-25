@@ -48,6 +48,8 @@ import se.lublin.mumla.container
 class ConnectionService : Service() {
 
     private var scope: CoroutineScope? = null
+    /** The state the locks were last set for; null when none are held. */
+    private var lockedFor: ClientState? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
@@ -105,30 +107,30 @@ class ConnectionService : Service() {
     }
 
     private fun onConnectionState(state: ClientState, notification: Notification) {
-        when (state) {
-            is ClientState.Idle, is ClientState.Failed -> {
-                releaseLocks()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
-            is ClientState.Connecting -> {
-                acquireWakeLock(WAKELOCK_GRACE_MS)
-                acquireWifiLock()
-                postForeground(notification)
-            }
-            is ClientState.Connected -> {
-                acquireWakeLock(null)
-                acquireWifiLock()
-                postForeground(notification)
-            }
-            is ClientState.Reconnecting -> {
-                // Backoff delay plus the grace window, today's keep-alive rule.
-                val delayMs = ReconnectPolicy.delayForAttempts(state.attempt)
-                acquireWakeLock(delayMs + WAKELOCK_GRACE_MS)
-                acquireWifiLock()
-                postForeground(notification)
-            }
+        if (state is ClientState.Idle || state is ClientState.Failed) {
+            lockedFor = null
+            releaseLocks()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
         }
+        // Only a client.state move sets the locks; a notification-only
+        // emission must not restart the timed wake-lock window.
+        if (state != lockedFor) {
+            lockedFor = state
+            when (state) {
+                is ClientState.Connecting -> acquireWakeLock(WAKELOCK_GRACE_MS)
+                is ClientState.Connected -> acquireWakeLock(null)
+                is ClientState.Reconnecting -> {
+                    // Backoff delay plus the grace window, today's keep-alive rule.
+                    val delayMs = ReconnectPolicy.delayForAttempts(state.attempt)
+                    acquireWakeLock(delayMs + WAKELOCK_GRACE_MS)
+                }
+                else -> Unit
+            }
+            acquireWifiLock()
+        }
+        postForeground(notification)
     }
 
     override fun onDestroy() {
@@ -136,6 +138,7 @@ class ConnectionService : Service() {
         // destroy ends it, while a normal stop already saw Idle/Failed.
         scope?.cancel()
         scope = null
+        lockedFor = null
         releaseLocks()
         try {
             val client = applicationContext.container.runtime.client
