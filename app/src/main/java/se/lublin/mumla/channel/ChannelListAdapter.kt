@@ -84,7 +84,8 @@ class ChannelListAdapter(
             mAvatarCache.retainOnly(state.server.users.keys)
         }
         if (previousState.showUserCount != state.showUserCount ||
-            mRows.map { it.stableId } != previousRows.map { it.stableId }
+            mRows.size != previousRows.size ||
+            mRows.indices.any { mRows[it].stableId != previousRows[it].stableId }
         ) {
             // The count column is state-driven, not part of a row's value.
             notifyDataSetChanged()
