@@ -42,10 +42,14 @@ class CertificateGenerateActivity : BaseActivity() {
             .create()
         progress.show()
         // lifecycleScope cancels with the activity, so a rotation mid-generate
-        // never shows a dialog on the dead instance's window token.
+        // never shows a dialog on the dead instance's window token; the
+        // finally dismisses the progress dialog on that cancel path too.
         lifecycleScope.launch {
-            val result = generateClientCertificate(applicationContext)
-            progress.dismiss()
+            val result = try {
+                generateClientCertificate(applicationContext)
+            } finally {
+                progress.dismiss()
+            }
             if (result == null) {
                 Toast.makeText(
                     this@CertificateGenerateActivity,

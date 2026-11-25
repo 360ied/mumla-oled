@@ -37,17 +37,21 @@ import se.lublin.mumla.channel.comment.AbstractCommentFragment
 import se.lublin.mumla.channel.comment.ChannelDescriptionFragment
 
 /**
- * The context menu of one channel row. It holds the channel's current values
- * and calls the screen's ViewModel for every action.
+ * The context menu of one channel row. It reads the channel from the latest
+ * state and calls the screen's ViewModel for every action.
  * Created by andrew on 22/11/15.
  */
 class ChannelMenu(
     context: Context,
-    private val channel: ChannelInfo,
+    private val snapshot: ChannelInfo,
     private val viewModel: ChannelListViewModel,
     private val fragmentManager: FragmentManager,
 ) : PermissionsPopupMenu.IOnMenuPrepareListener, PopupMenu.OnMenuItemClickListener {
     private val mContext: Context = context
+
+    /** The channel as it is now; the tapped row's values once it is removed. */
+    private val channel: ChannelInfo
+        get() = viewModel.channel(snapshot.id) ?: snapshot
 
     override fun onMenuPrepare(menu: Menu, permissions: Int) {
         menu.findItem(R.id.context_channel_view_description)

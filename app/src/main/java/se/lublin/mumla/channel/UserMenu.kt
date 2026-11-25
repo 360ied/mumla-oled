@@ -33,17 +33,22 @@ import se.lublin.mumla.channel.comment.AbstractCommentFragment
 import se.lublin.mumla.channel.comment.UserCommentFragment
 
 /**
- * The context menu of one user row, rendered from the user's current values
- * and acting through the screen's ViewModel.
+ * The context menu of one user row, acting through the screen's ViewModel.
+ * Every read goes to the latest state, so a toggle inverts the value the user
+ * has now, not the value it had when the row was tapped.
  * Created by andrew on 19/11/15.
  */
 class UserMenu(
     context: Context,
-    private val user: UserInfo,
+    private val snapshot: UserInfo,
     private val viewModel: ChannelListViewModel,
     private val fragmentManager: FragmentManager,
 ) : PermissionsPopupMenu.IOnMenuPrepareListener, PopupMenu.OnMenuItemClickListener {
     private val mContext: Context = context
+
+    /** The user as it is now; the tapped row's values once the user has left. */
+    private val user: UserInfo
+        get() = viewModel.user(snapshot.session) ?: snapshot
 
     override fun onMenuPrepare(menu: Menu, permissions: Int) {
         // Use permission data to determine the actions available.

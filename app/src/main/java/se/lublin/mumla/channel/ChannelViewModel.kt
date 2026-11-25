@@ -39,8 +39,9 @@ import se.lublin.mumla.TalkKeyEvent
 /**
  * The chat target the two children of the channel screen share. IDs, not
  * values: the display name is looked up in the latest state each render.
+ * Equal by ID, so tapping the current target again is recognized.
  */
-class ChatTarget private constructor(
+data class ChatTarget private constructor(
     val channelId: Int?,
     val session: Int?,
 ) {

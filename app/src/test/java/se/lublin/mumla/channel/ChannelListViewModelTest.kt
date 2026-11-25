@@ -35,6 +35,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.`when`
+import android.content.Context
+import android.view.MenuItem
+import androidx.fragment.app.FragmentManager
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.testTarget
@@ -47,6 +51,7 @@ import se.lublin.humla.state.WhisperTarget
 import se.lublin.humla.state.emptySessionState
 import se.lublin.humla.state.voiceTargetMode
 import se.lublin.humla.voice.TalkActivity
+import se.lublin.mumla.R
 import se.lublin.mumla.feature.testSnapshot
 
 /** Channel list state, pinned loading, and menu/panel actions. */
@@ -409,5 +414,59 @@ class ChannelListViewModelTest {
         val fixture = Fixture()
         subscribe(fixture)
         assertEquals(listOf(0, 5), fixture.viewModel.channelsInTreeOrder().map { it.id })
+    }
+
+    private fun clickItem(id: Int): MenuItem = mock(MenuItem::class.java).also {
+        `when`(it.itemId).thenReturn(id)
+    }
+
+    private fun Fixture.updateUser(session: Int, change: (UserInfo) -> UserInfo) {
+        val server = sessionState.value.server
+        sessionState.value = sessionState.value.copy(
+            server = server.copy(users = server.users.put(session, change(server.users.getValue(session)))),
+        )
+    }
+
+    @Test
+    fun userMenuTogglesInvertTheLatestValueNotTheTappedRow() = runTest {
+        val fixture = Fixture()
+        subscribe(fixture)
+        val menu = UserMenu(
+            mock(Context::class.java),
+            fixture.viewModel.user(2)!!,
+            fixture.viewModel,
+            mock(FragmentManager::class.java),
+        )
+        // Another actor mutes and deafens Alice while the menu is open.
+        fixture.updateUser(2) { it.copy(muted = true, deafened = true, localMuted = true) }
+
+        menu.onMenuItemClick(clickItem(R.id.context_mute))
+        menu.onMenuItemClick(clickItem(R.id.context_deafen))
+        menu.onMenuItemClick(clickItem(R.id.context_local_mute))
+
+        assertEquals(
+            listOf("muteDeaf:2:false:true", "muteDeaf:2:true:false", "localMute:2:false"),
+            fixture.actions.calls,
+        )
+    }
+
+    @Test
+    fun userMenuFallsBackToTheTappedRowOnceTheUserLeaves() = runTest {
+        val fixture = Fixture()
+        subscribe(fixture)
+        val menu = UserMenu(
+            mock(Context::class.java),
+            fixture.viewModel.user(2)!!,
+            fixture.viewModel,
+            mock(FragmentManager::class.java),
+        )
+        val server = fixture.sessionState.value.server
+        fixture.sessionState.value = fixture.sessionState.value.copy(
+            server = server.copy(users = server.users.remove(2)),
+        )
+
+        menu.onMenuItemClick(clickItem(R.id.context_priority))
+
+        assertEquals(listOf("priority:2:true"), fixture.actions.calls)
     }
 }

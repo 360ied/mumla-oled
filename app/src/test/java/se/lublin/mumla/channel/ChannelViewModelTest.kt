@@ -31,6 +31,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -308,6 +309,15 @@ class ChannelViewModelTest {
         fixture.viewModel.setChatTarget(ChatTarget.user(99))
         testScheduler.runCurrent()
         assertNull(fixture.viewModel.chatTargetDisplay.value.name)
+    }
+
+    @Test
+    fun chatTargetsAreEqualById() {
+        // The channel list finishes the action mode when the tapped target
+        // equals the current one, so equality must not be identity.
+        assertEquals(ChatTarget.channel(5), ChatTarget.channel(5))
+        assertEquals(ChatTarget.user(2), ChatTarget.user(2))
+        assertNotEquals(ChatTarget.channel(2), ChatTarget.user(2))
     }
 
     @Test

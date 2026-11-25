@@ -32,6 +32,7 @@ import se.lublin.humla.client.ClientState
 import se.lublin.humla.state.ChannelInfo
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.ServerState
+import se.lublin.humla.state.UserInfo
 import se.lublin.humla.state.VoiceTargetMode
 import se.lublin.humla.state.WhisperTarget
 import se.lublin.humla.state.voiceTargetMode
@@ -141,6 +142,8 @@ class ChannelListViewModel(
     fun rootPermissions(): Int = sessionState.value.server.rootPermissions
 
     fun channel(channelId: Int): ChannelInfo? = sessionState.value.server.channels[channelId]
+
+    fun user(session: Int): UserInfo? = sessionState.value.server.users[session]
 
     fun isListening(channelId: Int): Boolean {
         val self = sessionState.value.server.self ?: return false
