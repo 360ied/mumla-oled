@@ -41,7 +41,6 @@ import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.HumlaClient
 import se.lublin.humla.client.Session
 import se.lublin.humla.util.HumlaException
-import se.lublin.humla.util.VoiceTargetMode
 import se.lublin.humla.voice.InputMode
 import se.lublin.humla.voice.PolicyCollector
 import se.lublin.humla.voice.VoiceSettings
