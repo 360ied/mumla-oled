@@ -38,7 +38,8 @@ data class ServerEndpoint(
 )
 
 /**
- * Replaces ConfigDelta.CertRef, whose ByteArray is mutable.
+ * The connect-time client certificate: an immutable copy of the PKCS#12
+ * blob, so nothing mutable outlives the connect call.
  */
 data class ClientCertificate(
     val pkcs12: ByteString,
@@ -65,8 +66,8 @@ data class ConnectTarget(
 }
 
 /**
- * Today's ConfigDelta.TrustStoreRef (strings only), moved here so the
- * client package needs no dependency on the legacy ConfigDelta type.
+ * Trust-store reference: strings only, so the client package needs no other
+ * dependency to describe it.
  */
 data class TrustStoreRef(
     val path: String?,

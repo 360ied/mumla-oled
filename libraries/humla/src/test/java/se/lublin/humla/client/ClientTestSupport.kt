@@ -359,11 +359,11 @@ internal class ClientHarness(
     )
 
     // Published-policy harness (issue 34): a real PolicyCollector fed by a
-    // HumlaService mirror of the session source (the current session's state,
+    // Mirror of the session source (the current session's state,
     // or null when there is none, which the collector maps to the muted
     // fallback). Tests inject [policySource] to freeze the source and prove
     // the detector catches the resulting stale policy. The mirror duplicates
-    // HumlaService._sessionState's resetting behavior by construction
+    // The runtime mirror's resetting behavior by construction
     // (flatMapLatest re-emits null on teardown); that shared shape is the
     // accepted difference from production (issue 34, fix direction 4).
     private val policyStates: Flow<SessionState?> =

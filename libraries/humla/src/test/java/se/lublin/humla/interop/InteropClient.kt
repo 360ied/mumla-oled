@@ -127,7 +127,7 @@ object InteropClient {
         // Unconfined: harness commands apply synchronously like the unit
         // tests, so no second thread exists even in the harness. The tunnel
         // sink routes to the current session's transport (present only in
-        // tunnel mode), exactly like production HumlaService.
+        // tunnel mode), exactly like the production voice link.
         val link = VoiceEngine(
             tunnelSink = {},
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
@@ -160,7 +160,7 @@ object InteropClient {
             denyFormatter = { "denied" },
         )
         // Tunnel sink routes to the current session's transport (present
-        // only in tunnel mode), exactly like production HumlaService. Wired
+        // only in tunnel mode), exactly like the production voice link. Wired
         // after the client exists; the send thread calls it for tunnelled
         // voice (non-realtime).
         link.setTunnelSink { packet ->

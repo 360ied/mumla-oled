@@ -36,7 +36,6 @@ import se.lublin.humla.voice.TalkActivity
 import se.lublin.mumla.PrefSnapshot
 import se.lublin.mumla.service.NotificationActionReceiver
 import se.lublin.mumla.R
-import se.lublin.mumla.service.MumlaService
 
 /** Builds the foreground notification and owns the media session's actions. */
 class ConnectionNotificationFeature(

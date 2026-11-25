@@ -18,7 +18,7 @@
 package se.lublin.humla.client
 
 /**
- * Pure reconnect-backoff truth table, unchanged from today's HumlaService.
+ * Pure reconnect-backoff truth table: the client's retry delays by attempt.
  * See docs/target-architecture/client.md#reconnect-policy.
  *
  * Android-free and side-effect-free so the JVM suite pins it directly.

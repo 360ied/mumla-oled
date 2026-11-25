@@ -30,7 +30,7 @@ enum class VoiceTargetMode {
         @JvmStatic
         fun fromId(targetId: Byte): VoiceTargetMode {
             // Unsigned mask: matches the and 0xFF masking at the encode site
-            // (HumlaService.setVoiceTargetId), so -1 and 255 agree.
+            // (the voice-target setter), so -1 and 255 agree.
             val id = targetId.toInt() and 0xFF
             if (id == 0) {
                 return NORMAL

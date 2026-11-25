@@ -137,7 +137,7 @@ class MurmurVoiceGateInteropTest {
                 if (e is kotlinx.coroutines.CancellationException) throw e
             }
         }
-        // Mirror HumlaService: settings ride the same production path into
+        // Settings ride the same production path into
         // the native SettingsCell (serialized on the voice control thread).
         val settingsFanout = collectorScope.launch {
             try {

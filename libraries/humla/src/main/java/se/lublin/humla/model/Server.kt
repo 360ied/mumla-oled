@@ -118,7 +118,7 @@ class Server(
     }
 
     fun getSrvHost(): String? {
-        // Snapshot: sibling synchronized writers replace the field (see HumlaService reconnect).
+        // Snapshot: sibling synchronized writers replace the field (see the connect path).
         val resolved = resolvedHost
         if (resolved != null) {
             return resolved
@@ -132,7 +132,7 @@ class Server(
     }
 
     fun getSrvPort(): Int {
-        // Snapshot: sibling synchronized writers replace the field (see HumlaService reconnect).
+        // Snapshot: sibling synchronized writers replace the field (see the connect path).
         val resolved = resolvedHost
         if (resolved != null) {
             return resolvedPort

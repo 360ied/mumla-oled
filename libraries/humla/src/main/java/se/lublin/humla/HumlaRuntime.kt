@@ -140,8 +140,8 @@ class HumlaRuntime private constructor(
 
         /**
          * Today's MiniDNS setup (link properties and the 800 ms resolver
-         * timeout), moved from HumlaService.init: the runtime is created once
-         * at process start, before any lookup.
+         * timeout), applied once when the runtime is built at process start,
+         * before any lookup.
          */
         private fun initMiniDns(appContext: Context) {
             try {

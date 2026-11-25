@@ -51,7 +51,7 @@ data class TalkActivity(
 }
 
 /**
- * Production publisher for [TalkActivity]. Owned by HumlaService (one
+ * Production publisher for [TalkActivity]. Owned by the runtime (one
  * instance for the service lifetime, so subscribers never sit on a dead
  * flow); fed only by the native notifier via [updateAll] (remote levels
  * plus self-talking in one atomic write). Session Stop clears through the

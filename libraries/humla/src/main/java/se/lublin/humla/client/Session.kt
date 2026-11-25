@@ -527,7 +527,7 @@ class Session internal constructor(
                     val actor = if (msg.hasActor()) msg.actor else null
                     val reason = if (msg.hasReason()) msg.reason else null
                     failOnce(ClientError.Removed(actor, reason, msg.ban))
-                    // Apply removal to state as well (HumlaService cleared on disconnect).
+                    // Apply removal to state as well (a disconnect clears it too).
                     if (!synced) {
                         syncingState = applyUserRemove(syncingState, msg).state
                     } else {
@@ -607,7 +607,7 @@ class Session internal constructor(
                         transport.startKeepalive()
                     } catch (e: Exception) {
                     }
-                    // Restored self-mute, as MumlaService.onConnectionSynchronized does.
+                    // Restore the persisted self-mute/deafen at sync.
                     if (localFacts.selfMuted || localFacts.selfDeafened) {
                         setSelfMuteDeaf(localFacts.selfMuted, localFacts.selfDeafened)
                     }
@@ -1086,7 +1086,7 @@ class Session internal constructor(
 
     fun setComment(session: Int, comment: String?) = setUserComment(session, comment)
 
-    // Old IHumlaSession reads, for HumlaService delegation.
+    // Legacy reads kept while the screens finish moving to state and stats.
     fun getTCPLatency(): Long = stats.value.tcpLatencyMicros ?: throw IllegalStateException("No TCP latency yet")
 
     fun getUDPLatency(): Long = stats.value.udpLatencyMicros ?: throw IllegalStateException("No UDP latency yet")

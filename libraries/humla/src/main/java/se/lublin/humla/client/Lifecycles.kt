@@ -45,7 +45,7 @@ interface RouteLifecycle {
     fun sessionEnded()
 }
 
-/** No-op lifecycles for tests and for the interim HumlaService bridge. */
+/** No-op lifecycles for the client's JVM tests. */
 class NoopVoiceLifecycle : VoiceLifecycle {
     private val startsCount = AtomicInteger(0)
     private val stopsCount = AtomicInteger(0)

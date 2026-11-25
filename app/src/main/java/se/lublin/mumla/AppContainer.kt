@@ -19,6 +19,7 @@ package se.lublin.mumla
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.media.AudioManager
@@ -40,14 +41,17 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import se.lublin.humla.Constants
 import se.lublin.humla.HumlaRuntime
 import se.lublin.humla.client.ClientState
+import se.lublin.humla.client.ConnectTarget
 import se.lublin.humla.client.LocalFactsStore
 import se.lublin.humla.route.RoutePreferences
 import se.lublin.humla.state.SessionEvent
@@ -77,6 +81,7 @@ import se.lublin.mumla.feature.TalkBroadcastFeature
 import se.lublin.mumla.feature.TalkKeysFeature
 import se.lublin.mumla.feature.TextToSpeechFeature
 import se.lublin.mumla.service.AndroidFeaturePlatform
+import se.lublin.mumla.service.ConnectionService
 import java.time.Clock
 
 /**
@@ -93,6 +98,9 @@ open class AppContainer(
     private val context: Context,
     val runtimeEdges: HumlaRuntime.Edges = HumlaRuntime.Edges.production(),
 ) {
+    /** The in-flight connect-path service waiter; a later connect replaces it. */
+    private var serviceWaiter: Job? = null
+
     private val exceptionHandler = CoroutineExceptionHandler { _, error ->
         // Fail loudly in debug; report and keep the process alive in release.
         if (BuildConfig.DEBUG) throw RuntimeException(error)
@@ -363,6 +371,47 @@ open class AppContainer(
         settings = settingsSnapshot,
         platform = featurePlatform,
     )
+
+    /**
+     * The UI's connect path. It starts the client, then a waiter starts
+     * [ConnectionService] at the first non-terminal client state while the
+     * app is still in the foreground (Android 14+ generally refuses to start
+     * a microphone foreground service from the background). The waiter ends
+     * without starting anything at a Failed that is not the instance present
+     * before the call, so a stale failure starts nothing, and a later connect
+     * cancels an earlier waiter.
+     */
+    open fun connect(target: ConnectTarget) {
+        val client = runtime.client
+        serviceWaiter?.cancel()
+        val priorFailed = client.state.value as? ClientState.Failed
+        serviceWaiter = appScope.launch {
+            val next = client.state.first { state ->
+                when (state) {
+                    is ClientState.Connecting,
+                    is ClientState.Connected,
+                    is ClientState.Reconnecting,
+                    -> true
+                    is ClientState.Failed -> state !== priorFailed
+                    is ClientState.Idle -> false
+                }
+            }
+            if (next !is ClientState.Failed) {
+                startConnectionService()
+            }
+        }
+        client.connect(target)
+    }
+
+    private fun startConnectionService() {
+        try {
+            context.startForegroundService(Intent(context, ConnectionService::class.java))
+        } catch (e: Exception) {
+            // Android can refuse once the app is in the background; the
+            // connection continues without the service.
+            Log.w(TAG, "ConnectionService start refused; continuing without it", e)
+        }
+    }
 
     /** Explicit notification actions reach the process-lifetime feature. */
     open fun onNotificationAction(action: String) {

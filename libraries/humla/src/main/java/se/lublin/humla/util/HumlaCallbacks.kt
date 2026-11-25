@@ -52,9 +52,9 @@ class HumlaCallbacks : IHumlaObserver {
         callbacks.add(observer)
     }
 
-    // Nullable by design: defensive call sites pass possibly-null refs.
-    // IHumlaService.unregisterObserver stays non-null (fail-fast at the
-    // service boundary); the asymmetry is intentional, not a mismatch.
+    // Nullable by design: defensive call sites may hold a nullable ref.
+    // Registration stays non-null (fail-fast at the call site); the
+    // asymmetry is intentional, not a mismatch.
     fun unregisterObserver(observer: IHumlaObserver?) {
         if (observer == null) return
         callbacks.remove(observer)

@@ -18,7 +18,6 @@
 package se.lublin.mumla.app
 
 import android.app.Application
-import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.fragment.app.Fragment
@@ -35,16 +34,15 @@ import se.lublin.mumla.channel.comment.ChannelDescriptionFragment
 import se.lublin.mumla.channel.comment.CommentViewModel
 import se.lublin.mumla.channel.comment.UserCommentFragment
 import java.io.IOException
+import kotlinx.coroutines.launch
 import java.security.GeneralSecurityException
 import java.security.cert.X509Certificate
-import se.lublin.humla.HumlaService
 import se.lublin.humla.client.Session
 import se.lublin.humla.model.Server
 import se.lublin.humla.state.WhisperTarget
 import se.lublin.mumla.TalkKeyEvent
 import se.lublin.mumla.container
 import se.lublin.mumla.preference.CrashReportsViewModel
-import se.lublin.mumla.service.MumlaService
 import se.lublin.mumla.util.CrashReporter
 import se.lublin.mumla.util.CrashReportSeenStore
 import se.lublin.mumla.util.MumlaTrustStore
@@ -184,16 +182,15 @@ class MumlaViewModelFactory private constructor(
         val client = container.runtime.client
         return object : MainViewModel.MainActions {
             override fun connect(server: Server) {
-                // Until the service cut-over, a connect still starts the
-                // service with today's connect intent.
-                val intent = Intent(appContext, MumlaService::class.java).apply {
-                    putExtra(MumlaService.EXTRA_SERVER_ID, server.id)
-                    if (!server.isSaved()) {
-                        putExtra(MumlaService.EXTRA_SERVER, server)
-                    }
-                    action = HumlaService.ACTION_CONNECT
+                container.appScope.launch {
+                    val target = ConnectTargets.build(
+                        appContext,
+                        container.database,
+                        container.settings,
+                        server,
+                    ) ?: return@launch
+                    container.connect(target)
                 }
-                appContext.startService(intent)
             }
 
             override fun disconnect() {
