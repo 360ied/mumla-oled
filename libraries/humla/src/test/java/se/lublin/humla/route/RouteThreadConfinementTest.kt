@@ -177,8 +177,6 @@ class RouteThreadConfinementTest {
         val ready = control.state.value
         assertTrue("link-up reached the controller: $ready",
             ready is RouteState.Ready && ready.route == AppliedRoute.VOICE_SCO)
-        control.setScoRequested(false)
-        control.setScoRequested(true)
         prefs.value = prefs.value.copy(bluetoothSco = false)
         settle()
         control.submit(RouteCommand.SessionEnded)

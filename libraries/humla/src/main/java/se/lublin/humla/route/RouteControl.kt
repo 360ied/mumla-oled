@@ -145,12 +145,16 @@ internal class RouteControl(
     private val routeSessionCounter = java.util.concurrent.atomic.AtomicInteger(0)
     private var hasSession = false
 
-    private val scoRequested = java.util.concurrent.atomic.AtomicBoolean(false)
+    // Route thread only, like hasSession and settleAttempts: every reader and
+    // writer runs on the route dispatcher (the prefs collector, commands, and
+    // link callbacks all hop there).
+    private var scoRequested = false
     // No cached "SCO route active" flag: the decision samples the link (see
     // readFacts), because a callback-fed copy goes stale on every stop this
     // controller performs itself (ScoLink.stop() reports nothing back).
+    // Atomic because isMediaRouteActive is read off the route thread.
     private val appliedRoute = java.util.concurrent.atomic.AtomicReference(AppliedRoute.VOICE_HANDSET)
-    private val handsetStream = java.util.concurrent.atomic.AtomicInteger(AudioManager.STREAM_MUSIC)
+    private var handsetStream = AudioManager.STREAM_MUSIC
     private var modeHold: ModeHold = ModeHold.Released
 
     private var settleAttempts: Int = 0
@@ -299,7 +303,7 @@ internal class RouteControl(
         // see the settle; recompute below resolves to Ready/Fallback.
         val facts = readFacts()
         val target = when {
-            scoRequested.get() -> AppliedRoute.VOICE_SCO
+            scoRequested -> AppliedRoute.VOICE_SCO
             !facts.mediaPresent -> AppliedRoute.VOICE_HANDSET
             else -> AppliedRoute.MEDIA
         }
@@ -348,7 +352,7 @@ internal class RouteControl(
     private fun onRetrySco() {
         checkNotMainThread()
         val link = sco ?: return
-        if (!scoRequested.get() || !hasSession) return
+        if (!scoRequested || !hasSession) return
         try {
             if (!link.isIdle()) return
         } catch (e: Exception) {
@@ -362,21 +366,11 @@ internal class RouteControl(
         }
     }
 
-    fun setScoRequested(requested: Boolean) {
-        val stream = handsetStream.get()
-        scope.launch { onPrefsChanged(requested, stream) }
-    }
-
-    fun setHandsetStream(stream: Int) {
-        val requested = scoRequested.get()
-        scope.launch { onPrefsChanged(requested, stream) }
-    }
-
     private fun onPrefsChanged(requested: Boolean, stream: Int) {
         if (destroyed.get()) return
-        val changed = (requested != scoRequested.get()) || (stream != handsetStream.get())
-        scoRequested.set(requested)
-        handsetStream.set(stream)
+        val changed = (requested != scoRequested) || (stream != handsetStream)
+        scoRequested = requested
+        handsetStream = stream
         if (!hasSession) return
         if (changed) {
             // Apply the request to the link first, then decide from what it
@@ -409,7 +403,7 @@ internal class RouteControl(
         checkNotMainThread()
         val link = sco ?: return
         if (destroyed.get()) return
-        if (scoRequested.get() && hasSession) {
+        if (scoRequested && hasSession) {
             try {
                 link.start()
             } catch (e: Exception) {
@@ -479,7 +473,7 @@ internal class RouteControl(
         if (shouldPublish) {
             val profile = if (voice) StreamProfile.VOICE else StreamProfile.MEDIA
             val next: RouteState = if (!update.scoActive) {
-                val isFallback = scoRequested.get() && voice &&
+                val isFallback = scoRequested && voice &&
                     update.route == AppliedRoute.VOICE_HANDSET
                 if (isFallback && !firstCreate) {
                     RouteState.Fallback(update.route, profile, "SCO unavailable")
@@ -633,7 +627,7 @@ internal class RouteControl(
     }
 
     private fun counterUnrequestedSystemSco(wasClaimedHold: Boolean, scoActive: Boolean) {
-        val requested = scoRequested.get()
+        val requested = scoRequested
         if (!wasClaimedHold || requested || scoActive) return
         if (!hasSession) return
         try {
@@ -662,7 +656,7 @@ internal class RouteControl(
     private fun maybeStartRequestedSco(added: Array<AudioDeviceInfo>?) {
         // Arrivals only (the caller skips removals): re-decide never starts.
         val link = sco ?: return
-        if (!scoRequested.get() || !hasSession) return
+        if (!scoRequested || !hasSession) return
         try {
             if (!link.isIdle()) return
         } catch (e: Exception) {
@@ -743,8 +737,6 @@ internal class RouteControl(
         }
     }
 
-    fun decision(): AppliedRoute = appliedRoute.get()
-
     // Route thread only: the SCO link is confined to it. Off-thread callers
     // read the published state instead.
     private fun isScoActive(): Boolean {
@@ -756,10 +748,7 @@ internal class RouteControl(
         }
     }
 
-    val isScoRequested: Boolean get() = scoRequested.get()
     val isMediaRouteActive: Boolean get() = appliedRoute.get() == AppliedRoute.MEDIA
-
-    fun handsetStream(): Int = handsetStream.get()
 }
 
 /**
