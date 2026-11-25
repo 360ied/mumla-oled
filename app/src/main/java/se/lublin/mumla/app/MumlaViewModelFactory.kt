@@ -18,7 +18,9 @@
 package se.lublin.mumla.app
 
 import android.app.Application
+import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -32,10 +34,20 @@ import se.lublin.mumla.channel.ServerInfoViewModel
 import se.lublin.mumla.channel.comment.ChannelDescriptionFragment
 import se.lublin.mumla.channel.comment.CommentViewModel
 import se.lublin.mumla.channel.comment.UserCommentFragment
+import java.io.IOException
+import java.security.GeneralSecurityException
+import java.security.cert.X509Certificate
+import se.lublin.humla.HumlaService
 import se.lublin.humla.client.Session
+import se.lublin.humla.model.Server
 import se.lublin.humla.state.WhisperTarget
+import se.lublin.mumla.TalkKeyEvent
 import se.lublin.mumla.container
 import se.lublin.mumla.preference.CrashReportsViewModel
+import se.lublin.mumla.service.MumlaService
+import se.lublin.mumla.util.CrashReporter
+import se.lublin.mumla.util.CrashReportSeenStore
+import se.lublin.mumla.util.MumlaTrustStore
 
 /**
  * The one [ViewModelProvider.Factory]. It reads the container from the
@@ -47,6 +59,8 @@ import se.lublin.mumla.preference.CrashReportsViewModel
  * arguments through the second constructor; the factory hands the model
  * only the values it needs.
  */
+private const val TAG = "MumlaViewModelFactory"
+
 class MumlaViewModelFactory private constructor(
     private val application: Application,
     private val args: Bundle,
@@ -68,6 +82,12 @@ class MumlaViewModelFactory private constructor(
             modelClass.isAssignableFrom(ServerInfoViewModel::class.java) -> ServerInfoViewModel(
                 clientState = client.state,
                 sessionState = container.runtime.sessionState,
+            )
+            modelClass.isAssignableFrom(MainViewModel::class.java) -> MainViewModel(
+                clientState = client.state,
+                events = container.runtime.events,
+                denyFormatter = container.denyFormatter,
+                actions = mainActions(),
             )
             modelClass.isAssignableFrom(CrashReportsViewModel::class.java) -> CrashReportsViewModel(
                 clientState = client.state,
@@ -155,6 +175,110 @@ class MumlaViewModelFactory private constructor(
         }
         @Suppress("UNCHECKED_CAST")
         return model as T
+    }
+
+    /** The main screen's connection, notification, trust and crash actions. */
+    private fun mainActions(): MainViewModel.MainActions {
+        val appContext = application.applicationContext
+        val container = application.container
+        val client = container.runtime.client
+        return object : MainViewModel.MainActions {
+            override fun connect(server: Server) {
+                // Until the service cut-over, a connect still starts the
+                // service with today's connect intent.
+                val intent = Intent(appContext, MumlaService::class.java).apply {
+                    putExtra(MumlaService.EXTRA_SERVER_ID, server.id)
+                    if (!server.isSaved()) {
+                        putExtra(MumlaService.EXTRA_SERVER, server)
+                    }
+                    action = HumlaService.ACTION_CONNECT
+                }
+                appContext.startService(intent)
+            }
+
+            override fun disconnect() {
+                client.disconnect()
+            }
+
+            override fun cancelReconnect() {
+                client.cancelReconnect()
+            }
+
+            override fun setSuppressNotifications(suppress: Boolean) {
+                container.connectionNotification.setSuppressNotifications(suppress)
+            }
+
+            override fun emitTalkKey(event: TalkKeyEvent) {
+                container.emitTalkKey(event)
+            }
+
+            override suspend fun saveServerPassword(server: Server) {
+                if (server.isSaved()) {
+                    container.database.query { it.updateServer(server) }
+                }
+            }
+
+            override fun pinnedCertificate(host: String): X509Certificate? {
+                return try {
+                    val trustStore = MumlaTrustStore.getTrustStore(appContext)
+                    if (!trustStore.containsAlias(host)) return null
+                    val pinned = trustStore.getCertificate(host)
+                    pinned as? X509Certificate
+                } catch (e: GeneralSecurityException) {
+                    Log.e(TAG, "Could not read trust store", e)
+                    null
+                } catch (e: IOException) {
+                    Log.e(TAG, "Could not read trust store", e)
+                    null
+                }
+            }
+
+            override fun pinCertificate(host: String, certificate: X509Certificate): Boolean {
+                return try {
+                    val trustStore = MumlaTrustStore.getTrustStore(appContext)
+                    trustStore.setCertificateEntry(host, certificate)
+                    MumlaTrustStore.saveTrustStore(appContext, trustStore)
+                    true
+                } catch (e: GeneralSecurityException) {
+                    Log.e(TAG, "Could not write trust store", e)
+                    false
+                } catch (e: IOException) {
+                    Log.e(TAG, "Could not write trust store", e)
+                    false
+                }
+            }
+
+            override suspend fun newestUnseenCrashReport(drain: Boolean): String? {
+                if (drain) {
+                    try {
+                        CrashReporter.drainExitInfo(appContext)
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "Crash re-drain failed", e)
+                    }
+                }
+                val entries = CrashReporter.store(appContext).list()
+                val newest = entries.firstOrNull() ?: return null
+                val lastSeen = try {
+                    CrashReportSeenStore.getLastSeen(appContext)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Could not read crash seen-store", e)
+                    null
+                }
+                return if (lastSeen == newest.id) null else newest.id
+            }
+
+            override suspend fun markCrashReportSeen(id: String) {
+                try {
+                    CrashReportSeenStore.setLastSeen(appContext, id)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Could not write crash seen-store", e)
+                }
+            }
+
+            override fun clearChatNotifications() {
+                container.messageNotifications.clear()
+            }
+        }
     }
 
     /** Session intents for the channel list's rows and menus. */

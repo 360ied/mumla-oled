@@ -16,11 +16,5 @@ interface IMumlaService : IHumlaService {
 
     fun isErrorShown(): Boolean
 
-    fun onTalkKeyDown()
-
-    fun onTalkKeyUp()
-
-    fun onTalkKeyCancel()
-
     fun setSuppressNotifications(suppressNotifications: Boolean)
 }

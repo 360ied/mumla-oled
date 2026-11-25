@@ -4,7 +4,6 @@
 # [native] exceptions follow the same ratchet (removals only).
 app/src/main/java/se/lublin/mumla/AppContainer.kt  2
 app/src/main/java/se/lublin/mumla/SettingsRepository.kt  3
-app/src/main/java/se/lublin/mumla/app/MumlaActivity.kt  5
 app/src/main/java/se/lublin/mumla/db/MumlaRoomDatabase.kt  2
 app/src/main/java/se/lublin/mumla/preference/CertificateImportActivity.kt  1
 app/src/main/java/se/lublin/mumla/preference/CrashReportsFragment.kt  2

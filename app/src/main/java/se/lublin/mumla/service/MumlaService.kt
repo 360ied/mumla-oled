@@ -31,7 +31,6 @@ import se.lublin.humla.util.ConfigDelta
 import se.lublin.humla.util.TrustStoreRef
 import se.lublin.mumla.BuildConfig
 import se.lublin.mumla.R
-import se.lublin.mumla.TalkKeyEvent
 import se.lublin.mumla.container
 import se.lublin.mumla.util.MumlaTrustStore
 
@@ -122,12 +121,6 @@ open class MumlaService : HumlaService(), IMumlaService {
     }
 
     override fun isErrorShown(): Boolean = mErrorShown
-
-    override fun onTalkKeyDown() = container.emitTalkKey(TalkKeyEvent.Down)
-
-    override fun onTalkKeyUp() = container.emitTalkKey(TalkKeyEvent.Up)
-
-    override fun onTalkKeyCancel() = container.emitTalkKey(TalkKeyEvent.Cancel)
 
     override fun setSuppressNotifications(suppressNotifications: Boolean) =
         container.connectionNotification.setSuppressNotifications(suppressNotifications)
