@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Open; deletion only |
+| Status | Decided 2026-11-25: delete the chain, with `UdpFormat` replacing `VoiceFormat`. Scheduled for [step 8](../steps/8-clean-up.md) (commit 7) |
 | Category | Benign drift |
 | Severity | Benign (dead parameter chain) |
 | Verified | Yes, by search of `libraries/humla/src/main` for `legacyServerVersion` and `m_legacyVersion` after the codec tail commits |

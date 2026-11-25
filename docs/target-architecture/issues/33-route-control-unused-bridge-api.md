@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Open; small |
+| Status | Open; small. Scheduled for [step 8](../steps/8-clean-up.md) (commit 6) |
 | Category | Benign drift |
 | Severity | Benign (dead code; misleading audit record, corrected) |
 | Verified | Yes, by search of `app/src/main` and `libraries/humla/src/main` |

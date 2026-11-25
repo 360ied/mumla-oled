@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved on `master`: `enforcement.md` lists `TransportImpl.kt`. Whether `HumlaTCP.kt` stays a boundary file remains open. |
+| Status | Resolved on `master`: `enforcement.md` lists `TransportImpl.kt`. Decided 2026-11-25: `HumlaTCP.kt` has no caller and is deleted in [step 8](../steps/8-clean-up.md), which also adds the list-equality test (see [enforcement](../enforcement.md#end-state)). |
 | Category | Spec drift (enforcement record) |
 | Severity | Benign |
 | Verified | Yes |
