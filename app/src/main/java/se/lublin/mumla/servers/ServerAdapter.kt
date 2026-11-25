@@ -27,28 +27,46 @@ import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.widget.PopupMenu
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import se.lublin.humla.model.Server
+import se.lublin.humla.net.SrvResolver
 import se.lublin.mumla.R
 
 /**
  * Created by andrew on 05/05/14.
  */
-abstract class ServerAdapter<E : Server>(context: Context, viewResource: Int, servers: List<E>) :
-    ArrayAdapter<E>(context, 0, servers) {
-    private val mInfoResponses = ConcurrentHashMap<Server, ServerInfoResponse>()
-    private val mPingExecutor: ExecutorService = Executors.newFixedThreadPool(MAX_ACTIVE_PINGS)
+abstract class ServerAdapter<E : Server>(
+    context: Context,
+    viewResource: Int,
+    servers: List<E>,
+    /** One server's ping; injected by tests, the real one in production. */
+    private val ping: suspend (Server, SrvResolver) -> ServerInfoResponse = ::pingServer,
+    /** Where results are stored and the list is notified; the adapter's dispatcher. */
+    mainDispatcher: CoroutineDispatcher = Dispatchers.Main,
+    /** Where the blocking ping runs; the 50-ping cap lives here. */
+    private val pingDispatcher: CoroutineDispatcher =
+        Dispatchers.IO.limitedParallelism(MAX_ACTIVE_PINGS),
+) : ArrayAdapter<E>(context, 0, servers) {
+    // SupervisorJob: a failed ping must not cancel the adapter's other pings.
+    private val scope = CoroutineScope(SupervisorJob() + mainDispatcher)
+    private val resolver = SrvResolver()
+    // Main-confined: written by the ping coroutines after withContext returns.
+    private val mInfoResponses = HashMap<Server, ServerInfoResponse>()
     private val mViewResource: Int = viewResource
 
     /**
-     * Releases the per-adapter ping pool. Call when the adapter is replaced
-     * (updateServers builds a new one every onResume) or torn down; queued
-     * pings are best-effort and die with the pool.
+     * Releases the per-adapter ping scope. Call when the adapter is replaced
+     * (updateServers builds a new one every onResume) or torn down; pings
+     * still in flight are cancelled and their results dropped.
      */
     fun shutdown() {
-        mPingExecutor.shutdownNow()
+        scope.cancel()
     }
 
     override fun getItemId(position: Int): Long {
@@ -112,18 +130,15 @@ abstract class ServerAdapter<E : Server>(context: Context, viewResource: Int, se
             serverLatencyText.text = ""
         }
 
-        // Ping server if available
+        // Ping server if available. A row bound again before the result
+        // arrives starts another ping, as the AsyncTask path did.
         if (infoResponse == null) {
-            val task = object : ServerInfoTask() {
-                override fun onPostExecute(result: ServerInfoResponse?) {
-                    super.onPostExecute(result)
-                    // NPE-exact: ConcurrentHashMap.put rejects null; the original
-                    // dereferenced result unconditionally.
-                    mInfoResponses[server] = result ?: throw NullPointerException("result")
-                    notifyDataSetChanged()
-                }
+            scope.launch {
+                val result = withContext(pingDispatcher) { ping(server, resolver) }
+                // Back on the adapter's dispatcher: store and repaint.
+                mInfoResponses[server] = result
+                notifyDataSetChanged()
             }
-            task.executeOnExecutor(mPingExecutor, server)
         }
 
         return row
@@ -140,6 +155,7 @@ abstract class ServerAdapter<E : Server>(context: Context, viewResource: Int, se
     abstract fun onPopupItemClick(server: Server, menuItem: MenuItem): Boolean
 
     companion object {
-        private const val MAX_ACTIVE_PINGS = 50
+        /** Concurrent pings per adapter; carried over from the ping pool. */
+        internal const val MAX_ACTIVE_PINGS = 50
     }
 }

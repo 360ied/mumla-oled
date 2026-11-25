@@ -19,7 +19,10 @@ package se.lublin.mumla.servers
 
 import android.content.Context
 import android.view.MenuItem
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import se.lublin.humla.model.Server
+import se.lublin.humla.net.SrvResolver
 import se.lublin.mumla.R
 
 /**
@@ -28,8 +31,19 @@ import se.lublin.mumla.R
 class FavouriteServerAdapter(
     context: Context,
     servers: List<Server>,
-    listener: FavouriteServerAdapterMenuListener
-) : ServerAdapter<Server>(context, R.layout.server_list_row, servers) {
+    listener: FavouriteServerAdapterMenuListener,
+    ping: suspend (Server, SrvResolver) -> ServerInfoResponse = ::pingServer,
+    mainDispatcher: CoroutineDispatcher = Dispatchers.Main,
+    pingDispatcher: CoroutineDispatcher =
+        Dispatchers.IO.limitedParallelism(ServerAdapter.MAX_ACTIVE_PINGS),
+) : ServerAdapter<Server>(
+    context,
+    R.layout.server_list_row,
+    servers,
+    ping,
+    mainDispatcher,
+    pingDispatcher,
+) {
 
     private val mListener: FavouriteServerAdapterMenuListener = listener
 
