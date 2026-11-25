@@ -2,8 +2,9 @@
 
 Part of the [target architecture](README.md). Specifies the checks that
 keep the architecture from eroding: the concurrency tripwire, the native
-tripwire, the Android-free package check, the state immutability test, and
-the two remaining conventions.
+tripwire, the Android-free package check, the state immutability test, the
+feature, service-binding, local-facts, R8, and unreferenced-type checks,
+and the two remaining conventions.
 
 All checks run in `./scripts/check.sh` as a new step before the Gradle and
 native suites, implemented as one Python script,
@@ -91,16 +92,52 @@ libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt   4
   Every other change can only lower counts or remove entries.
 - Every migration step's "done" includes lowering the totals.
 
-**Expected end state:** about six files, all at real boundaries: the
-`VoiceEngine` facade (owns the voice control thread and the JNI handle),
-the TCP reader in `HumlaTCP`, `HumlaSSLSocketFactory` (TLS callbacks on the
-socket thread), `CrashReporter` (the uncaught-exception handler),
-`RouteControl` (owns its `HandlerThread` and the handler for platform
-callbacks), and `AppContainer` (the startup settings read).
-
 It is a tripwire, not a proof: text search cannot see atomics used as
-locks or mutability hidden in state. The next two checks cover the most
-likely gaps.
+locks or mutability hidden in state. The
+[state immutability test](#state-immutability-test) and the
+[Android-free package check](#android-free-packages) cover the most likely
+gaps.
+
+### End state
+
+Step 8 reduces the allowlist and `BOUNDARY_FILES` to the same five files,
+all at real boundaries:
+
+```text
+libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt
+libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt
+libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt
+app/src/main/java/se/lublin/mumla/util/CrashReporter.kt
+app/src/main/java/se/lublin/mumla/AppContainer.kt
+```
+
+- `TransportImpl`: the reader thread's blocking socket read.
+- `HumlaSSLSocketFactory`: TLS callbacks on the socket thread.
+- `RouteControl`: owns its `HandlerThread` and the handler for platform
+  callbacks.
+- `CrashReporter`: the uncaught-exception handler.
+- `AppContainer`: the startup settings read.
+
+The planned list above also named `HumlaTCP.kt` and `VoiceEngine.kt`.
+Step 3 moved the TCP reader into `TransportImpl` and left `HumlaTCP`
+without a caller, so step 8 deletes it. Since 5a.4 the `VoiceEngine`
+control thread has been `Dispatchers.IO.limitedParallelism(1)`, which
+matches no pattern.
+
+From step 8, `check_architecture.py` holds this state:
+
+- **Boundary only.** The check fails if an allowlist entry is not in
+  `BOUNDARY_FILES`, or if a `BOUNDARY_FILES` path is not on the allowlist.
+  A boundary file whose last match goes must leave both lists in the same
+  commit, so no unused permission stays behind. A new boundary file is
+  added to the block above and to `BOUNDARY_FILES` in one reviewed change.
+- **The block above is the gate's list.** A test in
+  `test_check_architecture.py` reads the fenced block under this heading
+  and fails unless it equals `BOUNDARY_FILES`.
+- **More patterns.** `\bAsyncTask\b`, `\bExecutorService\b`, and
+  `\bThreadFactory\b` join the forbidden patterns. They are hidden thread
+  pools that the step-1 list missed, and nothing outside the deleted
+  files matched them.
 
 ## State immutability test
 
@@ -213,6 +250,44 @@ is covered by the DAO patterns.
 The session decides local mute, ignore, and self-mute, and its store is
 their only writer (see [state](state.md#self-mute-and-deafen)); before
 step 6, the adapter, the service, and the store all wrote them.
+
+## R8 keep rules
+
+From step 8, `check_architecture.py` fails if `app/proguard-rules.pro`
+names a `se.lublin.` class that has no production source file. This
+includes names after `implements` and `extends`, and the generated
+`protobuf` package counts as production code. For a nested name, only the
+part before the first `$` is checked. A name with a wildcard (`*` or `?`)
+is a pattern: the text before the first wildcard must begin at least one
+production class's fully qualified name. For example,
+`se.lublin.humla.protobuf.Mumble**` matches `Mumble` and `MumbleUDP`.
+When the JNI seams were deleted in step 5a, their keep rules stayed behind
+for step 8 to find. A rule that matches nothing changes nothing in the build,
+but it reads as a live JNI contract.
+
+## Unreferenced types
+
+From step 8, `check_architecture.py` fails on a top-level class,
+interface, or object that is never named again in production code. A
+type fails when all of these hold:
+
+- it is declared under `app/src/main`, `app/src/foss`, or
+  `libraries/humla/src/main/java`, outside the generated `protobuf`
+  package;
+- its simple name appears only once in its own file (the declaration);
+- the name appears in no other production file.
+
+Production files are Kotlin, Java, XML resources and manifests,
+`proguard-rules.pro`, and C++ under `libraries/humla/src/main/jni` outside
+the `opus`, `rnnoise`, and `nanopb` submodules, because JNI looks classes
+up by name. Tests do not count, so a test-only type in `main` fails and
+belongs in `libraries/humla-testing` or a test source set.
+
+The check is deliberately narrow. It catches the usual leftover of a
+migration, a type whose last caller was deleted. It cannot see dead
+members, or dead types that are still named somewhere, such as one that is
+only constructed by another dead type. It has no exception list. If it
+ever needs one, narrow the check instead.
 
 ## Native tripwire
 
