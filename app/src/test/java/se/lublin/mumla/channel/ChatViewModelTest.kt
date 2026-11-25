@@ -146,6 +146,20 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun anImageNeedsKnownServerLimits() = runTest {
+        // Today's image dialog aborted when the server settings were absent.
+        val fixture = Fixture(settings = null)
+        assertEquals(
+            ChatSendResult.LIMITS_UNKNOWN,
+            fixture.viewModel.send("<img/>", image = true),
+        )
+        assertTrue(fixture.sent.isEmpty())
+        // Text sends are not gated on the settings (there was no client-side
+        // text length check before this step).
+        assertEquals(ChatSendResult.SENT, fixture.viewModel.send("hi"))
+    }
+
+    @Test
     fun limitsAreReadFromState() = runTest {
         val fixture = Fixture(settings = limits(messageLength = 5, imageMessageLength = 700))
         assertEquals(ChatLimits(messageLength = 5, imageMessageLength = 700), fixture.viewModel.limits())

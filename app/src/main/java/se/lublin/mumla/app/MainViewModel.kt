@@ -428,4 +428,5 @@ class MainViewModel(
     }
 }
 
-private fun ConnectTarget.displayName(): String? = server.name ?: server.host
+private fun ConnectTarget.displayName(): String? =
+    server.name?.takeIf { it.isNotEmpty() } ?: server.host

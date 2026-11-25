@@ -76,10 +76,14 @@ class ChannelListAdapter(
 
     /** Rebuilds the rows from a new state and repaints what changed. */
     fun submit(state: ChannelListUiState) {
+        val previousState = mState
         val previousRows = mRows
         mState = state
         mRows = buildRows(state)
-        if (mRows.map { it.stableId } != previousRows.map { it.stableId }) {
+        if (previousState.showUserCount != state.showUserCount ||
+            mRows.map { it.stableId } != previousRows.map { it.stableId }
+        ) {
+            // The count column is state-driven, not part of a row's value.
             notifyDataSetChanged()
             return
         }

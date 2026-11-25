@@ -36,6 +36,9 @@ enum class ChatSendResult {
     NOT_CONNECTED,
     NO_TARGET,
     TOO_LARGE,
+
+    /** An image send before the server's message limits are known. */
+    LIMITS_UNKNOWN,
 }
 
 /**
@@ -72,6 +75,11 @@ class ChatViewModel(
     fun send(message: String, image: Boolean = false): ChatSendResult {
         if (clientState.value !is ClientState.Connected) {
             return ChatSendResult.NOT_CONNECTED
+        }
+        if (image && sessionState.value.server.info.settings == null) {
+            // Today's image dialog aborted without server settings rather
+            // than sending an uncapped image.
+            return ChatSendResult.LIMITS_UNKNOWN
         }
         val limits = limits()
         val limit = if (image) limits.imageMessageLength else limits.messageLength

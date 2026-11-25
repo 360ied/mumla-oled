@@ -363,8 +363,12 @@ class ChannelChatFragment : Fragment() {
             return
         }
 
-        if (viewModel.send(message, image = true) == ChatSendResult.TOO_LARGE) {
-            Toast.makeText(requireContext(), R.string.image_too_large, Toast.LENGTH_SHORT).show()
+        when (viewModel.send(message, image = true)) {
+            ChatSendResult.TOO_LARGE ->
+                Toast.makeText(requireContext(), R.string.image_too_large, Toast.LENGTH_SHORT).show()
+            ChatSendResult.LIMITS_UNKNOWN ->
+                Log.w(TAG, "image send before the server's message limits are known")
+            else -> Unit
         }
     }
 

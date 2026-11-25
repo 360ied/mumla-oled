@@ -311,18 +311,27 @@ class ChannelListAdapterTest {
         addChannel(5, "General")
         sync(selfSession = 1)
         join(2, "Alice", 5)
-        adapter.submit(
-            ChannelListUiState(
-                connected = true,
-                session = state,
-                talkActivity = talk,
-                pinnedChannelIds = emptyList(),
-                showUserCount = true,
-            ),
-        )
-        layout()
-        val rootCount = row(0).findViewById<TextView>(R.id.channel_row_count)
+        fun submitWithCount(show: Boolean) {
+            adapter.submit(
+                ChannelListUiState(
+                    connected = true,
+                    session = state,
+                    talkActivity = talk,
+                    pinnedChannelIds = emptyList(),
+                    showUserCount = show,
+                ),
+            )
+            layout()
+        }
+        submitWithCount(true)
+        var rootCount = row(0).findViewById<TextView>(R.id.channel_row_count)
         assertEquals(View.VISIBLE, rootCount.visibility)
         assertEquals("1", rootCount.text.toString())
+
+        // Rows are unchanged; only the state flag differs, so the adapter
+        // must still repaint the column.
+        submitWithCount(false)
+        rootCount = row(0).findViewById<TextView>(R.id.channel_row_count)
+        assertEquals(View.GONE, rootCount.visibility)
     }
 }

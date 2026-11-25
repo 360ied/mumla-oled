@@ -245,6 +245,31 @@ class ChatLogFeatureTest {
         f.close()
     }
 
+    @Test fun receivedTextFromTheSelfSessionIsSelfAuthored() {
+        val f = Fixture()
+        f.start()
+        f.clientState.value = ClientState.Connecting(target(1), 0)
+        kotlinx.coroutines.runBlocking {
+            f.events.emit(
+                SessionEventRecord(
+                    SessionEvent.TextMessageReceived(
+                        actor = 1,
+                        actorName = "Self",
+                        channels = listOf(0),
+                        trees = emptyList(),
+                        users = emptyList(),
+                        message = "echo",
+                        receivedAtMillis = 1L,
+                    ),
+                    goldenState(),
+                ),
+            )
+        }
+        val entry = f.feature.currentMessages().single() as IChatMessage.TextMessage
+        assertTrue("an echo of the self user keeps today's right alignment", entry.isSelfAuthored)
+        f.close()
+    }
+
     @Test fun sentTextIsLoggedOnceWithTheSelfName() {
         val f = Fixture()
         f.start()

@@ -75,7 +75,6 @@ data class ChannelUiState(
     val bluetoothMenuVisible: Boolean = false,
     /** The requested headset toggle, mirrored in the overflow checkmark. */
     val bluetoothHeadset: Boolean = false,
-    val selfChannelName: String? = null,
 )
 
 /**
@@ -128,9 +127,6 @@ class ChannelViewModel(
             voiceTargetMode = session.local.voiceTargetMode(),
             bluetoothMenuVisible = connected,
             bluetoothHeadset = snapshot.bluetoothHeadset,
-            selfChannelName = session.server.self
-                ?.channelId
-                ?.let { session.server.channels[it]?.name },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChannelUiState())
 

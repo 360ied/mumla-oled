@@ -205,7 +205,11 @@ class ChatLogFeature(
                 targetNames = targetNames(event.channels, event.trees, event.users, record.state),
                 body = event.message,
                 receivedTime = event.receivedAtMillis,
-                isSelfAuthored = false,
+                // Today's renderer right-aligned a received line when the
+                // sender was the self user (another client on the same
+                // account): the actor session is authoritative, with the
+                // name check kept for parity when the session is absent.
+                isSelfAuthored = isSelfAuthored(event, record.state),
             )
             is SessionEvent.TextMessageSent -> IChatMessage.TextMessage(
                 actorName = record.state.server.self?.name,
@@ -216,6 +220,18 @@ class ChatLogFeature(
             )
             else -> null
         }
+    }
+
+    private fun isSelfAuthored(
+        event: SessionEvent.TextMessageReceived,
+        state: SessionState,
+    ): Boolean {
+        val selfSession = state.server.selfSession
+        if (event.actor != null && selfSession != null) {
+            return event.actor == selfSession
+        }
+        val selfName = state.server.self?.name
+        return selfName != null && event.actorName == selfName
     }
 
     private fun targetNames(

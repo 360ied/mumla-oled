@@ -95,6 +95,9 @@ class ChannelListViewModel(
 
     private val pinnedChannels = MutableStateFlow<List<Int>>(emptyList())
 
+    /** Only the newest pinned read may publish; a pin toggle outruns a load. */
+    private var pinnedLoadGeneration = 0
+
     val state: StateFlow<ChannelListUiState> = combine(
         clientState,
         sessionState,
@@ -119,10 +122,11 @@ class ChannelListViewModel(
                 .map { (it as? ClientState.Connected)?.target?.server?.serverId }
                 .distinctUntilChanged()
                 .collect { serverId ->
-                    pinnedChannels.value = if (serverId == null) {
-                        emptyList()
+                    if (serverId == null) {
+                        pinnedLoadGeneration++
+                        pinnedChannels.value = emptyList()
                     } else {
-                        loadPinnedChannels(serverId)
+                        reloadPinnedChannels(serverId)
                     }
                 }
         }
@@ -182,7 +186,7 @@ class ChannelListViewModel(
         viewModelScope.launch {
             savePinnedChannel(serverId, channelId, pinned)
             // Re-read: the menu's checkmark and pinned-only roots come from here.
-            pinnedChannels.value = loadPinnedChannels(serverId)
+            reloadPinnedChannels(serverId)
         }
     }
 
@@ -249,10 +253,25 @@ class ChannelListViewModel(
         return true
     }
 
-    /** The saved server's database id, from the connect target. */
-    private fun currentServerId(): Long? {
-        val connected = clientState.value as? ClientState.Connected ?: return null
-        val id = connected.target.server.serverId
-        return if (id == -1L) null else id
+    /**
+     * Starts a pinned-list read and publishes it only if no newer read
+     * started in the meantime.
+     */
+    private fun reloadPinnedChannels(serverId: Long) {
+        val generation = ++pinnedLoadGeneration
+        viewModelScope.launch {
+            val pinned = loadPinnedChannels(serverId)
+            if (generation == pinnedLoadGeneration) {
+                pinnedChannels.value = pinned
+            }
+        }
     }
+
+    /**
+     * The connect target's database id, from client.state. The unsaved
+     * sentinel -1 is kept: ad-hoc servers pin their channels under -1, as
+     * they always have.
+     */
+    private fun currentServerId(): Long? =
+        (clientState.value as? ClientState.Connected)?.target?.server?.serverId
 }

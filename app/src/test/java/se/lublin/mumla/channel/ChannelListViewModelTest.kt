@@ -87,10 +87,10 @@ class ChannelListViewModelTest {
         override fun setVoiceTarget(id: Int) { calls.add("voiceTarget:$id") }
     }
 
-    private inner class Fixture {
+    private inner class Fixture(private val serverId: Long = 42L) {
         val clientState = MutableStateFlow<ClientState>(
             ClientState.Connected(
-                testTarget().copy(server = testTarget().server.copy(serverId = 42L)),
+                testTarget().copy(server = testTarget().server.copy(serverId = serverId)),
                 mock(Session::class.java),
             ),
         )
@@ -234,6 +234,61 @@ class ChannelListViewModelTest {
         fixture.viewModel.setChannelPinned(9, true)
         testScheduler.runCurrent()
         assertTrue(fixture.viewModel.isChannelPinned(9))
+    }
+
+    @Test
+    fun adHocServersPinUnderTheUnsavedSentinel() = runTest {
+        val fixture = Fixture(serverId = -1L)
+        fixture.pinned[-1L] = mutableListOf()
+        subscribe(fixture)
+        assertTrue(fixture.viewModel.state.value.pinnedChannelIds.isEmpty())
+        fixture.viewModel.setChannelPinned(5, true)
+        testScheduler.runCurrent()
+        assertEquals(listOf("-1:5:true"), fixture.saves)
+        assertTrue(fixture.viewModel.isChannelPinned(5))
+    }
+
+    @Test
+    fun aStalePinnedReadDoesNotOverwriteANewerOne() = runTest {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val stored = mutableListOf(5)
+        var loads = 0
+        val clientState = MutableStateFlow<ClientState>(
+            ClientState.Connected(
+                testTarget().copy(server = testTarget().server.copy(serverId = 42L)),
+                mock(Session::class.java),
+            ),
+        )
+        val actions = RecordingActions()
+        val viewModel = ChannelListViewModel(
+            clientState = clientState,
+            sessionState = MutableStateFlow(syncedState()),
+            talkActivity = MutableStateFlow(TalkActivity.initial()),
+            settings = MutableStateFlow(testSnapshot()),
+            loadPinnedChannels = {
+                loads++
+                if (loads == 1) {
+                    gate.await()
+                    listOf(5)
+                } else {
+                    stored.toList()
+                }
+            },
+            savePinnedChannel = { _, _, pinned ->
+                if (pinned) stored.add(9) else stored.remove(9)
+            },
+            actions = actions,
+        )
+        backgroundScope.launch { viewModel.state.collect {} }
+        testScheduler.runCurrent()
+        // The initial read is in flight; a pin toggle saves and reads again.
+        viewModel.setChannelPinned(9, true)
+        testScheduler.runCurrent()
+        assertEquals(listOf(5, 9), viewModel.state.value.pinnedChannelIds)
+        // The older read now returns a pre-toggle snapshot and must lose.
+        gate.complete(Unit)
+        testScheduler.runCurrent()
+        assertEquals(listOf(5, 9), viewModel.state.value.pinnedChannelIds)
     }
 
     @Test

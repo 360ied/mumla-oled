@@ -22,6 +22,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -41,14 +42,25 @@ class AccessTokenViewModel(
     private val _tokens = MutableStateFlow<List<String>>(emptyList())
     val tokens: StateFlow<List<String>> = _tokens.asStateFlow()
 
-    init {
-        viewModelScope.launch {
-            _tokens.value = try {
-                loadTokens(serverId)
-            } catch (e: Exception) {
-                // A read failure leaves the empty list; the screen still works.
-                emptyList()
-            }
+    /**
+     * FIFO chain for storage work: the initial load always finishes before
+     * the first edit, so a token added while the read is in flight cannot be
+     * overwritten by that read's snapshot.
+     */
+    private var storageTail: Job = viewModelScope.launch {
+        _tokens.value = try {
+            loadTokens(serverId)
+        } catch (e: Exception) {
+            // A read failure leaves the empty list; the screen still works.
+            emptyList()
+        }
+    }
+
+    private fun enqueueStorage(block: suspend () -> Unit) {
+        val previous = storageTail
+        storageTail = viewModelScope.launch {
+            previous.join()
+            block()
         }
     }
 
@@ -61,7 +73,7 @@ class AccessTokenViewModel(
         if (token.isEmpty()) {
             return
         }
-        viewModelScope.launch {
+        enqueueStorage {
             _tokens.update { it + token }
             addToken(serverId, token)
             sendTokens(_tokens.value)
@@ -70,16 +82,15 @@ class AccessTokenViewModel(
 
     /** Removes one occurrence of [token] (the tapped row) and pushes the list. */
     fun remove(token: String) {
-        viewModelScope.launch {
+        enqueueStorage {
             val index = _tokens.value.indexOf(token)
-            if (index < 0) {
-                return@launch
+            if (index >= 0) {
+                _tokens.update { current ->
+                    current.toMutableList().also { it.removeAt(index) }
+                }
+                removeToken(serverId, token)
+                sendTokens(_tokens.value)
             }
-            _tokens.update { current ->
-                current.toMutableList().also { it.removeAt(index) }
-            }
-            removeToken(serverId, token)
-            sendTokens(_tokens.value)
         }
     }
 }

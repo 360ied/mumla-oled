@@ -398,6 +398,12 @@ class MainViewModelTest {
         val connected = f.viewModel.connection.value as ConnectionUi.Connected
         assertEquals(testTarget().server.host, connected.host)
         assertEquals(testTarget().server.name ?: testTarget().server.host, connected.serverName)
+
+        // Server.getName() treats an empty name as absent; so must the screen.
+        val unnamed = ConnectionUi.Connected(
+            testTarget().copy(server = testTarget().server.copy(name = "")),
+        )
+        assertEquals(testTarget().server.host, unnamed.serverName)
     }
 
     @Test

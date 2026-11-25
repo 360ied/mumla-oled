@@ -80,6 +80,26 @@ class AccessTokenViewModelTest {
     }
 
     @Test
+    fun anEditMadeWhileLoadingIsNotLost() = runTest {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val stored = mutableListOf("alpha")
+        val sent = ArrayList<List<String>>()
+        val viewModel = AccessTokenViewModel(
+            serverId = SERVER_ID,
+            loadTokens = { gate.await(); stored.toList() },
+            addToken = { _, token -> stored.add(token) },
+            removeToken = { _, token -> stored.remove(token) },
+            sendTokens = { tokens -> sent.add(tokens) },
+        )
+        // The load is suspended; the edit waits for it instead of racing it.
+        viewModel.add("beta")
+        gate.complete(Unit)
+        testScheduler.runCurrent()
+        assertEquals(listOf("alpha", "beta"), viewModel.tokens.value)
+        assertEquals(listOf(listOf("alpha", "beta")), sent)
+    }
+
+    @Test
     fun blankInputIsIgnored() = runTest {
         val fixture = Fixture()
         fixture.viewModel.add("   ")
