@@ -269,6 +269,10 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
     /** Collects the connection, its dialogs, and the crash prompt. */
     private fun collectState() {
         val runtime = container.runtime
+        // Seed the comparison with the state this instance was created in:
+        // the first collected value must not look like a transition, or a
+        // rotation while connected would replace the restored screen.
+        mLastRendered = viewModel.connection.value
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { viewModel.connection.collect { renderConnection(it) } }
@@ -688,29 +692,33 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
         drawerAdapter?.notifyDataSetChanged()
         supportInvalidateOptionsMenu()
 
-        val previous = mLastRendered
-        if (connection is ConnectionUi.Connected && previous !is ConnectionUi.Connected) {
-            // A pending switch/retry is moot once connected: the ViewModel
-            // clears its own pending target at the Idle it connected from.
-            val settings = mSettings ?: throw NullPointerException("mSettings")
-            if (settings.shouldStartUpInPinnedMode) {
-                loadDrawerFragment(DrawerAdapter.ITEM_PINNED_CHANNELS)
-            } else {
-                loadDrawerFragment(DrawerAdapter.ITEM_SERVER)
-            }
-            // Swap screens synchronously: commit() alone leaves the server
-            // list visible and tappable until the next traversal, while the
-            // connecting dialog was dismissed above.
-            supportFragmentManager.executePendingTransactions()
-            drawerAdapter?.notifyDataSetChanged()
-            supportInvalidateOptionsMenu()
-        } else if (connection !is ConnectionUi.Connected && previous is ConnectionUi.Connected) {
-            // Re-show the server list when the connection ends while a
-            // session-only screen is up.
-            if (isConnectedOnlyContent()) {
-                loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES)
+        when (connectionScreenTransition(mLastRendered, connection)) {
+            ConnectionScreenTransition.OPEN_SESSION -> {
+                // A pending switch/retry is moot once connected: the
+                // ViewModel clears its own pending target at the Idle it
+                // connected from.
+                val settings = mSettings ?: throw NullPointerException("mSettings")
+                if (settings.shouldStartUpInPinnedMode) {
+                    loadDrawerFragment(DrawerAdapter.ITEM_PINNED_CHANNELS)
+                } else {
+                    loadDrawerFragment(DrawerAdapter.ITEM_SERVER)
+                }
+                // Swap screens synchronously: commit() alone leaves the server
+                // list visible and tappable until the next traversal, while the
+                // connecting dialog was dismissed above.
                 supportFragmentManager.executePendingTransactions()
+                drawerAdapter?.notifyDataSetChanged()
+                supportInvalidateOptionsMenu()
             }
+            ConnectionScreenTransition.SHOW_FAVOURITES -> {
+                // Re-show the server list when the connection ends while a
+                // session-only screen is up.
+                if (isConnectedOnlyContent()) {
+                    loadDrawerFragment(DrawerAdapter.ITEM_FAVOURITES)
+                    supportFragmentManager.executePendingTransactions()
+                }
+            }
+            ConnectionScreenTransition.NONE -> Unit
         }
         mLastRendered = connection
     }
@@ -723,6 +731,7 @@ class MumlaActivity : BaseActivity(), AdapterView.OnItemClickListener,
             fragment is AccessTokenFragment
     }
 
+    /** The previously rendered connection; see [collectState] for the seed. */
     private var mLastRendered: ConnectionUi? = null
 
     private fun updateConnectionDialogs() {

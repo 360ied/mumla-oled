@@ -99,6 +99,10 @@ class MainViewModelTest {
         )
     }
 
+    private object ClientConnectionUi {
+        fun idle(): ConnectionUi = ConnectionUi.Disconnected
+    }
+
     private fun server(
         host: String = "mumble.example.org",
         id: Long = -1L,
@@ -394,6 +398,37 @@ class MainViewModelTest {
         val connected = f.viewModel.connection.value as ConnectionUi.Connected
         assertEquals(testTarget().server.host, connected.host)
         assertEquals(testTarget().server.name ?: testTarget().server.host, connected.serverName)
+    }
+
+    @Test
+    fun onlyObservedTransitionsMoveTheContent() {
+        val connected = ConnectionUi.Connected(testTarget())
+        val disconnected: ConnectionUi = ConnectionUi.Disconnected
+        val connecting: ConnectionUi = ConnectionUi.Connecting(testTarget())
+        // A fresh connect the screen watched: open the session screen.
+        assertEquals(
+            ConnectionScreenTransition.OPEN_SESSION,
+            connectionScreenTransition(disconnected, connected),
+        )
+        assertEquals(
+            ConnectionScreenTransition.OPEN_SESSION,
+            connectionScreenTransition(connecting, connected),
+        )
+        // A screen created while already connected (rotation): no switch.
+        assertEquals(
+            ConnectionScreenTransition.NONE,
+            connectionScreenTransition(connected, connected),
+        )
+        // The connection ends while the screen is up: back to favourites.
+        assertEquals(
+            ConnectionScreenTransition.SHOW_FAVOURITES,
+            connectionScreenTransition(connected, ClientConnectionUi.idle()),
+        )
+        // Unrelated changes never move the content.
+        assertEquals(
+            ConnectionScreenTransition.NONE,
+            connectionScreenTransition(disconnected, connecting),
+        )
     }
 
     @Test

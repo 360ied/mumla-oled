@@ -75,6 +75,26 @@ sealed interface ConnectionUi {
     }
 }
 
+/** What the main screen's content frame should do on a connection change. */
+enum class ConnectionScreenTransition { NONE, OPEN_SESSION, SHOW_FAVOURITES }
+
+/**
+ * The content-frame rule, kept pure so it can be pinned: only a transition
+ * observed by this screen moves the content. A screen created while already
+ * connected sees no transition, so a rotation never replaces the restored
+ * fragment.
+ */
+fun connectionScreenTransition(
+    previous: ConnectionUi?,
+    current: ConnectionUi,
+): ConnectionScreenTransition = when {
+    current is ConnectionUi.Connected && previous is ConnectionUi.Connected ->
+        ConnectionScreenTransition.NONE
+    current is ConnectionUi.Connected -> ConnectionScreenTransition.OPEN_SESSION
+    previous is ConnectionUi.Connected -> ConnectionScreenTransition.SHOW_FAVOURITES
+    else -> ConnectionScreenTransition.NONE
+}
+
 /**
  * A TLS trust decision the screen must show. [kind] picks today's dialog:
  * a mismatch cannot be pinned, the other two can.

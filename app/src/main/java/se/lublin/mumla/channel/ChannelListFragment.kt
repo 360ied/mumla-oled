@@ -58,6 +58,7 @@ class ChannelListFragment : Fragment() {
     private var mActionMode: ActionMode? = null
     private var mSelfState: Pair<Boolean, Boolean>? = null
     private var mLastSelfChannel: Int? = null
+    private var mSelfChannelSeeded = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -115,15 +116,23 @@ class ChannelListFragment : Fragment() {
 
     /** Scrolls to the self user's channel when it changes, as the old callback did. */
     private fun renderSelfChannel(state: ChannelListUiState) {
+        if (!state.connected) {
+            mLastSelfChannel = null
+            mSelfChannelSeeded = false
+            return
+        }
         val selfChannel = state.server.self?.channelId
-        if (state.connected && selfChannel != mLastSelfChannel) {
+        if (!mSelfChannelSeeded) {
+            // The first value is the screen's starting point, not a move.
+            mSelfChannelSeeded = true
+            mLastSelfChannel = selfChannel
+            return
+        }
+        if (selfChannel != mLastSelfChannel) {
             mLastSelfChannel = selfChannel
             if (selfChannel != null) {
                 scrollToChannel(selfChannel)
             }
-        }
-        if (!state.connected) {
-            mLastSelfChannel = null
         }
     }
 
