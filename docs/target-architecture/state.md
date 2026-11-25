@@ -161,11 +161,12 @@ body, so it is not part of the data class's value (and not walked by the
 it first computes it, concurrent first reads are harmless, and values that
 no screen reads never pay for it.
 
-**Derived reads** that today live on the model objects come from state:
-`IChannel.isListening` is "the self user's `listeningChannels` contains this
-channel"; `listeningVolume` is `local.listeningVolumes`; `hasTexture` is
-`texture != null && !texture.isEmpty`, as today; `UserInfo.userId` is
-`null` where today's `User.userId` is `-1`.
+**Derived reads** come from state ([Reading state](#reading-state) lists the
+helpers): `ChannelInfo.isListening(state)` is "the self user's
+`listeningChannels` contains this channel"; `listeningVolume` is
+`local.listeningVolumes`; `hasTexture` is `texture != null &&
+!texture.isEmpty`; `UserInfo.userId` is `null` where the pre-migration
+`User.userId` was `-1`.
 
 **Not in `SessionState`**, because they change too often or belong
 elsewhere:

@@ -210,8 +210,8 @@ public:
     behavior, not an accident: a press shorter than the 10 ms frame it would
     have to fill is not a transmission attempt, and answering it with a
     150 ms hangover and an empty burst (as the pre-refactor engine did) is
-    the thing that was wrong. Only the direct UI path
-    (`HumlaService.setTalkingState`) can produce it at all; the
+    the thing that was wrong. Only the direct UI path (`Session.setPtt`)
+    can produce it at all; the
     `VoicePolicy` path already samples per frame. A press that any single
     frame observes arms the full hangover, however brief.
 
@@ -610,7 +610,7 @@ data class VoiceSettings(
     val vadMax: Float,                        // Settings.detectionThreshold, via today's
     val vadMin: Float,                        //   ActivityInputMode.setThreshold mapping
     val amplitudeBoost: Float,                // Settings.amplitudeBoostMultiplier
-    val targetBitrate: Int,                   // Settings.inputQuality (today's ConfigDelta.inputQuality)
+    val targetBitrate: Int,                   // Settings.inputQuality
     val targetFramesPerPacket: Int,           // Settings.framesPerPacket
     val halfDuplex: Boolean,                  // Raw Settings.isHalfDuplex preference; the effective value sent to native is raw && inputMode == PUSH_TO_TALK, derived at the push
     val adaptiveLeveler: Boolean,             // Settings.isAdaptiveLevelerEnabled

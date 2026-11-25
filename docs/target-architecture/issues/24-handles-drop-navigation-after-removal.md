@@ -7,8 +7,8 @@
 | Severity | Benign |
 | Verified | Yes, against the current tree and the pre-step-2 tree |
 | Area | State / compatibility handles |
-| Spec | [state.md § Compatibility handles](../state.md#compatibility-handles-migration-only) |
-| Code | `libraries/humla/src/main/java/se/lublin/humla/state/Handles.kt` (`UserHandle.channel` around line 58; `ChannelHandle.parent`, `users`, `subchannels`, `links`, `subchannelUserCount` around lines 134-170); `libraries/humla/src/test/java/se/lublin/humla/state/HandlesTest.kt` (`testScalarsCachedAfterRemove`, `testRemovedUserKeepsScalars`) |
+| Spec | `state.md` § Compatibility handles (removed in step 7; [Reading state](../state.md#reading-state) replaces it) |
+| Code | `libraries/humla/src/main/java/se/lublin/humla/state/Handles.kt` (`UserHandle.channel` around line 58; `ChannelHandle.parent`, `users`, `subchannels`, `links`, `subchannelUserCount` around lines 134-170); `libraries/humla/src/test/java/se/lublin/humla/state/HandlesTest.kt` (`testScalarsCachedAfterRemove`, `testRemovedUserKeepsScalars`); both deleted in step 7 |
 | Gates | Not gating; a one-sentence spec fix |
 
 Line numbers below refer to `master` at `092d9dc8`.
