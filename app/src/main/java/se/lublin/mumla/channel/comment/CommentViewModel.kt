@@ -19,6 +19,7 @@ package se.lublin.mumla.channel.comment
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.protobuf.ByteString
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -38,9 +39,9 @@ data class CommentUiState(
 
 /**
  * A user's comment or a channel's description, read from the session-state
- * mirror. When state carries a hash but no text the blob is requested once;
- * the text then arrives through state, replacing the fragments' one-shot
- * observers.
+ * mirror. When state carries a hash but no text the blob is requested, once
+ * per hash; the text then arrives through state, replacing the fragments'
+ * one-shot observers.
  */
 class CommentViewModel(
     private val target: Target,
@@ -54,9 +55,16 @@ class CommentViewModel(
         data class Channel(val channelId: Int) : Target
     }
 
-    private data class Lookup(val text: String?, val hasHash: Boolean)
+    private data class Lookup(val text: String?, val hash: ByteString?) {
+        val hasHash: Boolean get() = hash != null
+    }
 
-    private var requested = false
+    /**
+     * The hash last requested. A comment changed while the dialog is open
+     * arrives as a new hash with the text cleared, so each new hash is
+     * requested once; the same hash never twice.
+     */
+    private var requestedHash: ByteString? = null
 
     // Seeded from the current state, so a text already in state shows on the
     // first frame instead of after a "Loading…" placeholder.
@@ -67,17 +75,15 @@ class CommentViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, uiState(lookup(sessionState.value)))
 
     init {
-        // One request per dialog: the server answers over TCP and the text
+        // One request per hash: the server answers over TCP and the text
         // then arrives through state. Runs on the main thread like every
         // other ViewModel action.
         viewModelScope.launch {
             sessionState.collect { current ->
-                if (requested) {
-                    return@collect
-                }
                 val found = lookup(current) ?: return@collect
-                if (found.text == null && found.hasHash) {
-                    requested = true
+                val hash = found.hash
+                if (found.text == null && hash != null && hash != requestedHash) {
+                    requestedHash = hash
                     requestBlob()
                 }
             }
@@ -96,10 +102,10 @@ class CommentViewModel(
 
     private fun lookup(state: SessionState): Lookup? = when (target) {
         is Target.User -> state.server.users[target.session]?.let {
-            Lookup(it.comment, it.commentHash != null)
+            Lookup(it.comment, it.commentHash)
         }
         is Target.Channel -> state.server.channels[target.channelId]?.let {
-            Lookup(it.description, it.descriptionHash != null)
+            Lookup(it.description, it.descriptionHash)
         }
     }
 }

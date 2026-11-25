@@ -30,6 +30,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import se.lublin.humla.state.ChannelInfo
@@ -118,18 +119,49 @@ class CommentViewModelTest {
     }
 
     @Test
-    fun hashWithoutTextRequestsTheBlobOnce() {
+    fun hashWithoutTextRequestsTheBlobOncePerHash() {
         val fixture = Fixture(CommentViewModel.Target.User(SESSION))
         fixture.withUser(comment = null, hash = ByteString.copyFromUtf8("h"))
         assertNull(fixture.viewModel.state.value.comment)
         assertEquals(1, fixture.requests)
-        // Later state emissions must not re-request.
+        // Later emissions with the same hash must not re-request.
         fixture.withUser(comment = null, hash = ByteString.copyFromUtf8("h"))
-        fixture.withUser(comment = null, hash = ByteString.copyFromUtf8("h2"))
         assertEquals(1, fixture.requests)
         // The arriving text replaces the loading state.
-        fixture.withUser(comment = "arrived", hash = ByteString.copyFromUtf8("h"))
+        fixture.withUser(comment = "arrived", hash = null)
         assertEquals("arrived", fixture.viewModel.state.value.comment)
+    }
+
+    @Test
+    fun aCommentChangedWhileOpenIsRequestedAgain() {
+        // The server announces a changed comment as a new hash and the state
+        // clears the text; the open dialog must fetch it, not stay loading.
+        val fixture = Fixture(CommentViewModel.Target.User(SESSION))
+        fixture.withUser(comment = null, hash = ByteString.copyFromUtf8("h"))
+        fixture.withUser(comment = "first", hash = null)
+        fixture.withUser(comment = null, hash = ByteString.copyFromUtf8("h2"))
+        assertNull(fixture.viewModel.state.value.comment)
+        assertEquals(2, fixture.requests)
+        fixture.withUser(comment = "second", hash = null)
+        assertEquals("second", fixture.viewModel.state.value.comment)
+        assertEquals(2, fixture.requests)
+    }
+
+    @Test
+    fun aRefusedSaveReachesTheCaller() {
+        // The factory refuses channel description edits by throwing; save
+        // must not swallow that.
+        val viewModel = CommentViewModel(
+            target = CommentViewModel.Target.Channel(CHANNEL),
+            sessionState = MutableStateFlow(emptySessionState()),
+            requestBlob = {},
+            setComment = { throw UnsupportedOperationException("read-only") },
+        )
+        try {
+            viewModel.save("text")
+            fail("save swallowed the refusal")
+        } catch (expected: UnsupportedOperationException) {
+        }
     }
 
     @Test
