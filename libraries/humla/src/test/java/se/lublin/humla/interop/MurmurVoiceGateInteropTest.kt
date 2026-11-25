@@ -41,7 +41,6 @@ import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.HumlaClient
 import se.lublin.humla.client.Session
 import se.lublin.humla.util.HumlaException
-import se.lublin.humla.util.IHumlaObserver
 import se.lublin.humla.util.VoiceTargetMode
 import se.lublin.humla.voice.InputMode
 import se.lublin.humla.voice.PolicyCollector
@@ -95,7 +94,7 @@ class MurmurVoiceGateInteropTest {
         val receiverSession = InteropClient.awaitConnected(receiverHandle.client, "receiver sync")
         val senderHandle = connectHandle("InteropBob", null, InteropClient.Voice.UDP)
         val senderSession = InteropClient.awaitConnected(senderHandle.client, "sender sync")
-        val senderId = senderSession.getSessionId()
+        val senderId = senderSession.state.value.server.selfSession!!
         InteropClient.awaitUser(receiverSession, "InteropBob", "receiver sees sender")
         InteropClient.awaitUser(senderSession, "InteropAlice", "sender sees receiver")
         InteropClient.awaitUsingUdp(receiverSession, true, "receiver on UDP", 15L)
@@ -297,7 +296,7 @@ class MurmurVoiceGateInteropTest {
             server!!.host(), server!!.port(), username, password, trustStore,
             voice == InteropClient.Voice.FORCED_TCP,
         )
-        val handle = InteropClient.create(noopObserver(), voice)
+        val handle = InteropClient.create(voice)
         open.add(handle)
         handle.client.connect(target)
         return handle
@@ -325,38 +324,4 @@ class MurmurVoiceGateInteropTest {
         return store.toString()
     }
 
-    private fun noopObserver(): IHumlaObserver {
-        return object : IHumlaObserver {
-            override fun onConnected() {}
-            override fun onConnecting() {}
-            override fun onDisconnected(e: HumlaException?) {}
-            override fun onTLSHandshakeFailed(
-                chain: Array<java.security.cert.X509Certificate>?,
-                failure: se.lublin.humla.net.HandshakeFailure?,
-                verifiedHost: String?,
-            ) {
-            }
-            override fun onChannelAdded(channel: se.lublin.humla.model.IChannel?) {}
-            override fun onChannelStateUpdated(channel: se.lublin.humla.model.IChannel?) {}
-            override fun onChannelRemoved(channel: se.lublin.humla.model.IChannel?) {}
-            override fun onChannelPermissionsUpdated(channel: se.lublin.humla.model.IChannel?) {}
-            override fun onUserConnected(user: se.lublin.humla.model.IUser?) {}
-            override fun onUserStateUpdated(user: se.lublin.humla.model.IUser?) {}
-            override fun onUserTalkStateUpdated(user: se.lublin.humla.model.IUser?) {}
-            override fun onUserJoinedChannel(
-                user: se.lublin.humla.model.IUser?,
-                newChannel: se.lublin.humla.model.IChannel?,
-                oldChannel: se.lublin.humla.model.IChannel?,
-            ) {
-            }
-            override fun onUserRemoved(user: se.lublin.humla.model.IUser?, reason: String?) {}
-            override fun onPermissionDenied(reason: String?) {}
-            override fun onMessageLogged(message: se.lublin.humla.model.IMessage?) {}
-            override fun onVoiceTargetChanged(mode: VoiceTargetMode?) {}
-            override fun onBluetoothScoChanged(active: Boolean) {}
-            override fun onLogInfo(message: String?) {}
-            override fun onLogWarning(message: String?) {}
-            override fun onLogError(message: String?) {}
-        }
-    }
 }

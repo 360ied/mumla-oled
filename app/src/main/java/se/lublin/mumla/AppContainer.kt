@@ -153,7 +153,6 @@ open class AppContainer(
             voiceSettings = voiceSettings,
             routePreferences = routePreferences,
             localFacts = localFactsStore,
-            denyFormatter = denyFormatter,
             clock = Clock.systemUTC(),
         ),
         edges = runtimeEdges,

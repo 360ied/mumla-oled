@@ -36,8 +36,8 @@ import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.view.ContextThemeWrapper
 import androidx.core.content.ContextCompat
-import se.lublin.humla.model.IMessage
 import se.lublin.mumla.R
+import se.lublin.mumla.service.IChatMessage
 import se.lublin.mumla.Settings
 import se.lublin.mumla.app.MumlaApplication
 import se.lublin.mumla.feature.ConnectionNotificationView
@@ -296,7 +296,7 @@ class AndroidFeaturePlatform(
 
     private inner class AndroidMessageNotifications : MessageNotificationsView {
         private val view = MumlaMessageNotification(context)
-        override fun show(message: IMessage) = view.show(message)
+        override fun show(message: IChatMessage.TextMessage) = view.show(message)
         override fun dismiss() = view.dismiss()
     }
 

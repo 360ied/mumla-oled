@@ -20,9 +20,9 @@ package se.lublin.mumla.feature
 import android.app.Notification
 import android.content.BroadcastReceiver
 import kotlinx.coroutines.flow.StateFlow
-import se.lublin.humla.model.IMessage
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.voice.TalkActivity
+import se.lublin.mumla.service.IChatMessage
 
 /**
  * Android edges behind small interfaces: a feature's test passes a fake, the
@@ -61,7 +61,7 @@ interface TtsSpeaker {
 }
 
 interface MessageNotificationsView {
-    fun show(message: IMessage)
+    fun show(message: IChatMessage.TextMessage)
     fun dismiss()
 }
 
@@ -156,7 +156,7 @@ private object NoopTtsSpeaker : TtsSpeaker {
 }
 
 private object NoopMessageNotifications : MessageNotificationsView {
-    override fun show(message: IMessage) = Unit
+    override fun show(message: IChatMessage.TextMessage) = Unit
     override fun dismiss() = Unit
 }
 

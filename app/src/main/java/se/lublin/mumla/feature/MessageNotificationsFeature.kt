@@ -22,11 +22,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import se.lublin.humla.client.ClientState
-import se.lublin.humla.model.IMessage
-import se.lublin.humla.model.Message
 import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SessionEventRecord
 import se.lublin.mumla.PrefSnapshot
+import se.lublin.mumla.service.IChatMessage
 
 /** Message heads-up notifications; never suppressed by chat visibility. */
 class MessageNotificationsFeature(
@@ -35,28 +34,26 @@ class MessageNotificationsFeature(
     private val settings: StateFlow<PrefSnapshot>,
     private val platform: FeaturePlatform,
     /** Test seam for a slow notification manager. */
-    private val postSink: (suspend (IMessage) -> Unit)? = null,
+    private val postSink: (suspend (IChatMessage.TextMessage) -> Unit)? = null,
 ) {
     private var view: MessageNotificationsView? = null
 
     fun start(scope: CoroutineScope) {
         val child = scope.featureChild()
-        val sink = postSink ?: { message: IMessage ->
+        val sink = postSink ?: { message: IChatMessage.TextMessage ->
             if (settings.value.chatNotify) ensureView().show(message)
         }
-        val queue = FeatureEventQueue<IMessage>(child) { sink(it) }
+        val queue = FeatureEventQueue<IChatMessage.TextMessage>(child) { sink(it) }
         child.launch {
             events.collect { record ->
                 val event = record.event
                 if (event is SessionEvent.TextMessageReceived) {
                     queue.offer(
-                        Message(
-                            event.actor ?: -1,
-                            event.actorName,
-                            emptyList(),
-                            emptyList(),
-                            emptyList(),
-                            event.message,
+                        IChatMessage.TextMessage(
+                            actorName = event.actorName,
+                            targetNames = emptyList(),
+                            body = event.message,
+                            receivedTime = event.receivedAtMillis,
                         ),
                     )
                 }

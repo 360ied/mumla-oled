@@ -27,7 +27,7 @@ import org.junit.Test
 import se.lublin.humla.model.TalkState
 import se.lublin.humla.protobuf.Mumble
 import se.lublin.humla.state.SessionState
-import se.lublin.humla.state.UserHandle
+import se.lublin.humla.state.talkStateOf
 import se.lublin.humla.state.applyChannelState
 import se.lublin.humla.state.applyUserState
 import se.lublin.humla.state.emptySessionState
@@ -72,23 +72,23 @@ class TalkActivityPublisherTest {
 
         assertEquals(
             TalkState.PASSIVE,
-            UserHandle(2, flow, publisher.talkActivity).talkState,
+            flow.value.talkStateOf(2, publisher.talkActivity.value),
         )
         publisher.updateAll(mapOf(2 to TalkState.TALKING), false)
         assertEquals(
             TalkState.TALKING,
-            UserHandle(2, flow, publisher.talkActivity).talkState,
+            flow.value.talkStateOf(2, publisher.talkActivity.value),
         )
         publisher.updateAll(mapOf(2 to TalkState.SHOUTING), false)
         assertEquals(
             TalkState.SHOUTING,
-            UserHandle(2, flow, publisher.talkActivity).talkState,
+            flow.value.talkStateOf(2, publisher.talkActivity.value),
         )
         // A fresh table without the user reads passive, no event needed.
         publisher.updateAll(emptyMap(), false)
         assertEquals(
             TalkState.PASSIVE,
-            UserHandle(2, flow, publisher.talkActivity).talkState,
+            flow.value.talkStateOf(2, publisher.talkActivity.value),
         )
     }
 
@@ -117,7 +117,7 @@ class TalkActivityPublisherTest {
         publisher.updateAll(mapOf(2 to TalkState.TALKING), true)
         assertEquals(
             TalkState.TALKING,
-            UserHandle(2, flow, publisher.talkActivity).talkState,
+            flow.value.talkStateOf(2, publisher.talkActivity.value),
         )
         // Stop: native clears engines/rings and the notifier delivers the
         // final empty snapshot (remote + self atomically); no stale entry
@@ -127,7 +127,7 @@ class TalkActivityPublisherTest {
         assertTrue(publisher.talkActivity.value.users.isEmpty())
         assertEquals(
             TalkState.PASSIVE,
-            UserHandle(2, flow, publisher.talkActivity).talkState,
+            flow.value.talkStateOf(2, publisher.talkActivity.value),
         )
     }
 

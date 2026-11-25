@@ -37,7 +37,7 @@ import se.lublin.humla.state.SessionEventRecord
 @Config(sdk = [34])
 class MessageNotificationsFeatureTest {
 
-    private class Fixture(postSink: (suspend (se.lublin.humla.model.IMessage) -> Unit)? = null) {
+    private class Fixture(postSink: (suspend (se.lublin.mumla.service.IChatMessage.TextMessage) -> Unit)? = null) {
         val platform = FakeFeaturePlatform()
         val events = MutableSharedFlow<SessionEventRecord>(extraBufferCapacity = 256)
         val state = MutableStateFlow<ClientState>(ClientState.Idle)

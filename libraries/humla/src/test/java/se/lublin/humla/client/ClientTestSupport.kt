@@ -62,9 +62,6 @@ import kotlinx.coroutines.test.runCurrent
 import kotlin.coroutines.ContinuationInterceptor
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
-import se.lublin.humla.model.IChannel
-import se.lublin.humla.model.IMessage
-import se.lublin.humla.model.IUser
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.HumlaTCPMessageType
 import se.lublin.humla.net.Inbound
@@ -82,8 +79,6 @@ import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.SyncPhase
 import se.lublin.humla.state.effectiveSelfMute
 import se.lublin.humla.util.HumlaException
-import se.lublin.humla.util.IHumlaObserver
-import se.lublin.humla.util.VoiceTargetMode
 import se.lublin.humla.voice.PolicyCollector
 import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.voice.VoicePolicy
@@ -331,7 +326,6 @@ internal class ClientHarness(
     val factory: FakeFactory = FakeFactory(),
     val network: FakeNetwork = FakeNetwork(),
     val localFactsStore: LocalFactsStore = InMemoryLocalFactsStore(),
-    val talkActivity: MutableStateFlow<TalkActivity> = MutableStateFlow(TalkActivity.initial()),
     policySource: Flow<SessionState?>? = null,
     val settings: MutableStateFlow<VoiceSettings> = MutableStateFlow(VoiceSettings.initial()),
 ) {
@@ -348,11 +342,7 @@ internal class ClientHarness(
         voiceLink = voice,
         network = network,
         localFactsStore = localFactsStore,
-        talkActivity = talkActivity,
         clock = Clock.fixed(Instant.ofEpochMilli(1_000_000), ZoneOffset.UTC),
-        observer = NoopObserver,
-        mainPoster = { r -> r.run() },
-        denyFormatter = { "denied" },
         clientDispatcher = dispatcher,
         ioDispatcher = dispatcher,
         sessionDispatcher = dispatcher,

@@ -50,12 +50,10 @@ import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.CryptCounts
 import se.lublin.humla.client.InMemoryLocalFactsStore
 import se.lublin.humla.client.LocalFacts
-import se.lublin.humla.client.NoopObserver
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.testTarget
 import se.lublin.humla.Constants
 import se.lublin.humla.protobuf.Mumble
-import se.lublin.humla.voice.TalkActivity
 
 /** Server-to-client bytes; close() delivers end of stream to the reader. */
 private class QueueInputStream : InputStream() {
@@ -635,12 +633,8 @@ class TransportImplTest {
             parentScope = backgroundScope,
             transport = f.transport,
             localFacts = LocalFacts.empty(),
-            talkActivity = MutableStateFlow(TalkActivity.initial()),
             voiceLink = f.voice,
-            observer = NoopObserver,
             localFactsStore = InMemoryLocalFactsStore(),
-            mainPoster = { r -> r.run() },
-            denyFormatter = { "denied" },
             workDispatcher = dispatcher,
             ioDispatcher = dispatcher,
         )
