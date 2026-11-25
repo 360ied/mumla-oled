@@ -23,6 +23,7 @@ import android.os.Looper
 import kotlin.reflect.KClass
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -65,6 +66,9 @@ import se.lublin.mumla.service.ConnectionService
 class AppContainerLifecycleTest {
 
     class TestApplication : MumlaApplication() {
+        /** Paused: the connect-path waiter runs only when the test runs it. */
+        val waiterDispatcher = StandardTestDispatcher()
+
         override fun createContainer(): AppContainer =
             AppContainer(
                 this,
@@ -72,6 +76,7 @@ class AppContainerLifecycleTest {
                     engineFactory = { FakeEngineNative() },
                     transports = FakeFactory(),
                 ),
+                waiterDispatcher,
             )
     }
 
@@ -123,10 +128,14 @@ class AppContainerLifecycleTest {
         factory().transports.addLast(it)
     }
 
+    /** Lets the paused app scope run (the connect-path waiter). */
+    private fun runWaiter() = app().waiterDispatcher.scheduler.runCurrent()
+
     /** Waits for the connect path's started-service intent without consuming it. */
     private fun awaitServiceIntent(): Intent = runBlocking {
         withTimeout(5_000) {
             while (Shadows.shadowOf(app()).peekNextStartedService() == null) {
+                runWaiter()
                 idle()
                 delay(10)
             }
@@ -157,6 +166,7 @@ class AppContainerLifecycleTest {
         idle()
         container().connect(testTarget())
         awaitState(ClientState.Connecting::class)
+        runWaiter()
         val intent = awaitServiceIntent()
         assertEquals(ConnectionService::class.java.name, intent.component?.className)
         val controller = startService(intent)
@@ -198,16 +208,21 @@ class AppContainerLifecycleTest {
         container.settingsRepository.updateTyped { it.inputBitrate = 0 }
         withTimeout(5_000) {
             while (container.settingsRepository.state.value.snapshot.inputBitrate != 0) {
+                runWaiter()
                 delay(10)
             }
         }
-        delay(50)
+        repeat(5) {
+            runWaiter()
+            delay(10)
+        }
         assertEquals(before, container.voiceSettings.value)
         // A rejected snapshot must not kill the flow: a later valid write
         // still reaches voiceSettings without another container rebuild.
         container.settingsRepository.updateTyped { it.inputBitrate = 48000 }
         withTimeout(5_000) {
             while (container.voiceSettings.value.targetBitrate != 48000) {
+                runWaiter()
                 delay(10)
             }
         }
@@ -290,25 +305,47 @@ class AppContainerLifecycleTest {
 
     @Test
     fun aConnectThatFailsBeforeConnectingLeavesNoRunningService(): Unit = runBlocking {
-        // A trust failure arrives without a session; the waiter must not leave
-        // a running service behind. Depending on scheduling it either never
-        // starts one or starts one that immediately stops at Failed.
+        // A trust failure arrives without a session. The waiter is still
+        // paused, so it observes only the Failed state: it must start nothing.
         factory().throwOnCreate = se.lublin.humla.net.TransportException(
             se.lublin.humla.client.trustError(),
         )
         idle()
         container().connect(testTarget())
         awaitState(ClientState.Failed::class)
+        runWaiter()
         idle()
-        val started = Shadows.shadowOf(app()).nextStartedService
-        if (started != null) {
-            val controller = startService(started)
-            idle()
-            val shadow = Shadows.shadowOf(controller.get())
-            assertTrue("a started service must have stopped itself", shadow.isStoppedBySelf())
-            assertTrue(shadow.isForegroundStopped())
-            controller.destroy()
-        }
+        assertEquals(
+            "a waiter that only observed the failure must start no service",
+            null,
+            Shadows.shadowOf(app()).peekNextStartedService(),
+        )
+    }
+
+    @Test
+    fun aLaterConnectCancelsAnEarlierWaiter(): Unit = runBlocking {
+        idle()
+        container().connect(testTarget())
+        container().connect(testTarget())
+        awaitState(ClientState.Connecting::class)
+        runWaiter()
+        idle()
+        // Exactly one start request: the first waiter was replaced.
+        assertEquals(1, Shadows.shadowOf(app()).allStartedServices.size)
+    }
+
+    @Test
+    fun theWaiterDecisionIsPinned() {
+        val failed = ClientState.Failed(testTarget(), ClientError.Connection("boom", null))
+        assertEquals(ServiceStart.START, serviceStartDecision(ClientState.Connecting(testTarget(), 0), null))
+        assertEquals(ServiceStart.START, serviceStartDecision(ClientState.Reconnecting(
+            testTarget(), 1, 0L, ClientError.Connection("boom", null), null,
+        ), null))
+        assertEquals(ServiceStart.WAIT, serviceStartDecision(ClientState.Idle, null))
+        // A Failed that predates the call is stale: keep waiting.
+        assertEquals(ServiceStart.WAIT, serviceStartDecision(failed, failed))
+        // Any other Failed: the attempt died before Connecting was seen.
+        assertEquals(ServiceStart.SKIP, serviceStartDecision(failed, null))
     }
 
     @Test

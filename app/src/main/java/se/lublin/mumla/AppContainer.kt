@@ -31,6 +31,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,12 +54,14 @@ import se.lublin.humla.HumlaRuntime
 import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.ConnectTarget
 import se.lublin.humla.client.LocalFactsStore
+import se.lublin.humla.model.Server
 import se.lublin.humla.route.RoutePreferences
 import se.lublin.humla.state.SessionEvent
 import se.lublin.humla.state.SessionState
 import se.lublin.humla.voice.TalkActivity
 import se.lublin.humla.voice.VoiceSettings
 import se.lublin.humla.voice.VoiceSettingsMapper
+import se.lublin.mumla.app.ConnectTargets
 import se.lublin.mumla.app.MumlaApplication
 import se.lublin.mumla.db.MumlaRoomDatabase
 import se.lublin.mumla.feature.AvatarRequestsFeature
@@ -97,6 +100,11 @@ import java.time.Clock
 open class AppContainer(
     private val context: Context,
     val runtimeEdges: HumlaRuntime.Edges = HumlaRuntime.Edges.production(),
+    /**
+     * Test seam for [appScope]: a paused dispatcher makes the connect-path
+     * service waiter deterministic. Production uses Dispatchers.Default.
+     */
+    appScopeDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     /** The in-flight connect-path service waiter; a later connect replaces it. */
     private var serviceWaiter: Job? = null
@@ -108,7 +116,7 @@ open class AppContainer(
     }
 
     open val appScope: CoroutineScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
+        CoroutineScope(SupervisorJob() + appScopeDispatcher + exceptionHandler)
 
     open val settingsStore: DataStore<Preferences> = createSettingsStore(context)
 
@@ -380,22 +388,24 @@ open class AppContainer(
      * before the call, so a stale failure starts nothing, and a later connect
      * cancels an earlier waiter.
      */
+    /** Builds the target off the main thread, then runs [connect]. */
+    open fun connect(server: Server) {
+        appScope.launch {
+            val target = ConnectTargets.build(context, database, settings, server)
+                ?: return@launch
+            connect(target)
+        }
+    }
+
     open fun connect(target: ConnectTarget) {
         val client = runtime.client
         serviceWaiter?.cancel()
         val priorFailed = client.state.value as? ClientState.Failed
         serviceWaiter = appScope.launch {
             val next = client.state.first { state ->
-                when (state) {
-                    is ClientState.Connecting,
-                    is ClientState.Connected,
-                    is ClientState.Reconnecting,
-                    -> true
-                    is ClientState.Failed -> state !== priorFailed
-                    is ClientState.Idle -> false
-                }
+                serviceStartDecision(state, priorFailed) != ServiceStart.WAIT
             }
-            if (next !is ClientState.Failed) {
+            if (serviceStartDecision(next, priorFailed) == ServiceStart.START) {
                 startConnectionService()
             }
         }
@@ -500,6 +510,27 @@ open class AppContainer(
             return created
         }
     }
+}
+
+/** What the connect-path service waiter should do for one client state. */
+internal enum class ServiceStart { START, SKIP, WAIT }
+
+/**
+ * The waiter's rule, kept pure and pinned: a visible attempt starts the
+ * service; a Failed that predates the call is stale and keeps waiting; any
+ * other Failed means the attempt died before Connecting was seen, so nothing
+ * starts.
+ */
+internal fun serviceStartDecision(
+    state: ClientState,
+    priorFailed: ClientState.Failed?,
+): ServiceStart = when (state) {
+    is ClientState.Connecting,
+    is ClientState.Connected,
+    is ClientState.Reconnecting,
+    -> ServiceStart.START
+    is ClientState.Failed -> if (state === priorFailed) ServiceStart.WAIT else ServiceStart.SKIP
+    is ClientState.Idle -> ServiceStart.WAIT
 }
 
 /** Gestures from talk keys, the hot corner, and the service's binder bridge. */

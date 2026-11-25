@@ -186,15 +186,7 @@ class MumlaViewModelFactory private constructor(
         val client = container.runtime.client
         return object : MainViewModel.MainActions {
             override fun connect(server: Server) {
-                container.appScope.launch {
-                    val target = ConnectTargets.build(
-                        appContext,
-                        container.database,
-                        container.settings,
-                        server,
-                    ) ?: return@launch
-                    container.connect(target)
-                }
+                container.connect(server)
             }
 
             override fun disconnect() {
