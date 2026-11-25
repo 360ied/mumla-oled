@@ -19,18 +19,38 @@ package se.lublin.mumla.preference
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import se.lublin.humla.audio.NativeCrashTest
 import se.lublin.humla.client.ClientState
 
 /**
  * Crash-test availability from the client state. The buttons are enabled
  * while nothing is live; the old "bound and not connected" rule was a
  * fail-closed stand-in for a state that could not answer.
+ *
+ * Native-crash availability is probed once, off the main thread: the first
+ * `isAvailable()` dlopens the native library, which is disk I/O. Until the
+ * probe returns, the native button shows its unavailable summary.
  */
-class CrashReportsViewModel(clientState: StateFlow<ClientState>) : ViewModel() {
+class CrashReportsViewModel(
+    clientState: StateFlow<ClientState>,
+    /** Probed once; a throwing probe reports unavailable. */
+    probe: () -> Boolean = NativeCrashTest::isAvailable,
+    probeDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) : ViewModel() {
+
+    private val _nativeCrashAvailable = MutableStateFlow(false)
+
+    /** True once the probe found the native crash hook callable. */
+    val nativeCrashAvailable: StateFlow<Boolean> = _nativeCrashAvailable.asStateFlow()
 
     /** True while the state is Idle or Failed, i.e. no live connection. */
     val crashTestsEnabled: StateFlow<Boolean> = clientState
@@ -40,4 +60,15 @@ class CrashReportsViewModel(clientState: StateFlow<ClientState>) : ViewModel() {
             SharingStarted.Eagerly,
             clientState.value is ClientState.Idle || clientState.value is ClientState.Failed,
         )
+
+    init {
+        viewModelScope.launch(probeDispatcher) {
+            val available = try {
+                probe()
+            } catch (_: Throwable) {
+                false
+            }
+            _nativeCrashAvailable.value = available
+        }
+    }
 }

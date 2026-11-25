@@ -19,8 +19,6 @@ package se.lublin.mumla.preference
 
 import android.content.Intent
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.widget.TextView
 import android.widget.Toast
@@ -56,7 +54,6 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
         MumlaViewModelFactory(requireActivity().application)
     }
 
-    private val anrHandler by lazy { Handler(Looper.getMainLooper()) }
     private var detailDialog: AlertDialog? = null
     private var confirmDialog: AlertDialog? = null
 
@@ -83,23 +80,18 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             true
         }
         wireTestButtons()
-        // Warm the native loader off the main thread: the first
-        // isAvailable() call dlopens humlaaudio, which is disk I/O.
-        // Later refreshCrashTestState() calls on the UI thread are then cheap.
-        try {
-            Thread({
-                try {
-                    NativeCrashTest.isAvailable()
-                } catch (_: Throwable) {
-                }
-            }, "crash-native-warm").start()
-        } catch (_: Throwable) {
-        }
         refreshList()
         refreshCrashTestState()
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.crashTestsEnabled.collect { refreshCrashTestState() }
+                // The native probe runs in the ViewModel off the main thread;
+                // both flows only gate the buttons.
+                launch {
+                    viewModel.crashTestsEnabled.collect { refreshCrashTestState() }
+                }
+                launch {
+                    viewModel.nativeCrashAvailable.collect { refreshCrashTestState() }
+                }
             }
         }
     }
@@ -165,11 +157,9 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
     private fun refreshCrashTestState() {
         try {
             val enabled = viewModel.crashTestsEnabled.value
-            val available = try {
-                NativeCrashTest.isAvailable()
-            } catch (_: Throwable) {
-                false
-            }
+            // From the probe's flow: the main thread never calls into the
+            // native library (the first call dlopens it).
+            val available = viewModel.nativeCrashAvailable.value
             for (key in arrayOf("crash_test_java", "crash_test_native", "crash_test_anr")) {
                 val pref = findPreference<Preference>(key) ?: continue
                 pref.isEnabled = enabled && (key != "crash_test_native" || available)
@@ -333,12 +323,7 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
             return
         }
         if (kind == "native") {
-            val available = try {
-                NativeCrashTest.isAvailable()
-            } catch (_: Throwable) {
-                false
-            }
-            if (!available) {
+            if (!viewModel.nativeCrashAvailable.value) {
                 refreshCrashTestState()
                 return
             }
@@ -381,7 +366,8 @@ class CrashReportsFragment : MumlaPreferenceFragment() {
                 }
             }
             // Well past the ~5s ANR threshold to guarantee the system dialog.
-            "anr" -> anrHandler.post {
+            // Posted on the view, so the freeze starts after this click returns.
+            "anr" -> requireView().post {
                 try {
                     Thread.sleep(ANR_FREEZE_MS)
                 } catch (e: InterruptedException) {
