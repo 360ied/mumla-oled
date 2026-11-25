@@ -144,8 +144,8 @@ open class HumlaSSLSocketFactory {
 
     /**
      * Sets the hostname the next handshake is expected to identify. The factory
-     * is created per {@link HumlaConnection#connect} call, so callers set this
-     * once from {@link HumlaTCP} before {@code startHandshake()}.
+     * is created per {@link TransportImpl#connect} call, so callers set this
+     * once from {@code TransportImpl} before {@code startHandshake()}.
      */
     fun setExpectedHost(host: String?) {
         mTrustWrapper.setExpectedHost(host)
@@ -177,7 +177,7 @@ open class HumlaSSLSocketFactory {
             }
             sslSocket.enabledProtocols = tlsProtocols
             // Defense-in-depth only: the authoritative check is the manual
-            // TlsHostnameVerifier pass in HumlaTCP, which honors TOFU pins and
+            // TlsHostnameVerifier pass in TransportImpl, which honors TOFU pins and
             // the .onion pin-or-nothing path. Endpoint identification must not
             // run for .onion hosts — no public CA can vouch for them, and the
             // handshake would die before the pin check ever runs.

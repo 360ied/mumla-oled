@@ -215,7 +215,7 @@ class TestAndroidFree(unittest.TestCase):
 
     def test_net_excludes_tls_factory_only(self):
         # Step 3 removed the legacy grandfathering (HumlaConnection deleted;
-        # HumlaTCP and HumlaUDP are android-free). Only the TLS factory stays excluded.
+        # the transport is android-free). Only the TLS factory stays excluded.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             pkg = root / "libraries/humla/src/main/java/se/lublin/humla/net"
@@ -223,13 +223,13 @@ class TestAndroidFree(unittest.TestCase):
             (pkg / "HumlaSSLSocketFactory.kt").write_text(
                 "import android.net.SSL\n", encoding="utf-8"
             )
-            for name in ("HumlaTCP.kt", "HumlaUDP.kt", "Transport.kt", "TransportImpl.kt"):
+            for name in ("Transport.kt", "TransportImpl.kt", "SrvResolver.kt", "FrameValidator.kt"):
                 (pkg / name).write_text("import android.os.Handler\n", encoding="utf-8")
             v = ca.scan_android_free(root)
             self.assertEqual(len(v), 4)
             flagged = sorted(path for path, _, _ in v)
-            self.assertIn("libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt", flagged)
-            self.assertIn("libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.kt", flagged)
+            self.assertIn("libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt", flagged)
+            self.assertIn("libraries/humla/src/main/java/se/lublin/humla/net/SrvResolver.kt", flagged)
 
 
 class TestNative(unittest.TestCase):

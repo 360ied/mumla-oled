@@ -50,8 +50,6 @@ SINGLE_THREADED_ENGINE = True
 # New boundary files may only join the allowlist via these paths.
 # Adding a path here is a deliberate, reviewed change (see enforcement.md).
 BOUNDARY_FILES = (
-    # TCP reader thread (step 3 keeps the file).
-    "libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt",
     # Transport reader thread (step 3 extracts the Transport).
     "libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt",
     # TLS callbacks on the socket thread.
@@ -128,8 +126,8 @@ ANDROID_FREE_PACKAGES = {
 }
 # The TLS socket factory uses Android trust-store APIs by design.
 ANDROID_FREE_NET_EXCLUDE = {"HumlaSSLSocketFactory.kt"}
-# Step 3 removed the legacy grandfathering (HumlaConnection deleted;
-# HumlaTCP and HumlaUDP are android-free via Executor/java-logging).
+# Step 3 removed the legacy grandfathering (HumlaConnection deleted; the
+# transport and voice_io are android-free).
 
 RE_ANDROID_IMPORT = re.compile(r"^\s*import\s+android\.")
 RE_ANDROIDX_IMPORT = re.compile(r"^\s*import\s+androidx\.")
