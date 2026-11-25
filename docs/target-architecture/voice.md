@@ -507,9 +507,8 @@ twice that, so in practice the drop-newest path never runs.
 
 Talk state does not travel through a queue, because a full queue would
 drop a transition and a lost "stopped talking" sticks an indicator (the
-step-2 regression's class; see
-[state](state.md#compatibility-handles-migration-only)). It travels as
-levels, latest value only:
+step-2 regression's class; see [state](state.md#reading-state)). It travels
+as levels, latest value only:
 
 - **Talk snapshot (render → notifier).** The output engine still reports
   transitions in `RenderResult.talkEvents`. The render thread folds them

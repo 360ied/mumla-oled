@@ -2,7 +2,7 @@
 
 Part of the [target architecture](README.md). Specifies `SessionState`,
 how server messages and user intents change it, the event stream, and the
-compatibility handles used during migration.
+helpers screens use to read it.
 
 ## Rules
 
@@ -372,81 +372,29 @@ chat.
 
 Informational events (`UserJoinedServer`, `UserMoved`, `RecordingChanged`,
 `SelfMuteStateChanged`, `UserSelfMuteChanged`, `WelcomeText`, and
-`UserLeft` without an actor) are emitted only after `SYNCED`, as `HumlaService.logInfo` suppresses them today, so the
+`UserLeft` without an actor) are emitted only after `SYNCED`, so the
 initial user list produces no join notifications. Kicks and bans
 (`UserLeft` with an actor), `PermissionDenied`, and `TextMessageReceived`
 are emitted in every phase, as today's warnings are.
 `TextMessageSent` is emitted by the `sendText` intent, so the chat log
 records both directions from one stream.
 
-## Compatibility handles (migration only)
+## Reading state
 
-During steps 2–7 of the [migration](migration.md), existing app code keeps
-using `IUser` and `IChannel` and relies on them being *live*: adapters
-keep references and re-read them after observer callbacks. Snapshot types
-behind those interfaces would compile and silently freeze screens, so step
-2 provides **live handles** instead:
+Screens and features render from `UserInfo` and `ChannelInfo` values, never
+from live objects. A screen keeps channel and user IDs across time and looks
+the value up in the latest state each render; the helpers below are the only
+derived reads:
 
-- `UserHandle(session, state: StateFlow<SessionState>) : IUser` and
-  `ChannelHandle(id, state) : IChannel`.
-- Every property read looks up the current value in `state.value`.
-- Each handle caches the last value it saw. When the user or channel is
-  gone from state, scalar reads return that cached value; navigation reads
-  (`channel`, `parent`, `users`, `subchannels`, `links`,
-  `subchannelUserCount`) return null, empty, or zero. This matches a
-  departed `User`/`Channel` before step 2, which kept its fields but was
-  detached (`ModelHandler` nulled `user.channel` and unlinked removed
-  channel subtrees).
-- Navigation properties return handles, not snapshots. Today they are
-  typed as the concrete classes (`IUser.channel: Channel?`,
-  `IChannel.parent: Channel?`, `users: List<User>`,
-  `subchannels: List<Channel>`, `links: List<Channel>`), so step 2 narrows
-  them to `IChannel?`, `List<IUser>`, and `List<IChannel>`; the compiler
-  then points at every caller that needs the interface type.
-- Handles are equal when their IDs are equal, matching today's `equals`.
-- Handles are read-only. `IUser` and `IChannel` lose their setters
-  (`var` properties and `set…` methods) in step 2; each app call site that
-  writes through them becomes a `Session` intent, and the compiler finds
-  them all.
-- Handles are ephemeral: every lookup constructs a new instance, so no
-  code may treat a handle as stable identity beyond ID equality. In
-  particular, `talkState` is voice-owned and defaults to passive on each
-  fresh handle — never dedup, cache, or branch on a handle's `talkState`
-  across calls. Transition ownership stays with the producer (today the
-  native engine's transition-only events; from step 5a
-  `VoiceEngine.talkActivity`, where absent means passive). Absent covers
-  both halves of `talkActivity`: the remote `users` table and, for the
-  self session, `selfTalking` — so a fresh self handle reads `TALKING`
-  while already talking, which is the live level, not a cached transition.
-  Comparing a
-  fresh handle's `talkState` against a new event swallows the teardown edge
-  and sticks the indicator on; this regressed on `master` in step 2 and was
-  fixed by deleting the Java-side guard.
-- **Repaint hints keep no memory.** From 5a.3a, whenever `talkActivity`
-  changes, the bridge fires `onUserTalkStateUpdated` for every user in the
-  session. It never compares against an earlier snapshot, because a kept
-  snapshot is the transition memory the bridge must not carry. Users
-  cleared from `talkActivity` are still in the session, so clears get
-  hints too. `talkActivity` emits only when a level changes, so this is a
-  few emissions a second. Every consumer accepts repeated hints: the list
-  adapters compare drawables before setting them, and `MumlaService`
-  plays the push-to-talk sound only when its own `mSelfTalking` changes.
-
-Handle member sources:
-
-| Member | Source |
+| Read | Helper |
 |---|---|
-| `IUser.hash` | `UserInfo.certHash` |
-| `IUser.userId` | `UserInfo.userId ?: -1` |
-| `IUser.talkState` | `VoiceEngine.talkActivity` (passive when absent) |
-| `IUser.textureCacheKey` | Today's derivation from the texture bytes, moved as is |
-| `IUser.listeningChannels`, `isListeningTo` | `UserInfo.listeningChannels` |
-| `IChannel.subchannelUserCount`, `links` | `ChannelTree.userCountInSubtree`, `ChannelInfo.links` as handles |
-| `IChannel.isListening`, `listeningVolume` | Derived reads above |
-| Everything else | The same-named `UserInfo` or `ChannelInfo` field |
+| Channel tree navigation, subtree user counts | `ServerState.tree` (`ChannelTree.children`, `users`, `userCountInSubtree`, `allLinks`) |
+| Talk state of a row | `SessionState.talkStateOf(session, talkActivity)`: the local session reads `selfTalking`, every other session the remote table (absent means passive) |
+| Avatar cache identity | `UserInfo.textureCacheKey()`: a present texture hashes its bytes, otherwise the announced hash; 0 means no avatar |
+| Listening state and volume | `ChannelInfo.isListening(state)`, `listeningVolume(state)` |
+| Active whisper target | `LocalState.voiceTargetMode()`, `SessionState.activeWhisperTarget()`, `whisperTargetName(id)` |
 
-Reads of two properties are not mutually consistent (each reads the latest
-value), which matches today's per-field `@Volatile` behavior. New code uses
-`UserInfo` and `ChannelInfo` directly. The handles, `IUser`, and `IChannel`
-are deleted in step 7, once its screen commits leave them without a
-reader.
+`talkActivity` changes only when a level changes, and the list adapters
+compare drawables before setting them, so repeated emissions are cheap. Part
+of the channel list's expansion state is the adapter's (as it was before the
+migration), so it holds no session values.

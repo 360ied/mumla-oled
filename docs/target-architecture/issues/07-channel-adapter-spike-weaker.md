@@ -2,13 +2,13 @@
 
 | | |
 |---|---|
-| Status | Open — not gating. |
+| Status | Resolved — step 7's screen-level adapter test supersedes the spike. |
 | Category | Verification gap |
 | Severity | Benign-to-moderate (the spike's conclusion is backed by weaker evidence; daily use since agrees with it) |
 | Verified | Yes (test file read; spec compared) |
 | Area | State / compatibility handles / app adapter |
 | Spec | [migration.md § Step 2](../steps/2-immutable-state.md#step-2--immutable-state) ("Spike first"), [migration.md § Kill criteria](../steps/2-immutable-state.md#kill-criterion) (step 2) |
-| Code | `app/src/test/java/se/lublin/mumla/channel/ChannelAdapterTest.java`; `libraries/humla/src/test/java/se/lublin/humla/state/HandlesTest.kt` |
+| Code | `app/src/test/java/se/lublin/mumla/channel/ChannelListAdapterTest.kt`; `libraries/humla/src/test/java/se/lublin/humla/state/HandlesTest.kt` (deleted with the handles) |
 | Gates | Not gating |
 
 ## Summary
@@ -95,3 +95,14 @@ future change to handles or to state transitions has no screen-level test.
 
 - [24](24-handles-drop-navigation-after-removal.md): another handle
   semantic the adapter depends on.
+
+## Resolution
+
+Step 7 replaced the live handles with state values and added
+`ChannelListAdapterTest`: the real `ChannelListAdapter` is bound in a
+Robolectric activity and driven through the pure transitions (users
+joining, moving, muting and leaving; talking starting and stopping) with
+the bound rows asserted after each step, including the talk indicator
+turning off and the self row following `selfTalking`. The handles,
+`IUser`, and `IChannel` no longer exist, so the gap the issue describes
+cannot recur.

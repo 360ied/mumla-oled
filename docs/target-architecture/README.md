@@ -62,7 +62,7 @@ with snapshot releases as the field test.
 
 | File | Specifies |
 |---|---|
-| [state.md](state.md) | `SessionState` schema, message and intent transitions, self-mute semantics, events, compatibility handles |
+| [state.md](state.md) | `SessionState` schema, message and intent transitions, self-mute semantics, events, reading state |
 | [client.md](client.md) | `HumlaClient` states and reconnect policy; `Session` lifecycle, intents, teardown |
 | [transport.md](transport.md) | TCP control channel, TLS, keepalive and UDP health, crypt setup, tunnel mode |
 | [voice.md](voice.md) | Native voice path: engine refactor, packet codec, I/O layer, realtime rules, `VoicePolicy`, Kotlin facade |

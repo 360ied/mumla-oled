@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved on `master`: `state.md` now describes scalar caching and detached navigation. |
+| Status | Resolved on `master`; the handles themselves are deleted in step 7. |
 | Category | Spec wording too broad (behavior matches the pre-migration model) |
 | Severity | Benign |
 | Verified | Yes, against the current tree and the pre-step-2 tree |
