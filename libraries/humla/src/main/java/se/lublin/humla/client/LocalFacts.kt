@@ -20,8 +20,6 @@ package se.lublin.humla.client
 import kotlinx.collections.immutable.PersistentSet
 import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /**
  * Device-local facts loaded once per session attempt. See
@@ -59,43 +57,6 @@ interface LocalFactsStore {
     suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean)
     suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean)
     suspend fun setSelfMuteDeaf(muted: Boolean, deafened: Boolean)
-}
-
-/** Test-only single-server store. serverId is intentionally ignored: one
- * instance holds one server's facts. */
-class InMemoryLocalFactsStore(
-    initial: LocalFacts = LocalFacts.empty(),
-) : LocalFactsStore {
-    private val mutex = Mutex()
-    private var current: LocalFacts = initial
-
-    override suspend fun load(serverId: Long): LocalFacts = mutex.withLock { current }
-
-    override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) {
-        mutex.withLock {
-            current = if (muted) {
-                current.copy(mutedUserIds = current.mutedUserIds.add(userId))
-            } else {
-                current.copy(mutedUserIds = current.mutedUserIds.remove(userId))
-            }
-        }
-    }
-
-    override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) {
-        mutex.withLock {
-            current = if (ignored) {
-                current.copy(ignoredUserIds = current.ignoredUserIds.add(userId))
-            } else {
-                current.copy(ignoredUserIds = current.ignoredUserIds.remove(userId))
-            }
-        }
-    }
-
-    override suspend fun setSelfMuteDeaf(muted: Boolean, deafened: Boolean) {
-        mutex.withLock {
-            current = current.copy(selfMuted = muted, selfDeafened = deafened)
-        }
-    }
 }
 
 /**

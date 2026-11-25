@@ -17,7 +17,6 @@
 
 package se.lublin.humla.client
 
-import java.util.concurrent.atomic.AtomicInteger
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.UdpFormat
 
@@ -43,37 +42,6 @@ interface VoiceLifecycle {
 interface RouteLifecycle {
     fun sessionStarted()
     fun sessionEnded()
-}
-
-/** No-op lifecycles for the client's JVM tests. */
-class NoopVoiceLifecycle : VoiceLifecycle {
-    private val startsCount = AtomicInteger(0)
-    private val stopsCount = AtomicInteger(0)
-    val starts: Int get() = startsCount.get()
-    val stops: Int get() = stopsCount.get()
-
-    override fun startVoice(host: String, port: Int, format: UdpFormat, keys: CryptKeys?) {
-        startsCount.incrementAndGet()
-    }
-
-    override fun stopVoice() {
-        stopsCount.incrementAndGet()
-    }
-}
-
-class NoopRouteLifecycle : RouteLifecycle {
-    private val startsCount = AtomicInteger(0)
-    private val endsCount = AtomicInteger(0)
-    val starts: Int get() = startsCount.get()
-    val ends: Int get() = endsCount.get()
-
-    override fun sessionStarted() {
-        startsCount.incrementAndGet()
-    }
-
-    override fun sessionEnded() {
-        endsCount.incrementAndGet()
-    }
 }
 
 /**

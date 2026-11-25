@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.HumlaTCPMessageType
 import se.lublin.humla.net.Inbound
@@ -274,4 +276,73 @@ fun syncSequence(selfName: String = "alice"): List<Inbound.Message> = listOf(
         Mumble.ServerConfig.newBuilder().setAllowHtml(true).setMessageLength(5000).build(),
     ),
 )
+
+
+/** No-op voice lifecycle for the client's JVM tests. */
+class NoopVoiceLifecycle : VoiceLifecycle {
+    private val startsCount = java.util.concurrent.atomic.AtomicInteger(0)
+    private val stopsCount = java.util.concurrent.atomic.AtomicInteger(0)
+    val starts: Int get() = startsCount.get()
+    val stops: Int get() = stopsCount.get()
+
+    override fun startVoice(host: String, port: Int, format: UdpFormat, keys: CryptKeys?) {
+        startsCount.incrementAndGet()
+    }
+
+    override fun stopVoice() {
+        stopsCount.incrementAndGet()
+    }
+}
+
+class NoopRouteLifecycle : RouteLifecycle {
+    private val startsCount = java.util.concurrent.atomic.AtomicInteger(0)
+    private val endsCount = java.util.concurrent.atomic.AtomicInteger(0)
+    val starts: Int get() = startsCount.get()
+    val ends: Int get() = endsCount.get()
+
+    override fun sessionStarted() {
+        startsCount.incrementAndGet()
+    }
+
+    override fun sessionEnded() {
+        endsCount.incrementAndGet()
+    }
+}
+
+/** Test-only single-server store. serverId is intentionally ignored: one
+ * instance holds one server's facts. */
+class InMemoryLocalFactsStore(
+    initial: LocalFacts = LocalFacts.empty(),
+) : LocalFactsStore {
+    private val mutex = Mutex()
+    private var current: LocalFacts = initial
+
+    override suspend fun load(serverId: Long): LocalFacts = mutex.withLock { current }
+
+    override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) {
+        mutex.withLock {
+            current = if (muted) {
+                current.copy(mutedUserIds = current.mutedUserIds.add(userId))
+            } else {
+                current.copy(mutedUserIds = current.mutedUserIds.remove(userId))
+            }
+        }
+    }
+
+    override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) {
+        mutex.withLock {
+            current = if (ignored) {
+                current.copy(ignoredUserIds = current.ignoredUserIds.add(userId))
+            } else {
+                current.copy(ignoredUserIds = current.ignoredUserIds.remove(userId))
+            }
+        }
+    }
+
+    override suspend fun setSelfMuteDeaf(muted: Boolean, deafened: Boolean) {
+        mutex.withLock {
+            current = current.copy(selfMuted = muted, selfDeafened = deafened)
+        }
+    }
+}
 
