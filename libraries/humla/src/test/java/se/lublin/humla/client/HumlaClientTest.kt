@@ -108,7 +108,7 @@ class HumlaClientTest {
         assertEquals(1, h.voice.starts)
         // Voice starts in the transport's format; the route is not the
         // client's to push (the transport owns it, issue 16).
-        assertEquals(listOf(fake.voiceFormat), h.voice.startFormats)
+        assertEquals(listOf(fake.udpFormat), h.voice.startFormats)
 
         h.client.disconnect()
         h.step()

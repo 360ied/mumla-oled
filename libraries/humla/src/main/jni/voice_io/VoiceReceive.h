@@ -72,7 +72,7 @@ public:
     VoiceReceive& operator=(const VoiceReceive&) = delete;
 
     // Control thread only. Format fixed per session from the transport.
-    void setFormat(voice_codec::UdpFormat format, uint32_t legacyVersion);
+    void setFormat(voice_codec::UdpFormat format);
 
     // Keys (CryptSetup with full keys, or resync IV). May race the receive
     // loop: OCB2 serializes internally, never on a realtime thread.

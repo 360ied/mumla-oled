@@ -19,7 +19,7 @@ package se.lublin.humla.client
 
 import java.util.concurrent.atomic.AtomicInteger
 import se.lublin.humla.net.CryptKeys
-import se.lublin.humla.net.VoiceFormat
+import se.lublin.humla.net.UdpFormat
 
 /**
  * Platform lifecycle boundaries the client sequences but never implements.
@@ -36,7 +36,7 @@ interface VoiceLifecycle {
      * not an argument: voice follows the transport's `SetVoiceRoute`,
      * including for forced-TCP targets, which the transport keeps tunnelled.
      */
-    fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?)
+    fun startVoice(host: String, port: Int, format: UdpFormat, keys: CryptKeys?)
     fun stopVoice()
 }
 
@@ -52,7 +52,7 @@ class NoopVoiceLifecycle : VoiceLifecycle {
     val starts: Int get() = startsCount.get()
     val stops: Int get() = stopsCount.get()
 
-    override fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?) {
+    override fun startVoice(host: String, port: Int, format: UdpFormat, keys: CryptKeys?) {
         startsCount.incrementAndGet()
     }
 

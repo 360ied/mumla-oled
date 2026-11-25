@@ -71,7 +71,6 @@ import se.lublin.humla.net.TransportStats
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.net.VoiceCommand
 import se.lublin.humla.net.VoiceEvent
-import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.net.VoiceStatus
 import se.lublin.humla.protobuf.Mumble

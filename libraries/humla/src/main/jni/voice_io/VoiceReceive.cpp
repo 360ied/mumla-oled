@@ -53,13 +53,11 @@ VoiceReceive::VoiceReceive(VoiceIo* io, PolicyCell* policy)
 
 VoiceReceive::~VoiceReceive() { stop(); }
 
-void VoiceReceive::setFormat(voice_codec::UdpFormat format,
-                             uint32_t /*legacyVersion*/) {
+void VoiceReceive::setFormat(voice_codec::UdpFormat format) {
     // Framing and parsing are version-independent: the 1.2.2 CELT ordinal
     // swap that keyed on the server version was dead (only VoiceOpus is
     // accepted from the legacy format) and is gone, as upstream 1.5 drops
-    // non-Opus legacy voice. The parameter is retained so one setFormat
-    // covers both halves through the JNI.
+    // non-Opus legacy voice.
     m_format = format;
 }
 

@@ -38,7 +38,6 @@ import se.lublin.humla.net.TransportStats
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.net.VoiceCommand
 import se.lublin.humla.net.VoiceEvent
-import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.net.VoiceStatus
 import se.lublin.humla.protobuf.Mumble
@@ -63,9 +62,9 @@ class FakeVoice(
     private val _status = MutableStateFlow(VoiceStatus.initial())
     override val status: StateFlow<VoiceStatus> = _status.asStateFlow()
 
-    val startFormats: MutableList<VoiceFormat> = Collections.synchronizedList(ArrayList())
+    val startFormats: MutableList<UdpFormat> = Collections.synchronizedList(ArrayList())
 
-    override fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?) {
+    override fun startVoice(host: String, port: Int, format: UdpFormat, keys: CryptKeys?) {
         startsCount.incrementAndGet()
         startFormats.add(format)
         order.add("voice-start")
@@ -120,7 +119,7 @@ class FakeTransport(
     override val remoteHost: String = "127.0.0.1"
     override val remotePort: Int = 64738
     // Non-default, so tests can see it forwarded to voice at start.
-    override var voiceFormat: VoiceFormat = VoiceFormat(UdpFormat.PROTOBUF, 0x010500)
+    override var udpFormat: UdpFormat = UdpFormat.PROTOBUF
 
     override fun send(message: MessageLite, type: HumlaTCPMessageType) {
         sent.add(type to message)

@@ -207,7 +207,7 @@ void testCaptureAcceptsAnyBlockSize() {
     publishContinuousSettings(&settings);
     VoiceReceive* noReceive = nullptr;
     VoiceSend send(&policy, &settings, noReceive, fakeEncoderFactory(), nullptr);
-    send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
+    send.setFormat(mumla::voice_codec::UdpFormat::LEGACY);
     std::vector<int16_t> block(480, 1000);
     // 100 samples: no frame yet.
     send.captureFrame(block.data(), 100);
@@ -244,7 +244,7 @@ void testCaptureGateClosesOnMute() {
     publishOpenGate(&policy, 1);
     publishContinuousSettings(&settings);
     VoiceSend send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr);
-    send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
+    send.setFormat(mumla::voice_codec::UdpFormat::LEGACY);
     std::vector<int16_t> pcm(480, 2000);
     for (int i = 0; i < 4; ++i) {
         send.captureFrame(pcm.data(), pcm.size());
@@ -278,7 +278,7 @@ void testOutboundFullDropsNewest() {
     publishOpenGate(&policy, 1);
     publishContinuousSettings(&settings);
     VoiceSend send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr);
-    send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
+    send.setFormat(mumla::voice_codec::UdpFormat::LEGACY);
     std::vector<int16_t> pcm(480, 3000);
     // FPP=1: every frame emits one packet. 40 frames fill the ring exactly.
     for (size_t i = 0; i < kOutboundRingCapacity; ++i) {
@@ -307,7 +307,7 @@ void testDropOldestKeeps200ms() {
         publishOpenGate(&policy, 1);
         publishContinuousSettings(&settings);
         VoiceSend send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr);
-        send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
+        send.setFormat(mumla::voice_codec::UdpFormat::LEGACY);
         send.setUseUdp(false);
         std::vector<OutboundPacket> sent;
         // NOTE: send thread not running yet, so the tunnel sink below only
@@ -344,7 +344,7 @@ void testDropOldestKeeps200ms() {
         publishOpenGate(&policy, 6);
         publishContinuousSettings(&settings);
         VoiceSend send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr);
-        send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
+        send.setFormat(mumla::voice_codec::UdpFormat::LEGACY);
         send.setUseUdp(false);
         std::vector<OutboundPacket> sent;
         send.setTunnelSink([&](const uint8_t* data, size_t length) {
@@ -453,7 +453,7 @@ void testAllocationFreeSteadyState() {
     publishOpenGate(&policy, 2);
     publishContinuousSettings(&settings);
     VoiceSend send(&policy, &settings, nullptr, fakeEncoderFactory(), nullptr);
-    send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
+    send.setFormat(mumla::voice_codec::UdpFormat::LEGACY);
     int16_t pcm[480];
     for (int i = 0; i < 480; ++i) pcm[i] = 1000;
     for (int i = 0; i < 5; ++i) send.captureFrame(pcm, 480);
@@ -754,7 +754,7 @@ void testCaptureCallbackForwardsAnyBlock() {
     StreamFixture fixture;
     publishOpenGate(&fixture.policy, 1);
     publishContinuousSettings(&fixture.settings);
-    fixture.send.setFormat(mumla::voice_codec::UdpFormat::LEGACY, 0);
+    fixture.send.setFormat(mumla::voice_codec::UdpFormat::LEGACY);
     std::vector<int16_t> pcm(137, 1000);
     TEST_ASSERT_FALSE(fixture.streams.captureActive.load());
     mumla::voice_io::captureStreamFrames(&fixture.streams, pcm.data(), 137);

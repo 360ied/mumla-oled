@@ -158,8 +158,8 @@ class TransportImpl internal constructor(
     private val startNanos = nanoTime()
     private val usingUdpRef = AtomicBoolean(!forceTcp)
     // First Version wins: the format is fixed for the session (issue 17).
-    private val voiceFormatRef = AtomicReference<VoiceFormat?>(null)
-    override val voiceFormat: VoiceFormat get() = voiceFormatRef.get() ?: VoiceFormat.DEFAULT
+    private val udpFormatRef = AtomicReference<UdpFormat?>(null)
+    override val udpFormat: UdpFormat get() = udpFormatRef.get() ?: UdpFormat.DEFAULT
 
     private val readerThreadRef = AtomicReference<Thread?>(null)
     private val writerJobRef = AtomicReference<Job?>(null)
@@ -478,7 +478,7 @@ class TransportImpl internal constructor(
         // Once per session: a repeated Version (servers send one), or one
         // after ServerSync fixed the default, does not change the format
         // under a live stream.
-        if (!voiceFormatRef.compareAndSet(null, VoiceFormat.fromServerVersion(v2, v1))) {
+        if (!udpFormatRef.compareAndSet(null, UdpFormat.fromServerVersion(v2, v1))) {
             logger.fine("Ignoring repeated Version for the UDP format")
         }
     }
@@ -583,7 +583,7 @@ class TransportImpl internal constructor(
         // A server that sent no Version gets the default for the whole
         // session: a late Version must not change the transport's format
         // under a started link (VoiceControl reads it for the send side).
-        if (voiceFormatRef.compareAndSet(null, VoiceFormat.DEFAULT)) {
+        if (udpFormatRef.compareAndSet(null, UdpFormat.DEFAULT)) {
             logger.fine("No Version before ServerSync; UDP format stays default")
         }
         // The transport alone owns the route (transport.md § Keepalive and UDP

@@ -999,7 +999,7 @@ void testEmptyProtobufTerminatorDeliversNoFrames() {
     VoiceIo io(fakeFactory());
     PolicyCell policy;
     VoiceReceive rx(&io, &policy);
-    rx.setFormat(mumla::voice_codec::UdpFormat::PROTOBUF, 0);
+    rx.setFormat(mumla::voice_codec::UdpFormat::PROTOBUF);
     const int32_t known[] = {42};
     policy.publish(nullptr, 0, known, 1, false, false, false, 0, 40000, 2);
     size_t delivered = 0;

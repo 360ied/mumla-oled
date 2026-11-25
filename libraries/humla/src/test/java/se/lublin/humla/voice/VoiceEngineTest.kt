@@ -33,7 +33,6 @@ import se.lublin.humla.model.TalkState
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.net.VoiceCommand
-import se.lublin.humla.net.VoiceFormat
 
 /**
  * Facade tests for step 5a.3b with an injected fake engine (no native
@@ -43,7 +42,6 @@ import se.lublin.humla.net.VoiceFormat
 class VoiceEngineTest {
     internal class FakeEngineNative : EngineNative {
         var formatUdp = -1
-        var formatLegacy = -1
         var muted: IntArray? = null
         var known: IntArray? = null
         var gateTransmit = false
@@ -79,9 +77,8 @@ class VoiceEngineTest {
         var streamStops = 0
         var streamCloses = 0
 
-        override fun setFormat(udpFormat: Int, legacyVersion: Int) {
+        override fun setFormat(udpFormat: Int) {
             formatUdp = udpFormat
-            formatLegacy = legacyVersion
         }
 
         override fun setPolicy(muted: IntArray?, known: IntArray?, transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int) {
@@ -200,7 +197,7 @@ class VoiceEngineTest {
         ByteString.copyFrom(ByteArray(16) { 3 }),
     )
 
-    private fun protobufFormat() = VoiceFormat(UdpFormat.PROTOBUF, 0x10500)
+    private fun protobufFormat() = UdpFormat.PROTOBUF
 
     @Test
     fun `start resets installs keys and opens socket when routed`() {
@@ -211,7 +208,6 @@ class VoiceEngineTest {
         assertTrue(fake.started.isEmpty())
         engine.submit(VoiceCommand.Start("example.org", 64738, keys(), protobufFormat()))
         assertEquals(1, fake.formatUdp)
-        assertEquals(0x10500, fake.formatLegacy)
         assertEquals(1, fake.resetCalls)
         assertEquals(listOf("example.org" to 64738), fake.started)
         assertTrue(engine.status.value.running)

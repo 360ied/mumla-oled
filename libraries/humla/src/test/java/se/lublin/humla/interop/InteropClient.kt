@@ -38,7 +38,7 @@ import se.lublin.humla.client.VoiceLifecycle
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.DefaultTransportFactory
 import se.lublin.humla.net.VoiceCommand
-import se.lublin.humla.net.VoiceFormat
+import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.voice.VoiceEngine
 import se.lublin.humla.net.VoiceLink
 
@@ -375,7 +375,7 @@ internal class NoUdpVoice(
     private val reportSocketFailure: Boolean,
 ) : VoiceLink by delegate,
     VoiceLifecycle by delegate {
-    override fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?) {
+    override fun startVoice(host: String, port: Int, format: UdpFormat, keys: CryptKeys?) {
         // UDP stays closed for the session: start normally, then force the
         // tunnel route. A later switch-to-UDP is dropped in submit, so the
         // socket the blocked mode closes never opens. Format and keys flow

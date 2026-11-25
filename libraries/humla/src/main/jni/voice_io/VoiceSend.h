@@ -108,7 +108,7 @@ public:
     // Control thread only, while capture is stopped (Start/Stop ordering).
     // Format fixed per session from the transport (issue 17); route follows
     // the transport's SetVoiceRoute; the tunnel sink is set once before start.
-    void setFormat(voice_codec::UdpFormat format, uint32_t legacyVersion);
+    void setFormat(voice_codec::UdpFormat format);
     void setUseUdp(bool udp) { m_useUdp.store(udp, std::memory_order_release); }
     void setTunnelSink(TunnelSink sink) { m_tunnelSink = std::move(sink); }
 
@@ -184,9 +184,7 @@ private:
     TunnelSink m_tunnelSink;
 
     // Per-session framing (control writes while capture stopped; capture
-    // and send read lock-free). Framing and parsing are version-independent;
-    // neither half stores the legacy version. The setFormat parameter stays
-    // only so one JNI call covers both halves.
+    // and send read lock-free). Framing and parsing are version-independent.
     std::atomic<int> m_format{0}; // 0 legacy, 1 protobuf
     std::atomic<bool> m_useUdp{false};
 

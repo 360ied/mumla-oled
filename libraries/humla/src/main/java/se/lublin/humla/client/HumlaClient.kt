@@ -40,7 +40,7 @@ import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.Transport
 import se.lublin.humla.net.TransportException
 import se.lublin.humla.net.TransportFactory
-import se.lublin.humla.net.VoiceFormat
+import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.state.ServerState
 import se.lublin.humla.state.SessionEvent
@@ -369,18 +369,18 @@ class HumlaClient(
             voiceLifecycle.startVoice(
                 transportRemoteHost(session),
                 transportRemotePort(session),
-                transportVoiceFormat(session),
+                transportUdpFormat(session),
                 transportCryptKeys(session),
             )
         } catch (ignored: Exception) {
         }
     }
 
-    private fun transportVoiceFormat(session: Session): VoiceFormat {
+    private fun transportUdpFormat(session: Session): UdpFormat {
         return try {
-            session.transport.voiceFormat
+            session.transport.udpFormat
         } catch (e: Exception) {
-            VoiceFormat.DEFAULT
+            UdpFormat.DEFAULT
         }
     }
 

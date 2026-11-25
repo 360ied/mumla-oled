@@ -84,7 +84,7 @@ class AppContainerLifecycleTest {
 
     /** No native library under Robolectric; every entry is a no-op. */
     private class FakeEngineNative : EngineNative {
-        override fun setFormat(udpFormat: Int, legacyVersion: Int) = Unit
+        override fun setFormat(udpFormat: Int) = Unit
         override fun setPolicy(
             muted: IntArray?, known: IntArray?, transmitAllowed: Boolean,
             pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int,

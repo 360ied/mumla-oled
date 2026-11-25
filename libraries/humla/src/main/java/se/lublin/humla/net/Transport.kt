@@ -64,32 +64,31 @@ interface Transport {
     /**
      * UDP packet format for this session, decided once from the server's
      * first `Version` (transport.md § UDP packet format). The client passes
-     * it to voice at start; [VoiceFormat.DEFAULT] until `Version` arrives.
+     * it to voice at start; [UdpFormat.DEFAULT] until `Version` arrives.
      */
-    val voiceFormat: VoiceFormat
+    val udpFormat: UdpFormat
 }
 
-/** Legacy vs protobuf UDP framing (voice.md packet codec). */
-enum class UdpFormat { LEGACY, PROTOBUF }
-
 /**
- * The session's voice format: the UDP framing plus the server's legacy
- * version, retained from the first `Version`. The version used to key the
- * 1.2.2 codec workaround; that workaround is gone, so no codec path reads it
- * (issue 35). Carried by `VoiceCommand.Start` as `format` (5a.3b facade).
+ * Legacy vs protobuf UDP framing (voice.md packet codec). The format is the
+ * session's whole voice-format decision: framing and parsing are
+ * version-independent, so the server's legacy version is not carried past
+ * the choice (issue 35).
  */
-data class VoiceFormat(val udp: UdpFormat, val legacyServerVersion: Int) {
-    companion object {
-        /** No `Version` seen: legacy framing, unknown version (today's default). */
-        @JvmField
-        val DEFAULT = VoiceFormat(UdpFormat.LEGACY, 0)
+enum class UdpFormat {
+    LEGACY,
+    PROTOBUF,
+    ;
 
-        /** Today's rule (`Constants.isProtobufUdpSupported`): protobuf from 1.5.0. */
+    companion object {
+        /** No `Version` seen: legacy framing (the pre-`Version` default). */
+        @JvmField
+        val DEFAULT = LEGACY
+
+        /** The rule (`Constants.isProtobufUdpSupported`): protobuf from 1.5.0. */
         @JvmStatic
-        fun fromServerVersion(v2: Long, v1: Int): VoiceFormat = VoiceFormat(
-            if (se.lublin.humla.Constants.isProtobufUdpSupported(v2, v1)) UdpFormat.PROTOBUF else UdpFormat.LEGACY,
-            v1,
-        )
+        fun fromServerVersion(v2: Long, v1: Int): UdpFormat =
+            if (se.lublin.humla.Constants.isProtobufUdpSupported(v2, v1)) PROTOBUF else LEGACY
     }
 }
 
@@ -135,16 +134,16 @@ sealed interface VoiceCommand {
     /**
      * Start network voice (5a.3b facade). Carries the session's UDP
      * address plus the transport's per-session decisions, fixed once:
-     * the keys (when CryptSetup already arrived) and the UDP format with
-     * the legacy server version from the first Version (issue 17).
-     * No route: voice follows the transport's SetVoiceRoute, and Stop
-     * resets to tunnel so no route carries over.
+     * the keys (when CryptSetup already arrived) and the UDP format fixed
+     * by the first Version (issue 17). No route: voice follows the
+     * transport's SetVoiceRoute, and Stop resets to tunnel so no route
+     * carries over.
      */
     data class Start(
         val host: String,
         val port: Int,
         val keys: CryptKeys?,
-        val format: VoiceFormat,
+        val format: UdpFormat,
     ) : VoiceCommand
     data object Stop : VoiceCommand
 }
@@ -173,9 +172,8 @@ sealed interface VoiceEvent {
 
 /**
  * Voice-side status the transport merges into SessionStats.
- * Shape matches voice.md (bitrate/framesPerPacket are the current encoder
- * settings); the interim link publishes its targets until the step-5a
- * VoicePolicy drives real values.
+ * Shape matches voice.md: bitrate and framesPerPacket are the encoder's
+ * current settings, and every drop count is cumulative for the session.
  */
 data class VoiceStatus(
     val localCrypt: CryptCounts,

@@ -28,13 +28,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import se.lublin.humla.net.UdpFormat
-import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.route.AppliedRoute
 import se.lublin.humla.route.RoutePreferences
 import se.lublin.humla.route.RouteState
 import se.lublin.humla.route.StreamProfile
 
-private fun protobufFormat() = VoiceFormat(UdpFormat.PROTOBUF, 0x10500)
+private fun protobufFormat() = UdpFormat.PROTOBUF
 
 /**
  * Route-following tests (issue 03 lesson): `VoiceEngine` starts a session

@@ -54,7 +54,6 @@ import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.net.VoiceCommand
 import se.lublin.humla.net.VoiceEvent
-import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.net.VoiceStatus
 import kotlin.math.min
@@ -145,7 +144,7 @@ class VoiceEngine @JvmOverloads constructor(
     private val usingUdp = AtomicBoolean(false)
     private data class Endpoint(val host: String, val port: Int)
     private val endpointRef = AtomicReference<Endpoint?>(null)
-    private val formatRef = AtomicReference(VoiceFormat.DEFAULT)
+    private val formatRef = AtomicReference(UdpFormat.DEFAULT)
     private val targetFramesPerPacket = AtomicInteger(2)
     private val targetBitrate = AtomicInteger(40000)
     private val runningFlag = AtomicBoolean(false)
@@ -330,9 +329,9 @@ class VoiceEngine @JvmOverloads constructor(
     }
 
     /** Current session format (tests mirror sender framing to it). */
-    fun udpFormat(): UdpFormat = formatRef.get().udp
+    fun udpFormat(): UdpFormat = formatRef.get()
 
-    override fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?) {
+    override fun startVoice(host: String, port: Int, format: UdpFormat, keys: CryptKeys?) {
         submit(VoiceCommand.Start(host, port, keys, format))
     }
 
@@ -406,10 +405,7 @@ class VoiceEngine @JvmOverloads constructor(
                 endpointRef.set(Endpoint(command.host, command.port))
                 runningFlag.set(true)
                 try {
-                    engine.setFormat(
-                        if (command.format.udp == UdpFormat.PROTOBUF) 1 else 0,
-                        command.format.legacyServerVersion,
-                    )
+                    engine.setFormat(if (command.format == UdpFormat.PROTOBUF) 1 else 0)
                 } catch (e: Exception) {
                     loggerFine("Dropping format push: $e")
                 }

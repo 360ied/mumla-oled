@@ -437,22 +437,21 @@ class TransportImplTest {
     }
 
     @Test
-    fun voiceFormatIsFixedByTheFirstVersion() = runTest {
+    fun udpFormatIsFixedByTheFirstVersion() = runTest {
         val f = Fixture(this)
         try {
-            assertEquals(VoiceFormat.DEFAULT, f.transport.voiceFormat)
+            assertEquals(UdpFormat.DEFAULT, f.transport.udpFormat)
             val v150 = Constants.toVersionV2(1, 5, 0)
             f.serverSends(HumlaTCPMessageType.Version, Mumble.Version.newBuilder().setVersionV2(v150).build())
             f.sync()
-            val fixed = VoiceFormat(UdpFormat.PROTOBUF, Constants.toLegacyVersion(v150))
-            assertEquals(fixed, f.transport.voiceFormat)
+            assertEquals(UdpFormat.PROTOBUF, f.transport.udpFormat)
             // A second Version does not re-pick the format (issue 17).
             f.serverSends(
                 HumlaTCPMessageType.Version,
                 Mumble.Version.newBuilder().setVersionV1((1 shl 16) or (4 shl 8)).build(),
             )
             f.sync()
-            assertEquals(fixed, f.transport.voiceFormat)
+            assertEquals(UdpFormat.PROTOBUF, f.transport.udpFormat)
         } finally {
             f.close()
         }
@@ -466,13 +465,13 @@ class TransportImplTest {
         try {
             f.transport.startKeepalive()
             f.step()
-            assertEquals(VoiceFormat.DEFAULT, f.transport.voiceFormat)
+            assertEquals(UdpFormat.DEFAULT, f.transport.udpFormat)
             f.serverSends(
                 HumlaTCPMessageType.Version,
                 Mumble.Version.newBuilder().setVersionV2(Constants.toVersionV2(1, 5, 0)).build(),
             )
             f.sync()
-            assertEquals(VoiceFormat.DEFAULT, f.transport.voiceFormat)
+            assertEquals(UdpFormat.DEFAULT, f.transport.udpFormat)
         } finally {
             f.close()
         }
@@ -485,7 +484,7 @@ class TransportImplTest {
             val v1 = (1 shl 16) or (2 shl 8) or 2
             f.serverSends(HumlaTCPMessageType.Version, Mumble.Version.newBuilder().setVersionV1(v1).build())
             f.sync()
-            assertEquals(VoiceFormat(UdpFormat.LEGACY, v1), f.transport.voiceFormat)
+            assertEquals(UdpFormat.LEGACY, f.transport.udpFormat)
         } finally {
             f.close()
         }
