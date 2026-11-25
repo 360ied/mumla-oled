@@ -17,12 +17,14 @@
 
 package se.lublin.mumla.channel
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -56,11 +58,22 @@ class AccessTokenViewModel(
         }
     }
 
+    /**
+     * A failed store write is logged and changes nothing: each edit writes
+     * the store before it updates the list or the session, so the screen
+     * never shows a token the store does not hold.
+     */
     private fun enqueueStorage(block: suspend () -> Unit) {
         val previous = storageTail
         storageTail = viewModelScope.launch {
             previous.join()
-            block()
+            try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Access token write failed", e)
+            }
         }
     }
 
@@ -74,8 +87,8 @@ class AccessTokenViewModel(
             return
         }
         enqueueStorage {
-            _tokens.update { it + token }
             addToken(serverId, token)
+            _tokens.update { it + token }
             sendTokens(_tokens.value)
         }
     }
@@ -88,10 +101,14 @@ class AccessTokenViewModel(
     fun remove(token: String) {
         enqueueStorage {
             if (token in _tokens.value) {
-                _tokens.update { current -> current.filter { it != token } }
                 removeToken(serverId, token)
+                _tokens.update { current -> current.filter { it != token } }
                 sendTokens(_tokens.value)
             }
         }
+    }
+
+    private companion object {
+        const val TAG = "AccessTokenViewModel"
     }
 }

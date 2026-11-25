@@ -119,6 +119,29 @@ class AccessTokenViewModelTest {
     }
 
     @Test
+    fun aFailedStoreWriteChangesNothingAndLaterEditsStillRun() = runTest {
+        val sent = ArrayList<List<String>>()
+        var failAdd = true
+        val viewModel = AccessTokenViewModel(
+            serverId = SERVER_ID,
+            loadTokens = { listOf("alpha") },
+            addToken = { _, _ -> if (failAdd) throw IllegalStateException("disk full") },
+            removeToken = { _, _ -> throw IllegalStateException("disk full") },
+            sendTokens = { tokens -> sent.add(tokens) },
+        )
+        viewModel.add("beta")
+        viewModel.remove("alpha")
+        assertEquals(listOf("alpha"), viewModel.tokens.value)
+        assertTrue(sent.isEmpty())
+
+        // The chain survives a failure: the next edit is applied.
+        failAdd = false
+        viewModel.add("gamma")
+        assertEquals(listOf("alpha", "gamma"), viewModel.tokens.value)
+        assertEquals(listOf(listOf("alpha", "gamma")), sent)
+    }
+
+    @Test
     fun removingAnUnknownTokenChangesNothing() = runTest {
         val fixture = Fixture()
         fixture.viewModel.remove("missing")
