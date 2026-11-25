@@ -27,10 +27,14 @@ Checks (see docs/target-architecture/enforcement.md):
      mute/ignore or self mute/deafen (step 6).
   6. Feature isolation: features never name other features (step 6).
   7. No binder surface: nothing under app/src/main binds a service (step 7).
+  8. R8 keep rules: every se.lublin. name in app/proguard-rules.pro must
+     match production code (step 8).
 
 The check fails if a file not on the allowlist has a match, if a listed
 file has more matches than its count, or if it has fewer (the count must
 be lowered in the same commit). A file with zero matches must be removed.
+From step 8 the allowlist and BOUNDARY_FILES must list the same paths, so
+no unused permission stays behind.
 Only ever gets stricter.
 """
 
@@ -47,22 +51,22 @@ ALLOWLIST_PATH = SCRIPT_DIR / "architecture-allowlist.txt"
 # packet codec are single-threaded by contract and hold no locks.
 SINGLE_THREADED_ENGINE = True
 
-# New boundary files may only join the allowlist via these paths.
-# Adding a path here is a deliberate, reviewed change (see enforcement.md).
+# The only files allowed to hold a thread, a lock, or a handler. This list
+# and docs/target-architecture/enforcement.md's end-state block are the same
+# state, and a test fails unless they match. Adding a path here (and to that
+# block) is a deliberate, reviewed change; from step 8 the allowlist must
+# list exactly these paths.
 BOUNDARY_FILES = (
-    # Transport reader thread (step 3 extracts the Transport).
+    # The reader thread's blocking socket read.
     "libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt",
     # TLS callbacks on the socket thread.
     "libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt",
-    # Owns its HandlerThread + platform-callback handler (step 4).
+    # Owns its HandlerThread + platform-callback handler.
     "libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt",
-    # Owns the voice control thread + JNI handle (step 5a;
-    # step 4 uses voice/VoiceControl.kt, removed in 5a).
-    "libraries/humla/src/main/java/se/lublin/humla/voice/VoiceEngine.kt",
-    # Uncaught-exception handler + its background thread.
+    # The uncaught-exception handler.
     "app/src/main/java/se/lublin/mumla/util/CrashReporter.kt",
-    # Step 6: the one blocking settings startup read (theme/locale before
-    # the first activity draws) and its import.
+    # The one blocking settings startup read (theme/locale before the first
+    # activity draws) and its import.
     "app/src/main/java/se/lublin/mumla/AppContainer.kt",
 )
 
@@ -107,6 +111,12 @@ CONCURRENCY_PATTERNS = (
     # enforced. Deliberately NOT Thread.* statics (sleep, currentThread,
     # getDefaultUncaughtExceptionHandler, ...): those are not thread creation.
     r"\bkotlin\.concurrent\.thread\b",
+    # Hidden thread pools the step-1 list missed (step 8): an AsyncTask
+    # queue, an ExecutorService field, or a ThreadFactory all create threads
+    # without matching Executors. or Thread(.
+    r"\bAsyncTask\b",
+    r"\bExecutorService\b",
+    r"\bThreadFactory\b",
 )
 RE_CONCURRENCY = re.compile("|".join(f"(?:{p})" for p in CONCURRENCY_PATTERNS))
 
@@ -644,6 +654,99 @@ def check_native(found, allowed_native):
     return errors
 
 
+def check_boundaries(allowed):
+    """Fail unless the allowlist and BOUNDARY_FILES list the same paths.
+
+    From step 8 a boundary file whose last match goes must leave both lists
+    in the same commit, so no unused permission stays behind, and a new
+    boundary file is added to the spec block, BOUNDARY_FILES, and the
+    allowlist in one reviewed change.
+    """
+    errors = []
+    boundary = set(BOUNDARY_FILES)
+    for path in sorted(allowed):
+        if path not in boundary:
+            errors.append(
+                f"boundary: {path} is on the allowlist but not in BOUNDARY_FILES; "
+                f"non-boundary files must hold no thread, lock, or handler"
+            )
+    for path in sorted(boundary):
+        if path not in allowed:
+            errors.append(
+                f"boundary: {path} is in BOUNDARY_FILES but not on the allowlist; "
+                f"remove the path from BOUNDARY_FILES if it no longer needs one"
+            )
+    return errors
+
+
+RE_R8_NAME = re.compile(r"\bse\.lublin\.[\w$.?*]+")
+# Production sources the R8 check resolves names against, including the
+# generated protobuf package (which the concurrency tripwire skips).
+R8_SOURCE_ROOTS = (
+    "app/src/main/java",
+    "app/src/foss/java",
+    "libraries/humla/src/main/java",
+)
+R8_FILE = "app/proguard-rules.pro"
+
+
+def production_class_names(root: Path):
+    """Dotted names of every production source file, by path."""
+    names = set()
+    for base in R8_SOURCE_ROOTS:
+        base_dir = root / base
+        if not base_dir.is_dir():
+            continue
+        for ext in (".kt", ".java"):
+            for full in base_dir.rglob(f"*{ext}"):
+                rel = full.relative_to(base_dir).with_suffix("")
+                names.add(".".join(rel.parts))
+    return names
+
+
+def check_r8_keep_rules(root: Path, rules_path: Path = None):
+    """Fail when a keep rule names a class that production code does not have.
+
+    A rule that matches nothing changes nothing in the build, but it reads as
+    a live JNI contract, so a leftover name must be deleted with its class.
+    Names after `implements`/`extends` count too.
+    """
+    path = rules_path if rules_path is not None else root / R8_FILE
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [f"r8: cannot read {R8_FILE}"]
+    names = production_class_names(root)
+    errors = []
+    seen = set()
+    for match in RE_R8_NAME.findall(text):
+        if match in seen:
+            continue
+        seen.add(match)
+        wildcard = min(
+            [i for i in (match.find("*"), match.find("?")) if i != -1],
+            default=-1,
+        )
+        dollar = match.find("$")
+        if wildcard == -1 or (dollar != -1 and dollar < wildcard):
+            # A plain name, or a nested-class pattern like Outer$*: the
+            # outer class before the first $ must exist.
+            base = match[:dollar] if dollar != -1 else match
+            if base not in names:
+                errors.append(
+                    f"r8: {path.name} names {match} but no production class "
+                    f"{base} has a source file"
+                )
+            continue
+        prefix = match[:wildcard]
+        if not any(name.startswith(prefix) for name in names):
+            errors.append(
+                f"r8: {path.name}'s pattern {match} matches no production "
+                f"class (prefix {prefix})"
+            )
+    return errors
+
+
 def load_allowlist(path=ALLOWLIST_PATH):
     if not path.exists():
         return None, None, f"allowlist not found: {path}"
@@ -664,6 +767,7 @@ def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
         return errors + [err], {}
     actual = scan_concurrency(root)
     errors.extend(check_concurrency(actual, plain))
+    errors.extend(check_boundaries(plain))
     for rel, lineno, line in scan_android_free(root):
         errors.append(f"android-free: {rel}:{lineno}: {line}")
     errors.extend(check_native(scan_native(root), native_allowed))
@@ -675,6 +779,7 @@ def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
     errors.extend(check_local_facts_writers(root))
     errors.extend(check_feature_set_closed(root))
     errors.extend(check_feature_isolation(root))
+    errors.extend(check_r8_keep_rules(root))
     return errors, actual
 
 

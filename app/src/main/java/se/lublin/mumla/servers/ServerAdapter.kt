@@ -131,7 +131,7 @@ abstract class ServerAdapter<E : Server>(
         }
 
         // Ping server if available. A row bound again before the result
-        // arrives starts another ping, as the AsyncTask path did.
+        // arrives starts another ping, as the old ping-pool path did.
         if (infoResponse == null) {
             scope.launch {
                 val result = withContext(pingDispatcher) { ping(server, resolver) }

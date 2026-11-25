@@ -151,6 +151,18 @@ class TestPatterns(unittest.TestCase):
         self.assertIsNone(ca.RE_CONCURRENCY.search("TimerTask()"))
         self.assertIsNone(ca.RE_CONCURRENCY.search("TimeUnit.SECONDS"))
 
+    def test_step8_pool_patterns_match(self):
+        # Hidden thread pools: an AsyncTask queue, an ExecutorService field,
+        # and a ThreadFactory all create threads without Executors. or
+        # Thread(.
+        for snippet in (
+            "class ServerInfoTask : AsyncTask<Server, Void, ServerInfoResponse>()",
+            "private val executor: ExecutorService = pool",
+            "Executors.newFixedThreadPool(2, object : ThreadFactory { })",
+        ):
+            self.assertIsNotNone(ca.RE_CONCURRENCY.search(snippet), snippet)
+        self.assertIsNone(ca.RE_CONCURRENCY.search("limitedParallelism(2)"))
+
     def test_kotlin_thread_import_matches_prose_does_not(self):
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("import kotlin.concurrent.thread"))
         # Bare prose "thread (" in comments must not match (too noisy).
@@ -785,6 +797,133 @@ class TestServiceBinding(unittest.TestCase):
             allowlist.write_text("", encoding="utf-8")
             errors, _ = ca.run_all(root, allowlist)
             self.assertTrue(any("service-binding" in e for e in errors))
+
+
+class TestBoundaries(unittest.TestCase):
+    def test_matching_lists_pass(self):
+        allowed = {path: 1 for path in ca.BOUNDARY_FILES}
+        self.assertEqual(ca.check_boundaries(allowed), [])
+
+    def test_non_boundary_entry_fails(self):
+        # A non-boundary file may hold no thread, lock, or handler: an
+        # allowlist entry without a BOUNDARY_FILES path is an unused
+        # permission and fails.
+        allowed = {path: 1 for path in ca.BOUNDARY_FILES}
+        allowed["app/src/main/java/se/lublin/mumla/util/Leak.kt"] = 1
+        errors = ca.check_boundaries(allowed)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("not in BOUNDARY_FILES", errors[0])
+
+    def test_boundary_path_missing_from_allowlist_fails(self):
+        allowed = {path: 1 for path in list(ca.BOUNDARY_FILES)[1:]}
+        errors = ca.check_boundaries(allowed)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("not on the allowlist", errors[0])
+
+    def test_every_boundary_file_is_a_kt_file(self):
+        for path in ca.BOUNDARY_FILES:
+            self.assertTrue(path.endswith(".kt"), path)
+
+
+class TestR8KeepRules(unittest.TestCase):
+    def write(self, root, rel, text=""):
+        full = root / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(text, encoding="utf-8")
+        return full
+
+    def check(self, root, rules):
+        rules_file = self.write(root, "app/proguard-rules.pro", rules)
+        return ca.check_r8_keep_rules(root, rules_file)
+
+    def test_existing_class_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt")
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Thing { *; }\n"), []
+            )
+
+    def test_java_and_flavor_sources_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.java")
+            self.write(root, "app/src/foss/java/se/lublin/mumla/Flavor.kt")
+            self.assertEqual(
+                self.check(
+                    root,
+                    "-keep class se.lublin.humla.ok.Thing { *; }\n"
+                    "-keep class se.lublin.mumla.Flavor { *; }\n",
+                ),
+                [],
+            )
+
+    def test_missing_class_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            errors = self.check(root, "-keep class se.lublin.humla.gone.Thing { *; }\n")
+            self.assertEqual(len(errors), 1)
+            self.assertIn("no production class", errors[0])
+
+    def test_implements_name_is_checked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt")
+            errors = self.check(
+                root,
+                "-keepclassmembers class * implements se.lublin.humla.gone.Listener {\n"
+                "    public void onX();\n"
+                "}\n",
+            )
+            self.assertEqual(len(errors), 1)
+            self.assertIn("se.lublin.humla.gone.Listener", errors[0])
+
+    def test_nested_name_checks_the_outer_class(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt")
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Thing$Inner { *; }\n"), []
+            )
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Thing$* { *; }\n"), []
+            )
+
+    def test_wildcard_pattern_must_match_a_class(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/protobuf/Mumble.java")
+            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/protobuf/MumbleUDP.java")
+            # The live pattern matches Mumble and MumbleUDP.
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.protobuf.Mumble** { *; }\n"), []
+            )
+            errors = self.check(root, "-keep class se.lublin.humla.protobuf.Gone** { *; }\n")
+            self.assertEqual(len(errors), 1)
+            self.assertIn("matches no production class", errors[0])
+
+    def test_unreadable_rules_file_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            errors = ca.check_r8_keep_rules(root, root / "nope.pro")
+            self.assertTrue(any("cannot read" in e for e in errors))
+
+    def test_committed_rules_pass(self):
+        self.assertEqual(ca.check_r8_keep_rules(ca.ROOT_DIR), [])
+
+
+class TestEnforcementDoc(unittest.TestCase):
+    def test_end_state_block_is_the_gate_list(self):
+        # Issue 31's acceptance test: the spec's end-state block and
+        # BOUNDARY_FILES are one list, so the boundary list cannot drift
+        # from the document that justifies it.
+        doc = (ca.ROOT_DIR / "docs/target-architecture/enforcement.md").read_text(
+            encoding="utf-8"
+        )
+        block = doc.split("### End state", 1)[1]
+        fenced = block.split("```text", 1)[1].split("```", 1)[0]
+        paths = [line.strip() for line in fenced.splitlines() if line.strip()]
+        self.assertEqual(paths, list(ca.BOUNDARY_FILES))
 
 
 class TestRunAll(unittest.TestCase):
