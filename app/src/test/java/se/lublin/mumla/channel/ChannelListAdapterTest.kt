@@ -27,7 +27,9 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.protobuf.ByteString
 import kotlinx.collections.immutable.persistentMapOf
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -272,6 +274,21 @@ class ChannelListAdapterTest {
         submit()
         assertEquals("row identity is stable", before.map { it.stableId }, adapter.rows().map { it.stableId })
         assertEquals(TalkState.TALKING, (adapter.rows()[1] as ChannelListAdapter.Row.UserRow).talkState)
+    }
+
+    @Test
+    fun valueChangesRebindTheSameHolderWithoutAChangeAnimation() {
+        addChannel(0, "Root")
+        sync(selfSession = 1)
+        join(2, "Alice")
+        submit()
+        val holder = recycler.findViewHolderForAdapterPosition(1)
+        talk = TalkActivity.initial().copy(users = persistentMapOf(2 to TalkState.TALKING))
+        submit()
+        // A payload-less change makes DefaultItemAnimator cross-fade a second holder.
+        assertSame("talk change rebinds in place", holder, recycler.findViewHolderForAdapterPosition(1))
+        assertEquals(R.drawable.outline_circle_talking_on, talkIconRes(1))
+        assertFalse("no change animation", recycler.itemAnimator!!.isRunning)
     }
 
     @Test

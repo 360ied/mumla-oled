@@ -92,7 +92,9 @@ class ChannelListAdapter(
         }
         for (position in mRows.indices) {
             if (mRows[position] != previousRows[position]) {
-                notifyItemChanged(position)
+                // A payload lets the animator rebind the same holder in place;
+                // without one DefaultItemAnimator cross-fades a second holder.
+                notifyItemChanged(position, REBIND_IN_PLACE)
             }
         }
     }
@@ -406,5 +408,8 @@ class ChannelListAdapter(
         // (0x1L << 32) and (0x1L << 33); written out because const forbids shl.
         const val CHANNEL_ID_MASK = 0x100000000L
         const val USER_ID_MASK = 0x200000000L
+
+        /** Any non-null payload; onBindViewHolder ignores it and rebinds the row. */
+        private val REBIND_IN_PLACE = Any()
     }
 }
