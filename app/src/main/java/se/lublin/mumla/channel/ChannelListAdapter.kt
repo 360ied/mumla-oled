@@ -80,6 +80,9 @@ class ChannelListAdapter(
         val previousRows = mRows
         mState = state
         mRows = buildRows(state)
+        if (previousState.server.users.keys != state.server.users.keys) {
+            mAvatarCache.retainOnly(state.server.users.keys)
+        }
         if (previousState.showUserCount != state.showUserCount ||
             mRows.map { it.stableId } != previousRows.map { it.stableId }
         ) {
@@ -265,10 +268,6 @@ class ChannelListAdapter(
     fun getChannelPosition(channelId: Int): Int {
         val itemId = (channelId.toLong() and 0xFFFFFFFFL) or CHANNEL_ID_MASK
         return mRows.indexOfFirst { it.stableId == itemId }
-    }
-
-    fun removeUser(session: Int) {
-        mAvatarCache.remove(session)
     }
 
     fun clearAvatarCache() {

@@ -55,6 +55,8 @@ class PermissionsPopupMenu(
     }
 
     fun show() {
+        // A second show without a dismiss replaces the collector, not adds one.
+        scope?.cancel()
         val menuScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         scope = menuScope
         menuScope.launch {

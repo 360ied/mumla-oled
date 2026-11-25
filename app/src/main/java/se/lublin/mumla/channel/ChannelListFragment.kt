@@ -146,11 +146,17 @@ class ChannelListFragment : Fragment() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
+    override fun onDestroyView() {
+        // A pager detach destroys the view but keeps the fragment; release
+        // the list with the view, not with the fragment.
         mChannelListAdapter?.clearAvatarCache()
         mChannelListAdapter = null
         mChannelView = null
+        super.onDestroyView()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
         mActionMode = null
     }
 

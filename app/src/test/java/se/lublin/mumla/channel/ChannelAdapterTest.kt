@@ -23,11 +23,12 @@ import android.widget.TextView
 import androidx.fragment.app.FragmentActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.protobuf.ByteString
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.persistentSetOf
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -158,12 +159,19 @@ class ChannelAdapterTest {
     }
 
     @Test
-    fun avatarCacheAccessorsWork() {
-        assertNotNull(adapter.getAvatarCache())
+    fun aDepartedUsersAvatarLeavesTheCache() {
+        // Any texture records an entry (a bitmap, or a negative entry when it
+        // does not decode); size() is in KB, so only zero is exact.
+        val alice = user(101, "Alice").copy(texture = ByteString.copyFrom(byteArrayOf(1, 2, 3)))
+        submit(listOf(alice, user(102, "Bob")))
+        adapter.getTalkStateDrawable(alice, TalkState.PASSIVE)
+        assertTrue(adapter.getAvatarCache().size() > 0)
+
+        submit(listOf(user(102, "Bob")))
+
+        assertEquals(0, adapter.getAvatarCache().size())
         adapter.clearAvatarCache()
         assertEquals(0, adapter.getAvatarCache().size())
-        submit(listOf(user(101, "Alice")))
-        adapter.removeUser(101)
     }
 
     @Test

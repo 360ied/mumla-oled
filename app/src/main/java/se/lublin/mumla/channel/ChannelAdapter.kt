@@ -66,6 +66,7 @@ class ChannelAdapter(context: Context?) : RecyclerView.Adapter<ChannelAdapter.Vi
         mTalkActivity = talkActivity
         mSelfSession = selfSession
         if (users.map { it.session } != previousSessions) {
+            mAvatarCache.retainOnly(users.mapTo(HashSet()) { it.session })
             notifyDataSetChanged()
             return
         }
@@ -142,10 +143,6 @@ class ChannelAdapter(context: Context?) : RecyclerView.Adapter<ChannelAdapter.Vi
             }
         }
         return AppCompatResources.getDrawable(context, R.drawable.outline_circle_talking_off)
-    }
-
-    fun removeUser(session: Int) {
-        mAvatarCache.remove(session)
     }
 
     fun clearAvatarCache() {

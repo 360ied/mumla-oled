@@ -94,6 +94,15 @@ class AvatarCache {
         mCache.remove(session)
     }
 
+    /** Drops every entry whose session is not in [sessions] (departed users). */
+    fun retainOnly(sessions: Set<Int>) {
+        for (session in mCache.snapshot().keys) {
+            if (session !in sessions) {
+                mCache.remove(session)
+            }
+        }
+    }
+
     fun clear() {
         mCache.evictAll()
     }
