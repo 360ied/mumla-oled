@@ -50,14 +50,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.trySendBlocking
-import org.minidns.hla.ResolverApi
-import org.minidns.util.SrvUtil
 import se.lublin.humla.Constants
 import se.lublin.humla.client.checkNotMainThread
 import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.CryptCounts
 import se.lublin.humla.protobuf.Mumble
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Transport implementation: TCP control channel with reader thread,
@@ -82,6 +79,9 @@ class TransportImpl internal constructor(
     // collector under virtual time; production uses the defaults.
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val nanoTime: () -> Long = System::nanoTime,
+    // The shared SRV rule (SrvResolver): the connect path is its only caller
+    // in the transport, and tests inject a fake lookup.
+    private val srvResolver: SrvResolver = SrvResolver(),
 ) : Transport {
     companion object {
         const val CONNECT_TIMEOUT_MS = 10000
@@ -253,42 +253,11 @@ class TransportImpl internal constructor(
     }
 
     private suspend fun resolveIfNeeded() {
-        if (resolvedPortRef.get() != 0) return
-        val original = resolvedHostRef.get()
-        if (HumlaTCP.isIpLiteral(original) || original.contains(":") ||
-            TlsHostnameVerifier.isOnionHost(original)
-        ) {
-            // contains(":") is subsumed by isIpLiteral (true for IPv6) but
-            // kept explicit at the call site for readability.
-            resolvedPortRef.set(Constants.DEFAULT_PORT)
-            return
-        }
-        try {
-            val lookup = "_mumble._tcp.$original"
-            val res = withTimeoutOrNull(800) {
-                ResolverApi.INSTANCE.resolveSrv(lookup)
-            }
-            if (res != null && res.wasSuccessful()) {
-                val answers = res.getAnswersOrEmptySet()
-                if (answers != null && answers.isNotEmpty()) {
-                    val srvs = SrvUtil.sortSrvRecords(answers)
-                    for (srv in srvs) {
-                        var target = srv.target.toString()
-                        if (target.endsWith(".")) target = target.substring(0, target.length - 1)
-                        resolvedHostRef.set(target)
-                        resolvedPortRef.set(srv.port)
-                        break
-                    }
-                }
-            }
-        } catch (e: CancellationException) {
-            // Attempt cancelled (disconnect/new connect): propagate so the
-            // attempt tears down instead of connecting with a default port.
-            throw e
-        } catch (e: Exception) {
-            logger.warning("SRV resolution failed for $original: $e")
-        }
-        if (resolvedPortRef.get() == 0) resolvedPortRef.set(Constants.DEFAULT_PORT)
+        // The resolver owns the whole rule, including the non-zero-port and
+        // literal short-circuits (see SrvResolver). Cancellation propagates.
+        val target = srvResolver.resolve(resolvedHostRef.get(), resolvedPortRef.get())
+        resolvedHostRef.set(target.host)
+        resolvedPortRef.set(target.port)
     }
 
     private fun createFactory(): HumlaSSLSocketFactory {
