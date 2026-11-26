@@ -64,7 +64,7 @@ class MumbleImageGetter(
     context: Context,
     listener: OnImageLoadedListener? = null,
     /** The blocking download; injected by tests, the SSRF-checked fetch by default. */
-    fetch: ((String) -> Bitmap?)? = null,
+    private val fetch: (String) -> Bitmap? = Companion::fetchUrlImage,
     /** Where bookkeeping runs: the thread `Html.fromHtml` calls this on. */
     mainDispatcher: CoroutineDispatcher = Dispatchers.Main,
     /** Where downloads run; the two-download cap lives here. */
@@ -80,7 +80,6 @@ class MumbleImageGetter(
 
     private val mContext: Context
     private val mSettings: Settings
-    private val mFetch: (String) -> Bitmap?
     // android.util.LruCache synchronizes get/put internally; every access is
     // on the main dispatcher now, so the get-then-put sequences are atomic
     // with respect to each other.
@@ -97,7 +96,6 @@ class MumbleImageGetter(
     init {
         mContext = context.applicationContext
         mSettings = mContext.container.settings
-        mFetch = fetch ?: { source -> fetchUrlImage(source) }
 
         // Allocate up to 1/8th of available runtime memory for the LRU bitmap cache (in KB)
         val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024).toInt()
@@ -249,7 +247,7 @@ class MumbleImageGetter(
         }
         mScope.launch {
             try {
-                val bitmap = withContext(fetchDispatcher) { mFetch(source) }
+                val bitmap = withContext(fetchDispatcher) { fetch(source) }
                 // Back on the main dispatcher: cache, sets, notification.
                 if (bitmap != null) {
                     mBitmapCache.put(source, bitmap)
@@ -289,38 +287,6 @@ class MumbleImageGetter(
         return decodeBoundedImage(src, CHAT_MAX_DIMENSION, CHAT_MAX_PIXELS.toLong())
     }
 
-    private fun fetchUrlImage(source: String): Bitmap? {
-        try {
-            var url = URL(source)
-            var redirectsFollowed = 0
-            while (true) {
-                val result = fetchOneUrl(url)
-                if (!result.redirect) {
-                    return result.bitmap
-                }
-                if (!SsrfHostPolicy.shouldFollowRedirect(
-                        redirectsFollowed, result.status, result.location
-                    )
-                ) {
-                    Log.w(TAG, "stopping redirect chain")
-                    return null
-                }
-                redirectsFollowed++
-                url = URL(url, result.location)
-            }
-        } catch (e: IOException) {
-            Log.w(TAG, "failed to load URL image: $e")
-        } catch (e: RuntimeException) {
-            // Best-effort background fetch: an unexpected runtime failure skips the
-            // image instead of killing the executor worker (the null return still
-            // records the failure via mFailedDownloads in the caller).
-            Log.w(TAG, "failed to load URL image: $e")
-        } catch (e: OutOfMemoryError) {
-            Log.w(TAG, "OOM decoding URL image: $e")
-        }
-        return null
-    }
-
     /** Outcome of one fetch hop: either a decoded bitmap or a redirect. */
     private class FetchResult {
         val bitmap: Bitmap?
@@ -343,39 +309,73 @@ class MumbleImageGetter(
         }
     }
 
-    /**
-     * Fetches a single URL without following redirects. Every hop
-     * re-applies the scheme, userinfo, and SSRF host checks, so a
-     * redirect to a private IP or a non-http(s) scheme is refused.
-     */
-    @Throws(IOException::class)
-    private fun fetchOneUrl(url: URL): FetchResult {
-        if (!isSchemeAllowed(url) || SsrfHostPolicy.hasUserinfo(url)) {
-            Log.w(TAG, "Refusing to load image with disallowed URL")
-            return FetchResult(null as Bitmap?)
-        }
-        val checked = resolveAndCheck(url) // null = blocked (fail closed), per-hop
-        if (checked == null) {
-            Log.w(TAG, "Refusing to load image from blocked host")
-            return FetchResult(null as Bitmap?)
-        }
-        var lastFailure: IOException? = null
-        for (addr in checked) {
-            try {
-                return fetchPinned(url, addr)
-            } catch (e: IOException) {
-                lastFailure = e // try the next checked address
-            }
-        }
-        val failure = lastFailure
-        if (failure != null) {
-            throw failure // all checked addresses failed; loop treats as fetch failure
-        }
-        return FetchResult(null as Bitmap?) // unreachable: resolveAndCheck never returns empty
-    }
-
     companion object {
         private const val TAG = "MumbleImageGetter"
+
+        // The fetch and its per-hop helper live here so the constructor can
+        // default to the real one (`Companion::fetchUrlImage`).
+            private fun fetchUrlImage(source: String): Bitmap? {
+                try {
+                    var url = URL(source)
+                    var redirectsFollowed = 0
+                    while (true) {
+                        val result = fetchOneUrl(url)
+                        if (!result.redirect) {
+                            return result.bitmap
+                        }
+                        if (!SsrfHostPolicy.shouldFollowRedirect(
+                                redirectsFollowed, result.status, result.location
+                            )
+                        ) {
+                            Log.w(TAG, "stopping redirect chain")
+                            return null
+                        }
+                        redirectsFollowed++
+                        url = URL(url, result.location)
+                    }
+                } catch (e: IOException) {
+                    Log.w(TAG, "failed to load URL image: $e")
+                } catch (e: RuntimeException) {
+                    // Best-effort background fetch: an unexpected runtime failure skips the
+                    // image instead of killing the executor worker (the null return still
+                    // records the failure via mFailedDownloads in the caller).
+                    Log.w(TAG, "failed to load URL image: $e")
+                } catch (e: OutOfMemoryError) {
+                    Log.w(TAG, "OOM decoding URL image: $e")
+                }
+                return null
+            }
+
+            /**
+             * Fetches a single URL without following redirects. Every hop
+             * re-applies the scheme, userinfo, and SSRF host checks, so a
+             * redirect to a private IP or a non-http(s) scheme is refused.
+             */
+            @Throws(IOException::class)
+            private fun fetchOneUrl(url: URL): FetchResult {
+                if (!isSchemeAllowed(url) || SsrfHostPolicy.hasUserinfo(url)) {
+                    Log.w(TAG, "Refusing to load image with disallowed URL")
+                    return FetchResult(null as Bitmap?)
+                }
+                val checked = resolveAndCheck(url) // null = blocked (fail closed), per-hop
+                if (checked == null) {
+                    Log.w(TAG, "Refusing to load image from blocked host")
+                    return FetchResult(null as Bitmap?)
+                }
+                var lastFailure: IOException? = null
+                for (addr in checked) {
+                    try {
+                        return fetchPinned(url, addr)
+                    } catch (e: IOException) {
+                        lastFailure = e // try the next checked address
+                    }
+                }
+                val failure = lastFailure
+                if (failure != null) {
+                    throw failure // all checked addresses failed; loop treats as fetch failure
+                }
+                return FetchResult(null as Bitmap?) // unreachable: resolveAndCheck never returns empty
+            }
 
         /** Concurrent downloads; carried over from the old two-thread pool. */
         private const val MAX_PARALLEL_DOWNLOADS = 2
