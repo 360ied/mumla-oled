@@ -33,7 +33,7 @@ import se.lublin.humla.HumlaNative
  * (notifier thread). Render and capture never call into Kotlin.
  */
 interface EngineNative {
-    fun setFormat(udpFormat: Int, legacyVersion: Int)
+    fun setFormat(udpFormat: Int)
     fun setPolicy(muted: IntArray?, known: IntArray?, transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int)
     fun setSettings(inputMode: Int, vadMax: Float, vadMin: Float, amplitudeBoost: Float, adaptiveLeveler: Boolean, halfDuplex: Boolean)
     fun setVoiceRoute(udp: Boolean)
@@ -75,7 +75,7 @@ class NativeVoiceEngine : EngineNative {
         private external fun nativeDestroy(handle: Long)
 
         @JvmStatic
-        private external fun nativeSetFormat(handle: Long, udpFormat: Int, legacyVersion: Int)
+        private external fun nativeSetFormat(handle: Long, udpFormat: Int)
 
         @JvmStatic
         private external fun nativeSetPolicy(handle: Long, muted: IntArray?, known: IntArray?, transmitAllowed: Boolean, pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int)
@@ -173,10 +173,10 @@ class NativeVoiceEngine : EngineNative {
         nativeHandle.set(handle)
     }
 
-    override fun setFormat(udpFormat: Int, legacyVersion: Int) {
+    override fun setFormat(udpFormat: Int) {
         val handle = nativeHandle.get()
         if (handle != 0L) {
-            nativeSetFormat(handle, udpFormat, legacyVersion)
+            nativeSetFormat(handle, udpFormat)
         }
     }
 

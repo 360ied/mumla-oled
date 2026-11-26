@@ -27,10 +27,16 @@ Checks (see docs/target-architecture/enforcement.md):
      mute/ignore or self mute/deafen (step 6).
   6. Feature isolation: features never name other features (step 6).
   7. No binder surface: nothing under app/src/main binds a service (step 7).
+  8. R8 keep rules: every se.lublin. name in app/proguard-rules.pro must
+     match production code (step 8).
+  9. Unreferenced types: no production top-level class, interface, or
+     object may be declared and never named again (step 8).
 
 The check fails if a file not on the allowlist has a match, if a listed
 file has more matches than its count, or if it has fewer (the count must
 be lowered in the same commit). A file with zero matches must be removed.
+From step 8 the allowlist and BOUNDARY_FILES must list the same paths, so
+no unused permission stays behind.
 Only ever gets stricter.
 """
 
@@ -47,24 +53,22 @@ ALLOWLIST_PATH = SCRIPT_DIR / "architecture-allowlist.txt"
 # packet codec are single-threaded by contract and hold no locks.
 SINGLE_THREADED_ENGINE = True
 
-# New boundary files may only join the allowlist via these paths.
-# Adding a path here is a deliberate, reviewed change (see enforcement.md).
+# The only files allowed to hold a thread, a lock, or a handler. This list
+# and docs/target-architecture/enforcement.md's end-state block are the same
+# state, and a test fails unless they match. Adding a path here (and to that
+# block) is a deliberate, reviewed change; from step 8 the allowlist must
+# list exactly these paths.
 BOUNDARY_FILES = (
-    # TCP reader thread (step 3 keeps the file).
-    "libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt",
-    # Transport reader thread (step 3 extracts the Transport).
+    # The reader thread's blocking socket read.
     "libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt",
     # TLS callbacks on the socket thread.
     "libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt",
-    # Owns its HandlerThread + platform-callback handler (step 4).
+    # Owns its HandlerThread + platform-callback handler.
     "libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt",
-    # Owns the voice control thread + JNI handle (step 5a;
-    # step 4 uses voice/VoiceControl.kt, removed in 5a).
-    "libraries/humla/src/main/java/se/lublin/humla/voice/VoiceEngine.kt",
-    # Uncaught-exception handler + its background thread.
+    # The uncaught-exception handler.
     "app/src/main/java/se/lublin/mumla/util/CrashReporter.kt",
-    # Step 6: the one blocking settings startup read (theme/locale before
-    # the first activity draws) and its import.
+    # The one blocking settings startup read (theme/locale before the first
+    # activity draws) and its import.
     "app/src/main/java/se/lublin/mumla/AppContainer.kt",
 )
 
@@ -109,6 +113,12 @@ CONCURRENCY_PATTERNS = (
     # enforced. Deliberately NOT Thread.* statics (sleep, currentThread,
     # getDefaultUncaughtExceptionHandler, ...): those are not thread creation.
     r"\bkotlin\.concurrent\.thread\b",
+    # Hidden thread pools the step-1 list missed (step 8): an AsyncTask
+    # queue, an ExecutorService field, or a ThreadFactory all create threads
+    # without matching Executors. or Thread(.
+    r"\bAsyncTask\b",
+    r"\bExecutorService\b",
+    r"\bThreadFactory\b",
 )
 RE_CONCURRENCY = re.compile("|".join(f"(?:{p})" for p in CONCURRENCY_PATTERNS))
 
@@ -128,8 +138,8 @@ ANDROID_FREE_PACKAGES = {
 }
 # The TLS socket factory uses Android trust-store APIs by design.
 ANDROID_FREE_NET_EXCLUDE = {"HumlaSSLSocketFactory.kt"}
-# Step 3 removed the legacy grandfathering (HumlaConnection deleted;
-# HumlaTCP and HumlaUDP are android-free via Executor/java-logging).
+# Step 3 removed the legacy grandfathering (HumlaConnection deleted; the
+# transport and voice_io are android-free).
 
 RE_ANDROID_IMPORT = re.compile(r"^\s*import\s+android\.")
 RE_ANDROIDX_IMPORT = re.compile(r"^\s*import\s+androidx\.")
@@ -646,6 +656,354 @@ def check_native(found, allowed_native):
     return errors
 
 
+# Step 8: the production type declarations, parsed from source, shared by
+# the R8 keep-rule check (every declared FQCN) and the unreferenced-type
+# check (top-level declarations only). Parsing beats a line regex: a class
+# may sit in a differently named file, a keep rule may name a nested type,
+# and "top-level" means "not enclosed by another type", not "at column 0".
+DECL_ROOTS = (
+    "app/src/main",
+    "app/src/foss",
+    "libraries/humla/src/main/java",
+)
+REF_ROOTS = (
+    "app/src/main",
+    "app/src/foss",
+    "libraries/humla/src/main",
+)
+REF_EXTS = (".kt", ".java", ".xml")
+JNI_ROOT = "libraries/humla/src/main/jni"
+JNI_SUBMODULES = ("opus", "rnnoise", "nanopb")
+RE_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+RE_PACKAGE = re.compile(r"^\s*package\s+([\w.]+)", re.M)
+RE_WORD = re.compile(r"[A-Za-z_]\w*")
+# Kotlin and Java declarations. `enum`/`record` carry the name directly in
+# Java; in Kotlin `enum class Foo` the `class` word supplies it.
+TYPE_KEYWORDS = ("class", "interface", "object", "enum", "record")
+# A pending declaration with no body ends when another declaration or
+# statement starts at the same brace and paren depth.
+OTHER_DECL_KEYWORDS = ("fun", "val", "var", "typealias", "const", "enum", "record")
+
+
+def strip_source_noise(text):
+    """Blank comments and string/char literals, keeping line structure.
+
+    Brace counting and keyword scanning must not see `{`, `}`, or a word
+    inside a comment or a string (a raw string with braces would unbalance
+    the nesting; a comment naming a class would fake a declaration).
+    """
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            j = text.find("\n", i)
+            if j == -1:
+                j = n
+            out.append(" " * (j - i))
+            i = j
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            j = text.find("*/", i + 2)
+            j = n if j == -1 else j + 2
+            out.append("".join(ch if ch == "\n" else " " for ch in text[i:j]))
+            i = j
+            continue
+        if text.startswith('"""', i):
+            j = text.find('"""', i + 3)
+            j = n if j == -1 else j + 3
+            out.append("".join(ch if ch == "\n" else " " for ch in text[i:j]))
+            i = j
+            continue
+        if c in "\"'":
+            quote = c
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == quote:
+                    j += 1
+                    break
+                if text[j] == "\n":
+                    break
+                j += 1
+            out.append("".join(ch if ch == "\n" else " " for ch in text[i:j]))
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def source_declarations(text):
+    """Return [(simple name, fqcn, top_level)] for one source file's types.
+
+    FQCNs follow the JVM form: package, then `$`-joined enclosing types (an
+    unnamed companion counts as `Companion`). A declaration owns the next
+    `{` at its own paren and brace depth; a bodyless declaration (a data
+    class, a delegating object, an interface) ends at the next declaration
+    or statement keyword at that depth instead, so it cannot swallow the
+    class after it.
+    """
+    clean = strip_source_noise(text)
+    package = RE_PACKAGE.search(clean)
+    prefix = package.group(1) + "." if package else ""
+    declarations = []
+    bodies = []  # (fqcn, depth inside that type's braces)
+    pending = None  # [fqcn, paren at declaration, depth at declaration]
+    depth = 0
+    paren = 0
+    previous_word = ""
+    i = 0
+    n = len(clean)
+    while i < n:
+        c = clean[i]
+        if c == "{":
+            if pending is not None and pending[1] == paren and pending[2] == depth:
+                bodies.append((pending[0], depth + 1))
+                pending = None
+            depth += 1
+            i += 1
+            continue
+        if c == "}":
+            if bodies and bodies[-1][1] == depth:
+                bodies.pop()
+            depth = max(0, depth - 1)
+            i += 1
+            continue
+        if c == "(":
+            paren += 1
+            i += 1
+            continue
+        if c == ")":
+            paren = max(0, paren - 1)
+            i += 1
+            continue
+        if c == ";":
+            if pending is not None and pending[1] == paren and pending[2] == depth:
+                pending = None
+            i += 1
+            continue
+        m = RE_WORD.match(clean, i)
+        if not m:
+            i += 1
+            continue
+        word = m.group(0)
+        i = m.end()
+        if word in OTHER_DECL_KEYWORDS and pending is not None \
+                and pending[1] == paren and pending[2] == depth:
+            pending = None
+        if word in TYPE_KEYWORDS:
+            rest = clean[i:]
+            name_match = RE_WORD.match(rest.lstrip())
+            if name_match is not None:
+                name = name_match.group(0)
+                if name in TYPE_KEYWORDS or name in OTHER_DECL_KEYWORDS:
+                    name = None
+                else:
+                    i += len(rest) - len(rest.lstrip()) + name_match.end()
+            else:
+                name = None
+            if name is None and word == "object" and previous_word == "companion":
+                # An unnamed companion is a type in the JVM sense.
+                name = "Companion"
+            if name is not None:
+                pending = None
+                parent = bodies[-1][0] if bodies and bodies[-1][1] == depth else None
+                fqcn = (parent + "$" if parent else prefix) + name
+                declarations.append((name, fqcn, not bodies and depth == 0))
+                pending = [fqcn, paren, depth]
+                previous_word = name
+                continue
+        previous_word = word
+    return declarations
+
+
+def production_declarations(root: Path, include_generated=False):
+    """Yield (simple name, fqcn, path, top_level) for production types.
+
+    The generated protobuf package is production code for the R8 check (keep
+    rules name it) but is not a place to look for unreferenced types.
+    """
+    for base in DECL_ROOTS:
+        base_dir = root / base
+        if not base_dir.is_dir():
+            continue
+        for full in sorted(base_dir.rglob("*")):
+            if full.suffix not in (".kt", ".java"):
+                continue
+            rel = full.relative_to(root).as_posix()
+            if not include_generated and GENERATED_MARKER in rel:
+                continue
+            try:
+                text = full.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for name, fqcn, top_level in source_declarations(text):
+                yield name, fqcn, full, top_level
+
+
+def production_class_names(root: Path):
+    """The fully qualified names of every production type, nested included."""
+    return {
+        fqcn for _, fqcn, _, _ in production_declarations(root, include_generated=True)
+    }
+
+
+def declared_top_level_types(root: Path):
+    """Return [(simple name, file)] for production top-level type declarations."""
+    return [
+        (name, full)
+        for name, _, full, top_level in production_declarations(root)
+        if top_level
+    ]
+
+
+def production_reference_files(root: Path):
+    """Every production file whose mentions of a type name count."""
+    files = []
+    for base in REF_ROOTS:
+        base_dir = root / base
+        if not base_dir.is_dir():
+            continue
+        for full in sorted(base_dir.rglob("*")):
+            if full.suffix in REF_EXTS:
+                files.append(full)
+    proguard = root / "app/proguard-rules.pro"
+    if proguard.is_file():
+        files.append(proguard)
+    jni = root / JNI_ROOT
+    if jni.is_dir():
+        for full in sorted(jni.rglob("*")):
+            if full.suffix not in NATIVE_EXTS:
+                continue
+            parts = full.relative_to(jni).parts
+            if parts and parts[0] in JNI_SUBMODULES:
+                continue
+            files.append(full)
+    return files
+
+
+def count_type_names(root: Path, names):
+    """Return {name: {file: occurrences}} over production files."""
+    counts = {name: {} for name in names}
+    for full in production_reference_files(root):
+        try:
+            text = full.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if full.suffix in NATIVE_EXTS:
+            # JNI mangles names with '_' (Java_se_lublin_..._Type_method),
+            # so a class name appears inside an identifier, not as a token.
+            for name in counts:
+                if name in text:
+                    counts[name][full] = counts[name].get(full, 0) + text.count(name)
+            continue
+        for token in RE_IDENTIFIER.findall(text):
+            if token in counts:
+                counts[token][full] = counts[token].get(full, 0) + 1
+    return counts
+
+
+def check_unreferenced_types(root: Path):
+    """Fail on a production type that no production file names again."""
+    declared = declared_top_level_types(root)
+    by_name = {}
+    for name, path in declared:
+        by_name.setdefault(name, set()).add(path)
+    counts = count_type_names(root, by_name)
+    errors = []
+    for name, own_paths in sorted(by_name.items()):
+        per_file = counts[name]
+        total = sum(per_file.values())
+        for path in sorted(own_paths):
+            own = per_file.get(path, 0)
+            if own == 1 and total == own:
+                rel = path.relative_to(root).as_posix()
+                errors.append(
+                    f"unreferenced-type: {rel} declares {name}, which no "
+                    f"production file names again; delete it, or move a "
+                    f"test-only type out of main"
+                )
+    return errors
+
+
+def check_boundaries(allowed):
+    """Fail unless the allowlist and BOUNDARY_FILES list the same paths.
+
+    From step 8 a boundary file whose last match goes must leave both lists
+    in the same commit, so no unused permission stays behind, and a new
+    boundary file is added to the spec block, BOUNDARY_FILES, and the
+    allowlist in one reviewed change.
+    """
+    errors = []
+    boundary = set(BOUNDARY_FILES)
+    for path in sorted(allowed):
+        if path not in boundary:
+            errors.append(
+                f"boundary: {path} is on the allowlist but not in BOUNDARY_FILES; "
+                f"non-boundary files must hold no thread, lock, or handler"
+            )
+    for path in sorted(boundary):
+        if path not in allowed:
+            errors.append(
+                f"boundary: {path} is in BOUNDARY_FILES but not on the allowlist; "
+                f"remove the path from BOUNDARY_FILES if it no longer needs one"
+            )
+    return errors
+
+
+RE_R8_NAME = re.compile(r"\bse\.lublin\.[\w$.?*]+")
+R8_FILE = "app/proguard-rules.pro"
+
+
+def check_r8_keep_rules(root: Path, rules_path: Path = None):
+    """Fail when a keep rule names a class that production code does not have.
+
+    A rule that matches nothing changes nothing in the build, but it reads as
+    a live JNI contract, so a leftover name must be deleted with its class.
+    Names after `implements`/`extends` count too. A wildcard pattern's prefix
+    must begin a declared production FQCN, nested types included (their
+    names use `$`), so `Mumble**` matches `Mumble` and `MumbleUDP` and
+    `NativeVoiceEngine$*` matches its nested types.
+    """
+    path = rules_path if rules_path is not None else root / R8_FILE
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return [f"r8: cannot read {R8_FILE}"]
+    names = production_class_names(root)
+    errors = []
+    seen = set()
+    for match in RE_R8_NAME.findall(text):
+        if match in seen:
+            continue
+        seen.add(match)
+        wildcard = min(
+            [i for i in (match.find("*"), match.find("?")) if i != -1],
+            default=-1,
+        )
+        if wildcard == -1:
+            # A plain name: only the part before the first `$` is checked,
+            # so `Outer$Listener` needs `Outer` to exist.
+            base = match.split("$")[0]
+            if base not in names:
+                errors.append(
+                    f"r8: {path.name} names {match} but no production class "
+                    f"{base} is declared (generated protobuf counts)"
+                )
+            continue
+        prefix = match[:wildcard]
+        if not any(name.startswith(prefix) for name in names):
+            errors.append(
+                f"r8: {path.name}'s pattern {match} matches no production "
+                f"class (prefix {prefix})"
+            )
+    return errors
+
+
 def load_allowlist(path=ALLOWLIST_PATH):
     if not path.exists():
         return None, None, f"allowlist not found: {path}"
@@ -666,6 +1024,7 @@ def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
         return errors + [err], {}
     actual = scan_concurrency(root)
     errors.extend(check_concurrency(actual, plain))
+    errors.extend(check_boundaries(plain))
     for rel, lineno, line in scan_android_free(root):
         errors.append(f"android-free: {rel}:{lineno}: {line}")
     errors.extend(check_native(scan_native(root), native_allowed))
@@ -677,6 +1036,8 @@ def run_all(root=ROOT_DIR, allowlist_path=ALLOWLIST_PATH):
     errors.extend(check_local_facts_writers(root))
     errors.extend(check_feature_set_closed(root))
     errors.extend(check_feature_isolation(root))
+    errors.extend(check_r8_keep_rules(root))
+    errors.extend(check_unreferenced_types(root))
     return errors, actual
 
 

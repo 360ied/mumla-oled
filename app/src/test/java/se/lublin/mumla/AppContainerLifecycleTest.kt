@@ -67,6 +67,16 @@ import se.lublin.mumla.service.ConnectionService
 @Config(application = AppContainerLifecycleTest.TestApplication::class, sdk = [34])
 class AppContainerLifecycleTest {
 
+    /**
+     * Real-time budget for every wait below. The client and the app scope run
+     * on real dispatchers beside Robolectric's looper, so the loops are
+     * wall-clock bounded, and 5 s expires on a loaded machine: the R8 release
+     * build running alongside once failed
+     * `aConnectThatFailsBeforeConnectingLeavesNoRunningService` under it. The
+     * bound only has to catch a hang, so it is generous.
+     */
+    private val WAIT_BUDGET_MS = 30_000L
+
     class TestApplication : MumlaApplication() {
         /** Paused: the connect-path waiter runs only when the test runs it. */
         val waiterDispatcher = StandardTestDispatcher()
@@ -84,7 +94,7 @@ class AppContainerLifecycleTest {
 
     /** No native library under Robolectric; every entry is a no-op. */
     private class FakeEngineNative : EngineNative {
-        override fun setFormat(udpFormat: Int, legacyVersion: Int) = Unit
+        override fun setFormat(udpFormat: Int) = Unit
         override fun setPolicy(
             muted: IntArray?, known: IntArray?, transmitAllowed: Boolean,
             pttPressed: Boolean, voiceTarget: Int, bitrate: Int, framesPerPacket: Int,
@@ -135,7 +145,7 @@ class AppContainerLifecycleTest {
 
     /** Waits for the connect path's started-service intent without consuming it. */
     private fun awaitServiceIntent(): Intent = runBlocking {
-        withTimeout(5_000) {
+        withTimeout(WAIT_BUDGET_MS) {
             while (Shadows.shadowOf(app()).peekNextStartedService() == null) {
                 runWaiter()
                 idle()
@@ -147,7 +157,7 @@ class AppContainerLifecycleTest {
     }
 
     private fun <T : ClientState> awaitState(kind: KClass<T>): T = runBlocking {
-        withTimeout(5_000) {
+        withTimeout(WAIT_BUDGET_MS) {
             var value = container().runtime.client.state.value
             while (!kind.isInstance(value)) {
                 idle()
@@ -208,7 +218,7 @@ class AppContainerLifecycleTest {
         val container = container()
         val before = container.voiceSettings.value
         container.settingsRepository.updateTyped { it.inputBitrate = 0 }
-        withTimeout(5_000) {
+        withTimeout(WAIT_BUDGET_MS) {
             while (container.settingsRepository.state.value.snapshot.inputBitrate != 0) {
                 runWaiter()
                 delay(10)
@@ -222,7 +232,7 @@ class AppContainerLifecycleTest {
         // A rejected snapshot must not kill the flow: a later valid write
         // still reaches voiceSettings without another container rebuild.
         container.settingsRepository.updateTyped { it.inputBitrate = 48000 }
-        withTimeout(5_000) {
+        withTimeout(WAIT_BUDGET_MS) {
             while (container.voiceSettings.value.targetBitrate != 48000) {
                 runWaiter()
                 delay(10)
@@ -257,7 +267,7 @@ class AppContainerLifecycleTest {
         transport.inboundChannel.trySend(
             Inbound.Message(HumlaTCPMessageType.UserState, userState(3, "carol", 0)),
         )
-        withTimeout(5_000) {
+        withTimeout(WAIT_BUDGET_MS) {
             while (container().chatLog.currentMessages().isEmpty()) {
                 idle()
                 delay(10)
@@ -404,7 +414,7 @@ class AppContainerLifecycleTest {
             first.inboundChannel.trySend(message)
         }
         awaitState(ClientState.Connected::class)
-        withTimeout(5_000) {
+        withTimeout(WAIT_BUDGET_MS) {
             while (container().runtime.routeState.value is RouteState.Idle) {
                 idle()
                 delay(10)
@@ -431,7 +441,7 @@ class AppContainerLifecycleTest {
             second.inboundChannel.trySend(message)
         }
         awaitState(ClientState.Connected::class)
-        withTimeout(5_000) {
+        withTimeout(WAIT_BUDGET_MS) {
             while (container().runtime.routeState.value is RouteState.Idle) {
                 idle()
                 delay(10)
@@ -439,7 +449,7 @@ class AppContainerLifecycleTest {
         }
         container().runtime.client.disconnect()
         awaitState(ClientState.Idle::class)
-        withTimeout(5_000) {
+        withTimeout(WAIT_BUDGET_MS) {
             while (container().runtime.routeState.value !is RouteState.Idle) {
                 idle()
                 delay(10)
@@ -478,7 +488,7 @@ class AppContainerLifecycleTest {
         val before = container().connectionNotification.notification.value
         val showUserCount = container().settingsRepository.state.value.snapshot.showUserCount
         container().settingsRepository.updateTyped { it.showUserCount = !showUserCount }
-        withTimeout(5_000) {
+        withTimeout(WAIT_BUDGET_MS) {
             while (container().connectionNotification.notification.value === before) {
                 runWaiter()
                 idle()

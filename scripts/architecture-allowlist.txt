@@ -3,13 +3,8 @@
 # Boundary files may join only via BOUNDARY_FILES in check_architecture.py.
 # [native] exceptions follow the same ratchet (removals only).
 app/src/main/java/se/lublin/mumla/AppContainer.kt  2
-app/src/main/java/se/lublin/mumla/preference/CrashReportsFragment.kt  2
-app/src/main/java/se/lublin/mumla/servers/ServerAdapter.kt  1
 app/src/main/java/se/lublin/mumla/util/CrashReporter.kt  6
-app/src/main/java/se/lublin/mumla/util/MumbleImageGetter.kt  4
-libraries/humla/src/main/java/se/lublin/humla/model/Server.kt  4
 libraries/humla/src/main/java/se/lublin/humla/net/HumlaSSLSocketFactory.kt  5
-libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt  3
 libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt  1
 libraries/humla/src/main/java/se/lublin/humla/route/RouteControl.kt  2
 

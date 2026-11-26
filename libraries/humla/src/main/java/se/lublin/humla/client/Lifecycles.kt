@@ -17,9 +17,8 @@
 
 package se.lublin.humla.client
 
-import java.util.concurrent.atomic.AtomicInteger
 import se.lublin.humla.net.CryptKeys
-import se.lublin.humla.net.VoiceFormat
+import se.lublin.humla.net.UdpFormat
 
 /**
  * Platform lifecycle boundaries the client sequences but never implements.
@@ -36,44 +35,13 @@ interface VoiceLifecycle {
      * not an argument: voice follows the transport's `SetVoiceRoute`,
      * including for forced-TCP targets, which the transport keeps tunnelled.
      */
-    fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?)
+    fun startVoice(host: String, port: Int, format: UdpFormat, keys: CryptKeys?)
     fun stopVoice()
 }
 
 interface RouteLifecycle {
     fun sessionStarted()
     fun sessionEnded()
-}
-
-/** No-op lifecycles for the client's JVM tests. */
-class NoopVoiceLifecycle : VoiceLifecycle {
-    private val startsCount = AtomicInteger(0)
-    private val stopsCount = AtomicInteger(0)
-    val starts: Int get() = startsCount.get()
-    val stops: Int get() = stopsCount.get()
-
-    override fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?) {
-        startsCount.incrementAndGet()
-    }
-
-    override fun stopVoice() {
-        stopsCount.incrementAndGet()
-    }
-}
-
-class NoopRouteLifecycle : RouteLifecycle {
-    private val startsCount = AtomicInteger(0)
-    private val endsCount = AtomicInteger(0)
-    val starts: Int get() = startsCount.get()
-    val ends: Int get() = endsCount.get()
-
-    override fun sessionStarted() {
-        startsCount.incrementAndGet()
-    }
-
-    override fun sessionEnded() {
-        endsCount.incrementAndGet()
-    }
 }
 
 /**

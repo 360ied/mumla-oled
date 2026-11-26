@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import se.lublin.humla.net.CryptKeys
 import se.lublin.humla.net.HumlaTCPMessageType
 import se.lublin.humla.net.Inbound
@@ -38,7 +40,6 @@ import se.lublin.humla.net.TransportStats
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.net.VoiceCommand
 import se.lublin.humla.net.VoiceEvent
-import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.net.VoiceLink
 import se.lublin.humla.net.VoiceStatus
 import se.lublin.humla.protobuf.Mumble
@@ -63,9 +64,9 @@ class FakeVoice(
     private val _status = MutableStateFlow(VoiceStatus.initial())
     override val status: StateFlow<VoiceStatus> = _status.asStateFlow()
 
-    val startFormats: MutableList<VoiceFormat> = Collections.synchronizedList(ArrayList())
+    val startFormats: MutableList<UdpFormat> = Collections.synchronizedList(ArrayList())
 
-    override fun startVoice(host: String, port: Int, format: VoiceFormat, keys: CryptKeys?) {
+    override fun startVoice(host: String, port: Int, format: UdpFormat, keys: CryptKeys?) {
         startsCount.incrementAndGet()
         startFormats.add(format)
         order.add("voice-start")
@@ -120,7 +121,7 @@ class FakeTransport(
     override val remoteHost: String = "127.0.0.1"
     override val remotePort: Int = 64738
     // Non-default, so tests can see it forwarded to voice at start.
-    override var voiceFormat: VoiceFormat = VoiceFormat(UdpFormat.PROTOBUF, 0x010500)
+    override var udpFormat: UdpFormat = UdpFormat.PROTOBUF
 
     override fun send(message: MessageLite, type: HumlaTCPMessageType) {
         sent.add(type to message)
@@ -275,4 +276,73 @@ fun syncSequence(selfName: String = "alice"): List<Inbound.Message> = listOf(
         Mumble.ServerConfig.newBuilder().setAllowHtml(true).setMessageLength(5000).build(),
     ),
 )
+
+
+/** No-op voice lifecycle for the client's JVM tests. */
+class NoopVoiceLifecycle : VoiceLifecycle {
+    private val startsCount = java.util.concurrent.atomic.AtomicInteger(0)
+    private val stopsCount = java.util.concurrent.atomic.AtomicInteger(0)
+    val starts: Int get() = startsCount.get()
+    val stops: Int get() = stopsCount.get()
+
+    override fun startVoice(host: String, port: Int, format: UdpFormat, keys: CryptKeys?) {
+        startsCount.incrementAndGet()
+    }
+
+    override fun stopVoice() {
+        stopsCount.incrementAndGet()
+    }
+}
+
+class NoopRouteLifecycle : RouteLifecycle {
+    private val startsCount = java.util.concurrent.atomic.AtomicInteger(0)
+    private val endsCount = java.util.concurrent.atomic.AtomicInteger(0)
+    val starts: Int get() = startsCount.get()
+    val ends: Int get() = endsCount.get()
+
+    override fun sessionStarted() {
+        startsCount.incrementAndGet()
+    }
+
+    override fun sessionEnded() {
+        endsCount.incrementAndGet()
+    }
+}
+
+/** Test-only single-server store. serverId is intentionally ignored: one
+ * instance holds one server's facts. */
+class InMemoryLocalFactsStore(
+    initial: LocalFacts = LocalFacts.empty(),
+) : LocalFactsStore {
+    private val mutex = Mutex()
+    private var current: LocalFacts = initial
+
+    override suspend fun load(serverId: Long): LocalFacts = mutex.withLock { current }
+
+    override suspend fun setLocalMute(serverId: Long, userId: Int, muted: Boolean) {
+        mutex.withLock {
+            current = if (muted) {
+                current.copy(mutedUserIds = current.mutedUserIds.add(userId))
+            } else {
+                current.copy(mutedUserIds = current.mutedUserIds.remove(userId))
+            }
+        }
+    }
+
+    override suspend fun setLocalIgnore(serverId: Long, userId: Int, ignored: Boolean) {
+        mutex.withLock {
+            current = if (ignored) {
+                current.copy(ignoredUserIds = current.ignoredUserIds.add(userId))
+            } else {
+                current.copy(ignoredUserIds = current.ignoredUserIds.remove(userId))
+            }
+        }
+    }
+
+    override suspend fun setSelfMuteDeaf(muted: Boolean, deafened: Boolean) {
+        mutex.withLock {
+            current = current.copy(selfMuted = muted, selfDeafened = deafened)
+        }
+    }
+}
 

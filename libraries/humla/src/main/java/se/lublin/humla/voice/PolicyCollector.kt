@@ -34,14 +34,13 @@ import se.lublin.humla.state.SessionState
 import se.lublin.humla.state.emptySessionState
 
 /**
- * Interim policy collector. Combines the current session's state with
+ * The policy collector. Combines the current session's state with
  * VoiceSettings, maps each pair to a VoicePolicy, skips unchanged values,
  * and publishes a StateFlow. Runs on its own single-thread dispatcher,
  * never the voice control thread.
  *
- * Before the native path exists the Kotlin capture thread reads the flow
- * each frame and drives the engine. Step 5a replaces the reader with
- * VoiceEngine.setPolicy; the collector and voicePolicy stay.
+ * Its output is what VoiceEngine.setPolicy consumes: the engine receives a
+ * policy by value and never reads session state itself.
  */
 class PolicyCollector(
     sessionStates: FlowOfStates,

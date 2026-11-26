@@ -96,7 +96,7 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
     }
 
     override fun onDestroyView() {
-        // Last adapter's pool dies with the view; updateServers handles the
+        // Last adapter's ping scope dies with the view; updateServers handles the
         // replace path, this handles teardown.
         mServerAdapter?.shutdown()
         mServerAdapter = null
@@ -168,13 +168,13 @@ class FavouriteServerListFragment : Fragment(), OnItemClickListener,
 
     fun updateServers() {
         // The view's scope: a read still in flight at onDestroyView is
-        // cancelled, so it never builds a ping pool for a dead grid.
+        // cancelled, so it never builds a ping scope for a dead grid.
         viewLifecycleOwner.lifecycleScope.launch {
             val database = mDatabase ?: throw NullPointerException("mDatabase")
             val servers = database.getServers()
-            // The old adapter's ping pool dies with it: updateServers builds a
-            // new 50-thread pool every onResume, so the previous one must be
-            // released or threads leak per resume.
+            // The old adapter's ping scope dies with it: updateServers builds a
+            // new adapter every onResume, so the previous one's in-flight pings
+            // must be cancelled before their results land on a dead adapter.
             mServerAdapter?.shutdown()
             // NPE-exact: the original passed getActivity() straight through.
             val adapter = FavouriteServerAdapter(

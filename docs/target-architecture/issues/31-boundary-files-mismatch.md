@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Resolved on `master`: `enforcement.md` lists `TransportImpl.kt`. Decided 2026-11-25: `HumlaTCP.kt` has no caller and is deleted in [step 8](../steps/8-clean-up.md), which also adds the list-equality test (see [enforcement](../enforcement.md#end-state)). |
+| Status | Resolved ([step 8](../steps/8-clean-up.md)): `BOUNDARY_FILES` and `enforcement.md`'s end-state block list the same five paths, and `test_check_architecture.py` fails unless the block equals `BOUNDARY_FILES`. `HumlaTCP.kt` is deleted; nothing constructs it since step 3 moved the reader into `TransportImpl`. |
 | Category | Spec drift (enforcement record) |
 | Severity | Benign |
 | Verified | Yes |

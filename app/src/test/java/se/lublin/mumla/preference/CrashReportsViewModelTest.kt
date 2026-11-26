@@ -17,14 +17,17 @@
 
 package se.lublin.mumla.preference
 
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -34,7 +37,10 @@ import se.lublin.humla.client.ClientState
 import se.lublin.humla.client.Session
 import se.lublin.humla.client.testTarget
 
-/** Crash tests are enabled exactly while no connection is live. */
+/**
+ * Crash tests are enabled exactly while no connection is live, and native
+ * availability comes from a probe that runs off the main thread.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CrashReportsViewModelTest {
 
@@ -74,11 +80,60 @@ class CrashReportsViewModelTest {
     @Test
     fun stateChangesFollowTheFlow() {
         val state = MutableStateFlow<ClientState>(ClientState.Idle)
-        val viewModel = CrashReportsViewModel(state)
+        val viewModel = CrashReportsViewModel(state, probe = { false }, probeDispatcher = dispatcher)
         assertTrue(viewModel.crashTestsEnabled.value)
         state.value = ClientState.Connecting(testTarget(), 0)
         assertFalse(viewModel.crashTestsEnabled.value)
         state.value = ClientState.Failed(testTarget(), ClientError.Rejected(1, "no"))
         assertTrue(viewModel.crashTestsEnabled.value)
+    }
+
+    @Test
+    fun nativeAvailabilityStartsFalseUntilTheProbeRuns() {
+        // A paused probe dispatcher is what the screen sees while the first
+        // dlopen is in flight: the button keeps its unavailable summary.
+        val paused = StandardTestDispatcher()
+        val viewModel = CrashReportsViewModel(
+            MutableStateFlow<ClientState>(ClientState.Idle),
+            probe = { true },
+            probeDispatcher = paused,
+        )
+        assertFalse(viewModel.nativeCrashAvailable.value)
+        paused.scheduler.advanceUntilIdle()
+        assertTrue(viewModel.nativeCrashAvailable.value)
+    }
+
+    @Test
+    fun nativeAvailabilityFollowsATrueProbe() {
+        val viewModel = CrashReportsViewModel(
+            MutableStateFlow<ClientState>(ClientState.Idle),
+            probe = { true },
+            probeDispatcher = dispatcher,
+        )
+        assertTrue(viewModel.nativeCrashAvailable.value)
+        // The probe is availability only: it never enables the tests itself.
+        assertTrue(viewModel.crashTestsEnabled.value)
+    }
+
+    @Test
+    fun throwingProbeReportsUnavailableWithoutEscaping() {
+        // The failure must be reported as "unavailable", not raised as an
+        // uncaught coroutine exception: the probe replaces a main-thread
+        // native call, so it owns the failure.
+        val uncaught = AtomicReference<Throwable?>(null)
+        val previous = Thread.currentThread().uncaughtExceptionHandler
+        Thread.currentThread().uncaughtExceptionHandler =
+            Thread.UncaughtExceptionHandler { _, t -> uncaught.set(t) }
+        val viewModel = try {
+            CrashReportsViewModel(
+                MutableStateFlow<ClientState>(ClientState.Idle),
+                probe = { throw IllegalStateException("no libhumlaaudio") },
+                probeDispatcher = dispatcher,
+            )
+        } finally {
+            Thread.currentThread().uncaughtExceptionHandler = previous
+        }
+        assertFalse(viewModel.nativeCrashAvailable.value)
+        assertNull("a throwing probe must not escape", uncaught.get())
     }
 }

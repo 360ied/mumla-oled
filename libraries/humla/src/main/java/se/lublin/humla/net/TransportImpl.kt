@@ -50,14 +50,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.channels.trySendBlocking
-import org.minidns.hla.ResolverApi
-import org.minidns.util.SrvUtil
 import se.lublin.humla.Constants
 import se.lublin.humla.client.checkNotMainThread
 import se.lublin.humla.client.ClientError
 import se.lublin.humla.client.CryptCounts
 import se.lublin.humla.protobuf.Mumble
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Transport implementation: TCP control channel with reader thread,
@@ -82,6 +79,9 @@ class TransportImpl internal constructor(
     // collector under virtual time; production uses the defaults.
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val nanoTime: () -> Long = System::nanoTime,
+    // The shared SRV rule (SrvResolver): the connect path is its only caller
+    // in the transport, and tests inject a fake lookup.
+    private val srvResolver: SrvResolver = SrvResolver(),
 ) : Transport {
     companion object {
         const val CONNECT_TIMEOUT_MS = 10000
@@ -158,8 +158,8 @@ class TransportImpl internal constructor(
     private val startNanos = nanoTime()
     private val usingUdpRef = AtomicBoolean(!forceTcp)
     // First Version wins: the format is fixed for the session (issue 17).
-    private val voiceFormatRef = AtomicReference<VoiceFormat?>(null)
-    override val voiceFormat: VoiceFormat get() = voiceFormatRef.get() ?: VoiceFormat.DEFAULT
+    private val udpFormatRef = AtomicReference<UdpFormat?>(null)
+    override val udpFormat: UdpFormat get() = udpFormatRef.get() ?: UdpFormat.DEFAULT
 
     private val readerThreadRef = AtomicReference<Thread?>(null)
     private val writerJobRef = AtomicReference<Job?>(null)
@@ -253,42 +253,11 @@ class TransportImpl internal constructor(
     }
 
     private suspend fun resolveIfNeeded() {
-        if (resolvedPortRef.get() != 0) return
-        val original = resolvedHostRef.get()
-        if (HumlaTCP.isIpLiteral(original) || original.contains(":") ||
-            TlsHostnameVerifier.isOnionHost(original)
-        ) {
-            // contains(":") is subsumed by isIpLiteral (true for IPv6) but
-            // kept explicit at the call site for readability.
-            resolvedPortRef.set(Constants.DEFAULT_PORT)
-            return
-        }
-        try {
-            val lookup = "_mumble._tcp.$original"
-            val res = withTimeoutOrNull(800) {
-                ResolverApi.INSTANCE.resolveSrv(lookup)
-            }
-            if (res != null && res.wasSuccessful()) {
-                val answers = res.getAnswersOrEmptySet()
-                if (answers != null && answers.isNotEmpty()) {
-                    val srvs = SrvUtil.sortSrvRecords(answers)
-                    for (srv in srvs) {
-                        var target = srv.target.toString()
-                        if (target.endsWith(".")) target = target.substring(0, target.length - 1)
-                        resolvedHostRef.set(target)
-                        resolvedPortRef.set(srv.port)
-                        break
-                    }
-                }
-            }
-        } catch (e: CancellationException) {
-            // Attempt cancelled (disconnect/new connect): propagate so the
-            // attempt tears down instead of connecting with a default port.
-            throw e
-        } catch (e: Exception) {
-            logger.warning("SRV resolution failed for $original: $e")
-        }
-        if (resolvedPortRef.get() == 0) resolvedPortRef.set(Constants.DEFAULT_PORT)
+        // The resolver owns the whole rule, including the non-zero-port and
+        // literal short-circuits (see SrvResolver). Cancellation propagates.
+        val target = srvResolver.resolve(resolvedHostRef.get(), resolvedPortRef.get())
+        resolvedHostRef.set(target.host)
+        resolvedPortRef.set(target.port)
     }
 
     private fun createFactory(): HumlaSSLSocketFactory {
@@ -509,7 +478,7 @@ class TransportImpl internal constructor(
         // Once per session: a repeated Version (servers send one), or one
         // after ServerSync fixed the default, does not change the format
         // under a live stream.
-        if (!voiceFormatRef.compareAndSet(null, VoiceFormat.fromServerVersion(v2, v1))) {
+        if (!udpFormatRef.compareAndSet(null, UdpFormat.fromServerVersion(v2, v1))) {
             logger.fine("Ignoring repeated Version for the UDP format")
         }
     }
@@ -614,7 +583,7 @@ class TransportImpl internal constructor(
         // A server that sent no Version gets the default for the whole
         // session: a late Version must not change the transport's format
         // under a started link (VoiceControl reads it for the send side).
-        if (voiceFormatRef.compareAndSet(null, VoiceFormat.DEFAULT)) {
+        if (udpFormatRef.compareAndSet(null, UdpFormat.DEFAULT)) {
             logger.fine("No Version before ServerSync; UDP format stays default")
         }
         // The transport alone owns the route (transport.md § Keepalive and UDP

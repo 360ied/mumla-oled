@@ -76,10 +76,8 @@ VoiceSend::~VoiceSend() {
     sem_destroy(&m_sendSem);
 }
 
-void VoiceSend::setFormat(voice_codec::UdpFormat format, uint32_t /*legacyVersion*/) {
-    // Framing and parsing are version-independent; both native halves discard
-    // the legacy version. The parameter is retained so one setFormat covers
-    // both halves through the JNI.
+void VoiceSend::setFormat(voice_codec::UdpFormat format) {
+    // Framing and parsing are version-independent.
     m_format.store(format == voice_codec::UdpFormat::PROTOBUF ? 1 : 0,
                    std::memory_order_release);
 }
@@ -310,8 +308,8 @@ void VoiceSend::loop() {
             }
             if (m_receive != nullptr) {
                 // Reuse the shared socket/crypt path: encrypt + sendto on
-                // the receive-owned socket, same as the interim seam.
-                // sendDatagram checks running/socket internally.
+                // the receive-owned socket, so pings never open a second
+                // one. sendDatagram checks running/socket internally.
                 if (!m_receive->sendDatagram(framed, framedLen)) {
                     m_droppedOutbound.fetch_add(1, std::memory_order_relaxed);
                 }

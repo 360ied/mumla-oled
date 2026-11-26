@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | Documented as an interim in `migration.md` (ground rules, "Other recorded interims"). The step-6 fix remains. |
+| Status | Resolved (step 6): `AppLocalFactsStore` loads `selfMuted`/`selfDeafened` from settings and `setSelfMuteDeaf` writes them back, the session is the only owner of restore and persist, and `SessionTest.restoredSelfMuteIsSentAtServerSync` plus `AppLocalFactsStoreTest` pin it. Checked against the code in step 8. |
 | Category | Undocumented interim (behavior preserved from before the migration) |
 | Severity | Moderate: not a regression, but a spec mechanism that looks wired is dead in production, and a trap for steps 6/7 |
 | Verified | Yes |

@@ -87,9 +87,7 @@ abstract class MumlaRoomDatabase : RoomDatabase(), MumlaDatabase, LocalFactsDao 
         // instance never observe the transient id == 0 window: the caller's
         // object keeps its previous id (-1 unsaved sentinel) until the
         // single final write below. Callers must still not share a Server
-        // across threads during addServer (the final id write itself races),
-        // and every host/port write must route through the setters or
-        // resolved-host invalidation is bypassed.
+        // across threads during addServer (the final id write itself races).
         val detached = Server(
             id = 0,
             name = server.name,

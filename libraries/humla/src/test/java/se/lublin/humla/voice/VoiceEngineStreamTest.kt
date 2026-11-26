@@ -31,7 +31,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import se.lublin.humla.net.UdpFormat
 import se.lublin.humla.net.VoiceEvent
-import se.lublin.humla.net.VoiceFormat
 import se.lublin.humla.route.AppliedRoute
 import se.lublin.humla.route.RoutePreferences
 import se.lublin.humla.route.RouteState
@@ -68,7 +67,7 @@ class VoiceEngineStreamTest {
 
         fun start() {
             engine.startVoice(
-                "example.org", 64738, VoiceFormat(UdpFormat.PROTOBUF, 0x10500), null,
+                "example.org", 64738, UdpFormat.PROTOBUF, null,
             )
         }
 

@@ -437,14 +437,13 @@ Java_se_lublin_humla_voice_NativeVoiceEngine_nativeDestroy(JNIEnv* env, jclass /
 JNIEXPORT void JNICALL
 Java_se_lublin_humla_voice_NativeVoiceEngine_nativeSetFormat(JNIEnv* /*env*/,
                                                              jclass /*clazz*/, jlong handle,
-                                                             jint udpFormat,
-                                                             jint legacyVersion) {
+                                                             jint udpFormat) {
     VoiceEngineContext* ctx = getContext(handle);
     if (ctx == nullptr) return;
     auto format = udpFormat == 1 ? mumla::voice_codec::UdpFormat::PROTOBUF
                                  : mumla::voice_codec::UdpFormat::LEGACY;
-    ctx->receive.setFormat(format, static_cast<uint32_t>(legacyVersion));
-    ctx->send.setFormat(format, static_cast<uint32_t>(legacyVersion));
+    ctx->receive.setFormat(format);
+    ctx->send.setFormat(format);
 }
 
 JNIEXPORT void JNICALL

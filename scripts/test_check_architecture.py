@@ -151,6 +151,18 @@ class TestPatterns(unittest.TestCase):
         self.assertIsNone(ca.RE_CONCURRENCY.search("TimerTask()"))
         self.assertIsNone(ca.RE_CONCURRENCY.search("TimeUnit.SECONDS"))
 
+    def test_step8_pool_patterns_match(self):
+        # Hidden thread pools: an AsyncTask queue, an ExecutorService field,
+        # and a ThreadFactory all create threads without Executors. or
+        # Thread(.
+        for snippet in (
+            "class ServerInfoTask : AsyncTask<Server, Void, ServerInfoResponse>()",
+            "private val executor: ExecutorService = pool",
+            "Executors.newFixedThreadPool(2, object : ThreadFactory { })",
+        ):
+            self.assertIsNotNone(ca.RE_CONCURRENCY.search(snippet), snippet)
+        self.assertIsNone(ca.RE_CONCURRENCY.search("limitedParallelism(2)"))
+
     def test_kotlin_thread_import_matches_prose_does_not(self):
         self.assertIsNotNone(ca.RE_CONCURRENCY.search("import kotlin.concurrent.thread"))
         # Bare prose "thread (" in comments must not match (too noisy).
@@ -215,7 +227,7 @@ class TestAndroidFree(unittest.TestCase):
 
     def test_net_excludes_tls_factory_only(self):
         # Step 3 removed the legacy grandfathering (HumlaConnection deleted;
-        # HumlaTCP and HumlaUDP are android-free). Only the TLS factory stays excluded.
+        # the transport is android-free). Only the TLS factory stays excluded.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             pkg = root / "libraries/humla/src/main/java/se/lublin/humla/net"
@@ -223,13 +235,13 @@ class TestAndroidFree(unittest.TestCase):
             (pkg / "HumlaSSLSocketFactory.kt").write_text(
                 "import android.net.SSL\n", encoding="utf-8"
             )
-            for name in ("HumlaTCP.kt", "HumlaUDP.kt", "Transport.kt", "TransportImpl.kt"):
+            for name in ("Transport.kt", "TransportImpl.kt", "SrvResolver.kt", "FrameValidator.kt"):
                 (pkg / name).write_text("import android.os.Handler\n", encoding="utf-8")
             v = ca.scan_android_free(root)
             self.assertEqual(len(v), 4)
             flagged = sorted(path for path, _, _ in v)
-            self.assertIn("libraries/humla/src/main/java/se/lublin/humla/net/HumlaTCP.kt", flagged)
-            self.assertIn("libraries/humla/src/main/java/se/lublin/humla/net/HumlaUDP.kt", flagged)
+            self.assertIn("libraries/humla/src/main/java/se/lublin/humla/net/TransportImpl.kt", flagged)
+            self.assertIn("libraries/humla/src/main/java/se/lublin/humla/net/SrvResolver.kt", flagged)
 
 
 class TestNative(unittest.TestCase):
@@ -785,6 +797,539 @@ class TestServiceBinding(unittest.TestCase):
             allowlist.write_text("", encoding="utf-8")
             errors, _ = ca.run_all(root, allowlist)
             self.assertTrue(any("service-binding" in e for e in errors))
+
+
+class TestBoundaries(unittest.TestCase):
+    def test_matching_lists_pass(self):
+        allowed = {path: 1 for path in ca.BOUNDARY_FILES}
+        self.assertEqual(ca.check_boundaries(allowed), [])
+
+    def test_non_boundary_entry_fails(self):
+        # A non-boundary file may hold no thread, lock, or handler: an
+        # allowlist entry without a BOUNDARY_FILES path is an unused
+        # permission and fails.
+        allowed = {path: 1 for path in ca.BOUNDARY_FILES}
+        allowed["app/src/main/java/se/lublin/mumla/util/Leak.kt"] = 1
+        errors = ca.check_boundaries(allowed)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("not in BOUNDARY_FILES", errors[0])
+
+    def test_boundary_path_missing_from_allowlist_fails(self):
+        allowed = {path: 1 for path in list(ca.BOUNDARY_FILES)[1:]}
+        errors = ca.check_boundaries(allowed)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("not on the allowlist", errors[0])
+
+    def test_every_boundary_file_is_a_kt_file(self):
+        for path in ca.BOUNDARY_FILES:
+            self.assertTrue(path.endswith(".kt"), path)
+
+
+class TestR8KeepRules(unittest.TestCase):
+    def write(self, root, rel, text=""):
+        full = root / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(text, encoding="utf-8")
+        return full
+
+    def check(self, root, rules):
+        rules_file = self.write(root, "app/proguard-rules.pro", rules)
+        return ca.check_r8_keep_rules(root, rules_file)
+
+    def test_existing_class_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt",
+                "package se.lublin.humla.ok\n\nclass Thing\n",
+            )
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Thing { *; }\n"), []
+            )
+
+    def test_java_and_flavor_sources_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.java",
+                "package se.lublin.humla.ok;\n\npublic class Thing {}\n",
+            )
+            self.write(
+                root,
+                "app/src/foss/java/se/lublin/mumla/Flavor.kt",
+                "package se.lublin.mumla\n\nclass Flavor\n",
+            )
+            self.assertEqual(
+                self.check(
+                    root,
+                    "-keep class se.lublin.humla.ok.Thing { *; }\n"
+                    "-keep class se.lublin.mumla.Flavor { *; }\n",
+                ),
+                [],
+            )
+
+    def test_missing_class_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            errors = self.check(root, "-keep class se.lublin.humla.gone.Thing { *; }\n")
+            self.assertEqual(len(errors), 1)
+            self.assertIn("no production class", errors[0])
+
+    def test_implements_name_is_checked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt",
+                "package se.lublin.humla.ok\n\nclass Thing\n",
+            )
+            errors = self.check(
+                root,
+                "-keepclassmembers class * implements se.lublin.humla.gone.Listener {\n"
+                "    public void onX();\n"
+                "}\n",
+            )
+            self.assertEqual(len(errors), 1)
+            self.assertIn("se.lublin.humla.gone.Listener", errors[0])
+
+    def test_nested_name_checks_the_outer_class(self):
+        # A plain nested name is checked up to its first `$`, as specified.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt",
+                "package se.lublin.humla.ok\n\nclass Thing\n",
+            )
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Thing$Inner { *; }\n"), []
+            )
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Gone.kt",
+                "package se.lublin.humla.ok\n\nval x = 1\n",
+            )
+            errors = self.check(root, "-keep class se.lublin.humla.ok.Gone$Inner { *; }\n")
+            self.assertEqual(len(errors), 1)
+
+    def test_nested_pattern_requires_a_nested_type(self):
+        # A pattern's prefix must begin a declared FQCN, and a nested type's
+        # FQCN is `Outer$Inner`: `Outer$*` alone matches nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Outer.kt",
+                "package se.lublin.humla.ok\n\nclass Outer\n",
+            )
+            errors = self.check(root, "-keep class se.lublin.humla.ok.Outer$* { *; }\n")
+            self.assertEqual(len(errors), 1)
+            self.assertIn("matches no production class", errors[0])
+
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Outer.kt",
+                "package se.lublin.humla.ok\n\n"
+                "class Outer {\n    interface Inner\n}\n",
+            )
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Outer$* { *; }\n"), []
+            )
+            # The pattern can also name the nested type directly.
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Outer$In* { *; }\n"), []
+            )
+
+    def test_type_in_a_differently_named_file_is_found(self):
+        # Parsing declarations beats path lookup: a Kotlin file may hold
+        # several top-level types and need not be named after any of them.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Bar.kt",
+                "package se.lublin.humla.ok\n\nclass Foo\n",
+            )
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Foo { *; }\n"), []
+            )
+
+    def test_comments_and_strings_do_not_declare_types(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Real.kt",
+                "package se.lublin.humla.ok\n\n"
+                "// class Ghost\n"
+                "/* interface Ghost */\n"
+                "val text = \"class Ghost {\"\n"
+                "val raw = \"\"\"object Ghost {\"\"\"\n"
+                "class Real\n",
+            )
+            errors = self.check(root, "-keep class se.lublin.humla.ok.Ghost { *; }\n")
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Ghost", errors[0])
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Real { *; }\n"), []
+            )
+
+    def test_bodyless_type_does_not_swallow_the_next_class(self):
+        # A data class has no braces, so the next `{` must not become its
+        # body: neither the function that follows (a declaration keyword
+        # ends the header) nor a class after it may nest under A.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Two.kt",
+                "package se.lublin.humla.ok\n\n"
+                "data class A(val x: Int)\n\n"
+                "fun helper() {\n"
+                "    class Local\n"
+                "}\n\n"
+                "class B\n",
+            )
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.B { *; }\n"), []
+            )
+            # A plain name is only checked up to its first `$`, so ask the
+            # pattern rule instead: A declares no nested type, so A$* is dead.
+            errors = self.check(root, "-keep class se.lublin.humla.ok.A$* { *; }\n")
+            self.assertEqual(len(errors), 1)
+            self.assertEqual(
+                {fqcn for _, fqcn, _ in ca.source_declarations(
+                    "package se.lublin.humla.ok\n\n"
+                    "data class A(val x: Int)\n\n"
+                    "fun helper() {\n"
+                    "    class Local\n"
+                    "}\n\n"
+                    "class B\n"
+                )},
+                {"se.lublin.humla.ok.A", "se.lublin.humla.ok.Local", "se.lublin.humla.ok.B"},
+            )
+
+    def test_unnamed_companion_uses_its_jvm_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Outer.kt",
+                "package se.lublin.humla.ok\n\n"
+                "class Outer {\n"
+                "    companion object {\n"
+                "        class Inner\n"
+                "    }\n"
+                "}\n",
+            )
+            self.assertEqual(
+                self.check(
+                    root, "-keep class se.lublin.humla.ok.Outer$Companion$* { *; }\n"
+                ),
+                [],
+            )
+
+    def test_wildcard_pattern_must_match_a_class(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/protobuf/Mumble.java",
+                "package se.lublin.humla.protobuf;\n\npublic class Mumble {}\n",
+            )
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/protobuf/MumbleUDP.java",
+                "package se.lublin.humla.protobuf;\n\npublic class MumbleUDP {}\n",
+            )
+            # The live pattern matches Mumble and MumbleUDP.
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.protobuf.Mumble** { *; }\n"), []
+            )
+            errors = self.check(root, "-keep class se.lublin.humla.protobuf.Gone** { *; }\n")
+            self.assertEqual(len(errors), 1)
+            self.assertIn("matches no production class", errors[0])
+
+    def test_unreadable_rules_file_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            errors = ca.check_r8_keep_rules(root, root / "nope.pro")
+            self.assertTrue(any("cannot read" in e for e in errors))
+
+    def test_committed_rules_pass(self):
+        self.assertEqual(ca.check_r8_keep_rules(ca.ROOT_DIR), [])
+
+
+class TestSourceDeclarations(unittest.TestCase):
+    def names(self, text):
+        return {fqcn for _, fqcn, _ in ca.source_declarations(text)}
+
+    def test_top_level_and_nested_names(self):
+        text = (
+            "package se.lublin.one\n\n"
+            "class Outer : Base() {\n"
+            "    interface Listener {\n"
+            "        fun onX()\n"
+            "    }\n"
+            "    sealed interface Event {\n"
+            "        data class Ready(val x: Int) : Event\n"
+            "        data class Failed(val why: String) : Event\n"
+            "    }\n"
+            "}\n"
+            "data class TopLevel(val x: Int)\n"
+            "interface Port\n"
+            "object Singleton {\n"
+            "    const val X = 1\n"
+            "}\n"
+        )
+        self.assertEqual(
+            self.names(text),
+            {
+                "se.lublin.one.Outer",
+                "se.lublin.one.Outer$Listener",
+                "se.lublin.one.Outer$Event",
+                "se.lublin.one.Outer$Event$Ready",
+                "se.lublin.one.Outer$Event$Failed",
+                "se.lublin.one.TopLevel",
+                "se.lublin.one.Port",
+                "se.lublin.one.Singleton",
+            },
+        )
+
+    def test_bodyless_declarations_end_at_the_next_declaration(self):
+        text = (
+            "package p\n\n"
+            "data class A(val x: Int)\n"
+            "private val holder = listOf(1)\n"
+            "@JvmStatic\n"
+            "fun helper(): Int = 1\n"
+            "class B {\n"
+            "}\n"
+            "enum class C { X }\n"
+            "class D\n"
+        )
+        self.assertEqual(self.names(text), {"p.A", "p.B", "p.C", "p.D"})
+
+    def test_strings_and_comments_are_blanked(self):
+        text = (
+            "package p\n\n"
+            "// class Commented {\n"
+            "/* class Blocked { } */\n"
+            "val s = \"class InString {\"\n"
+            "val raw = \"\"\"class InRaw { }\"\"\"\n"
+            "val c = '{'\n"
+            "class Real {\n"
+            "    class Inner\n"
+            "}\n"
+        )
+        self.assertEqual(self.names(text), {"p.Real", "p.Real$Inner"})
+
+    def test_generics_and_supertypes_keep_the_body(self):
+        text = (
+            "package p\n\n"
+            "class Box<T : Comparable<T>>(val value: T) : Base<T>(), Other {\n"
+            "    class Inner(val x: Int = object : Other {\n"
+            "        override fun y() = 1\n"
+            "    })\n"
+            "}\n"
+        )
+        self.assertEqual(self.names(text), {"p.Box", "p.Box$Inner"})
+
+    def test_java_declarations(self):
+        text = (
+            "package p;\n\n"
+            "public final class Mumble extends GeneratedMessageLite {\n"
+            "    public static final class Builder {\n"
+            "    }\n"
+            "}\n"
+            "enum Mode { A }\n"
+            "record Pair(int a, int b) {}\n"
+            "interface Api { void call(); }\n"
+        )
+        self.assertEqual(
+            self.names(text),
+            {
+                "p.Mumble",
+                "p.Mumble$Builder",
+                "p.Mode",
+                "p.Pair",
+                "p.Api",
+            },
+        )
+
+
+class TestEnforcementDoc(unittest.TestCase):
+    def test_end_state_block_is_the_gate_list(self):
+        # Issue 31's acceptance test: the spec's end-state block and
+        # BOUNDARY_FILES are one list, so the boundary list cannot drift
+        # from the document that justifies it.
+        doc = (ca.ROOT_DIR / "docs/target-architecture/enforcement.md").read_text(
+            encoding="utf-8"
+        )
+        block = doc.split("### End state", 1)[1]
+        fenced = block.split("```text", 1)[1].split("```", 1)[0]
+        paths = [line.strip() for line in fenced.splitlines() if line.strip()]
+        self.assertEqual(paths, list(ca.BOUNDARY_FILES))
+
+
+class TestUnreferencedTypes(unittest.TestCase):
+    def write(self, root, rel, text=""):
+        full = root / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(text, encoding="utf-8")
+        return full
+
+    def test_dead_type_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/Dead.kt",
+                "package se.lublin.mumla\n\nclass Dead\n",
+            )
+            errors = ca.check_unreferenced_types(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Dead", errors[0])
+
+    def test_type_named_again_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "libraries/humla/src/main/java/se/lublin/state/Live.kt",
+                "package se.lublin.state\n\nclass Live\n",
+            )
+            self.write(
+                root, "libraries/humla/src/main/java/se/lublin/state/User.kt",
+                "package se.lublin.state\n\nclass User(val live: Live)\n\n"
+                "val sample = User(Live())\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_type_used_only_in_its_own_file_passes(self):
+        # The name appears twice in the file (declaration and use), so the
+        # narrow rule leaves it alone.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "app/src/main/java/se/lublin/mumla/Own.kt",
+                "package se.lublin.mumla\n\nclass Own\n\nval own = Own()\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_type_named_from_a_manifest_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "app/src/main/java/se/lublin/mumla/Boot.kt",
+                "package se.lublin.mumla\n\nclass Boot\n",
+            )
+            self.write(
+                root, "app/src/main/AndroidManifest.xml",
+                '<manifest><application android:name="se.lublin.mumla.Boot"/></manifest>\n',
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_type_named_from_cpp_passes(self):
+        # JNI looks classes up by name, so C++ mentions count even inside a
+        # mangled symbol where the name is surrounded by underscores.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "libraries/humla/src/main/java/se/lublin/humla/Jni.kt",
+                "package se.lublin.humla\n\nclass Jni\n",
+            )
+            self.write(
+                root, "libraries/humla/src/main/jni/voice_io/Entry.cpp",
+                "Java_se_lublin_humla_Jni_nativeDo(JNIEnv*, jclass) {}\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_submodule_cpp_does_not_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "libraries/humla/src/main/java/se/lublin/humla/Solo.kt",
+                "package se.lublin.humla\n\nclass Solo\n",
+            )
+            self.write(
+                root, "libraries/humla/src/main/jni/opus/Solo.cpp",
+                "// Solo appears in a third-party submodule only\n",
+            )
+            errors = ca.check_unreferenced_types(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Solo", errors[0])
+
+    def test_type_named_only_from_a_test_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "app/src/main/java/se/lublin/mumla/OnlyTest.kt",
+                "package se.lublin.mumla\n\nclass OnlyTest\n",
+            )
+            self.write(
+                root, "app/src/test/java/se/lublin/mumla/OnlyTestTest.kt",
+                "package se.lublin.mumla\n\nval x = OnlyTest()\n",
+            )
+            errors = ca.check_unreferenced_types(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("OnlyTest", errors[0])
+
+    def test_local_class_is_not_top_level(self):
+        # A class inside a function body is not a top-level declaration, so
+        # it is not the check's business even when named once.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/Local.kt",
+                "package se.lublin.mumla\n\n"
+                "fun helper() {\n"
+                "    class Local\n"
+                "    Local()\n"
+                "}\n"
+                "helper()\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_top_level_type_after_a_bodyless_one_is_still_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/Pair.kt",
+                "package se.lublin.mumla\n\n"
+                "data class Kept(val x: Int)\n"
+                "val kept = Kept(1)\n"
+                "class Dead\n",
+            )
+            errors = ca.check_unreferenced_types(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Dead", errors[0])
+
+    def test_nested_declaration_is_not_top_level(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root, "app/src/main/java/se/lublin/mumla/Outer.kt",
+                "package se.lublin.mumla\n\nclass Outer {\n    class Inner\n}\n\n"
+                "val outer = Outer()\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_generated_protobuf_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/protobuf/Gen.java",
+                "package se.lublin.humla.protobuf;\n\nclass Gen {}\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_committed_tree_passes(self):
+        self.assertEqual(ca.check_unreferenced_types(ca.ROOT_DIR), [])
 
 
 class TestRunAll(unittest.TestCase):

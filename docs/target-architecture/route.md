@@ -76,8 +76,8 @@ sealed interface RouteCommand {
 }
 
 data class RoutePreferences(
-    val bluetoothSco: Boolean,                // today's ConfigDelta.bluetoothSco
-    val handsetStream: Int,                   // today's ConfigDelta.audioStream
+    val bluetoothSco: Boolean,                // Settings.isBluetoothHeadset
+    val handsetStream: Int,                   // Settings.isHandsetMode's stream
 )
 ```
 
@@ -97,7 +97,7 @@ directly, exists for the decision-logic tests.
 (`SessionStarted`, `SessionEnded`), so the client depends only on that.
 
 `prefs` comes from the settings flow (`Settings.isBluetoothHeadset` and
-`isHandsetMode`, today's `ConfigDelta.bluetoothSco` and `audioStream`).
+`isHandsetMode`).
 Preference changes are collected on the route thread and become the
 controller's existing `SettingsChanged` event. Device changes, SCO link
 changes, and settle rechecks stay internal events, as today.
@@ -257,11 +257,11 @@ today's behavior and was kept deliberately over connect-time silence.
 
 ## Migration notes
 
-- Step 4 moves the controller to the route thread and replaces `Host` with
-  published state. The `VoiceEngine` does not exist yet, so in step 4 the
-  Kotlin audio control (today's `AudioHandler` lifecycle, moved to the voice
-  control thread) collects `RouteState` and recreates the Kotlin pipeline
-  where `Host.recreatePipeline` did.
+- Step 4 moved the controller to the route thread and replaced `Host` with
+  published state. The `VoiceEngine` did not exist yet, so in step 4 the
+  Kotlin audio control (the pre-native `AudioHandler` lifecycle, moved to
+  the voice control thread) collected `RouteState` and recreated the Kotlin
+  pipeline where `Host.recreatePipeline` did.
 - The controller's existing tests keep running against the same virtual
   scheduler; only the dispatcher they replace changes.
 - This is the step most likely to show problems only on a device (see

@@ -1,6 +1,9 @@
 # Step 8 — Clean up
 
-Part of the [migration](../migration.md). **Status: not started.**
+Part of the [migration](../migration.md). **Status: done.**
+This is the step's plan as it was executed, kept as a record;
+[`PROGRESS.md`](../PROGRESS.md) summarises what landed, and the living
+specs hold the current design.
 
 Step 7 left the concurrency allowlist at 10 files and 30 matching lines.
 Six of the files are boundary files (`AppContainer.kt`, `CrashReporter.kt`,
