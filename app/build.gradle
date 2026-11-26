@@ -225,4 +225,6 @@ dependencies {
     testImplementation libs.coroutines.test
     // Step-2 live handles: interface mocks in adapter/avatar/talk-key tests.
     testImplementation libs.mockito.core
+    // ServerPingTest injects SRV records into humla's SrvResolver lookup.
+    testImplementation libs.minidns.hla
 }

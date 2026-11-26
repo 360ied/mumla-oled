@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2014 Andrew Comminos
+ * Copyright (C) 2026 Brian Zhu
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +23,7 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.nio.ByteBuffer
+import kotlinx.coroutines.CancellationException
 import se.lublin.humla.model.Server
 import se.lublin.humla.net.SrvResolver
 
@@ -90,6 +92,9 @@ suspend fun pingServer(server: Server, resolver: SrvResolver): ServerInfoRespons
 
             return response
         }
+    } catch (e: CancellationException) {
+        // The adapter went away during the SRV lookup: stop, don't ping.
+        throw e
     } catch (e: Exception) {
         // Best-effort UI hint: every failure is the 'offline' row.
     }

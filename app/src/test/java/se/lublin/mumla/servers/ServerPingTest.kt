@@ -29,6 +29,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.minidns.record.SRV
 import se.lublin.humla.model.Server
 import se.lublin.humla.net.SrvResolver
 
@@ -113,8 +114,36 @@ class ServerPingTest {
             assertEquals(7, response.currentUsers)
             assertEquals(25, response.maximumUsers)
             assertEquals(1_000_000, response.allowedBandwidth)
-            assertTrue("latency is measured", response.latency >= 0)
+            assertTrue(
+                "latency is within the 1 s reply window",
+                response.latency in 0..1000,
+            )
             assertEquals("Test", response.server?.name)
+        }
+    }
+
+    @Test
+    fun anUnportedServerIsPingedAtItsSrvTarget() {
+        // Port 0 sends the ping through the transport's SRV rule: the typed
+        // host never resolves, so a reply proves the request went to the
+        // record's target and port.
+        listener().use { socket ->
+            val (worker, failure) = responder {
+                val (request, packet) = receiveRequest(socket)
+                val answer = reply(ByteBuffer.wrap(request, 4, 8).long)
+                socket.send(DatagramPacket(answer, answer.size, packet.address, packet.port))
+            }
+            val resolver = SrvResolver { name ->
+                assertEquals("_mumble._tcp.chat.invalid", name)
+                listOf(SRV(0, 0, socket.localPort, "127.0.0.1."))
+            }
+            val unported = Server(42L, "Test", "chat.invalid", 0, "alice", null)
+
+            val response = runBlocking { pingServer(unported, resolver) }
+            assertResponded(worker, failure)
+
+            assertFalse(response.isDummy)
+            assertEquals(42L, response.identifier)
         }
     }
 
