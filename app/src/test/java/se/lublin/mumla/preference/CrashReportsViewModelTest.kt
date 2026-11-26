@@ -17,6 +17,7 @@
 
 package se.lublin.mumla.preference
 
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,6 +27,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -114,12 +116,24 @@ class CrashReportsViewModelTest {
     }
 
     @Test
-    fun throwingProbeReportsUnavailable() {
-        val viewModel = CrashReportsViewModel(
-            MutableStateFlow<ClientState>(ClientState.Idle),
-            probe = { throw IllegalStateException("no libhumlaaudio") },
-            probeDispatcher = dispatcher,
-        )
+    fun throwingProbeReportsUnavailableWithoutEscaping() {
+        // The failure must be reported as "unavailable", not raised as an
+        // uncaught coroutine exception: the probe replaces a main-thread
+        // native call, so it owns the failure.
+        val uncaught = AtomicReference<Throwable?>(null)
+        val previous = Thread.currentThread().uncaughtExceptionHandler
+        Thread.currentThread().uncaughtExceptionHandler =
+            Thread.UncaughtExceptionHandler { _, t -> uncaught.set(t) }
+        val viewModel = try {
+            CrashReportsViewModel(
+                MutableStateFlow<ClientState>(ClientState.Idle),
+                probe = { throw IllegalStateException("no libhumlaaudio") },
+                probeDispatcher = dispatcher,
+            )
+        } finally {
+            Thread.currentThread().uncaughtExceptionHandler = previous
+        }
         assertFalse(viewModel.nativeCrashAvailable.value)
+        assertNull("a throwing probe must not escape", uncaught.get())
     }
 }
