@@ -839,7 +839,11 @@ class TestR8KeepRules(unittest.TestCase):
     def test_existing_class_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt")
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt",
+                "package se.lublin.humla.ok\n\nclass Thing\n",
+            )
             self.assertEqual(
                 self.check(root, "-keep class se.lublin.humla.ok.Thing { *; }\n"), []
             )
@@ -847,8 +851,16 @@ class TestR8KeepRules(unittest.TestCase):
     def test_java_and_flavor_sources_count(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.java")
-            self.write(root, "app/src/foss/java/se/lublin/mumla/Flavor.kt")
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.java",
+                "package se.lublin.humla.ok;\n\npublic class Thing {}\n",
+            )
+            self.write(
+                root,
+                "app/src/foss/java/se/lublin/mumla/Flavor.kt",
+                "package se.lublin.mumla\n\nclass Flavor\n",
+            )
             self.assertEqual(
                 self.check(
                     root,
@@ -868,7 +880,11 @@ class TestR8KeepRules(unittest.TestCase):
     def test_implements_name_is_checked(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt")
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt",
+                "package se.lublin.humla.ok\n\nclass Thing\n",
+            )
             errors = self.check(
                 root,
                 "-keepclassmembers class * implements se.lublin.humla.gone.Listener {\n"
@@ -879,21 +895,155 @@ class TestR8KeepRules(unittest.TestCase):
             self.assertIn("se.lublin.humla.gone.Listener", errors[0])
 
     def test_nested_name_checks_the_outer_class(self):
+        # A plain nested name is checked up to its first `$`, as specified.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt")
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Thing.kt",
+                "package se.lublin.humla.ok\n\nclass Thing\n",
+            )
             self.assertEqual(
                 self.check(root, "-keep class se.lublin.humla.ok.Thing$Inner { *; }\n"), []
             )
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Gone.kt",
+                "package se.lublin.humla.ok\n\nval x = 1\n",
+            )
+            errors = self.check(root, "-keep class se.lublin.humla.ok.Gone$Inner { *; }\n")
+            self.assertEqual(len(errors), 1)
+
+    def test_nested_pattern_requires_a_nested_type(self):
+        # A pattern's prefix must begin a declared FQCN, and a nested type's
+        # FQCN is `Outer$Inner`: `Outer$*` alone matches nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Outer.kt",
+                "package se.lublin.humla.ok\n\nclass Outer\n",
+            )
+            errors = self.check(root, "-keep class se.lublin.humla.ok.Outer$* { *; }\n")
+            self.assertEqual(len(errors), 1)
+            self.assertIn("matches no production class", errors[0])
+
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Outer.kt",
+                "package se.lublin.humla.ok\n\n"
+                "class Outer {\n    interface Inner\n}\n",
+            )
             self.assertEqual(
-                self.check(root, "-keep class se.lublin.humla.ok.Thing$* { *; }\n"), []
+                self.check(root, "-keep class se.lublin.humla.ok.Outer$* { *; }\n"), []
+            )
+            # The pattern can also name the nested type directly.
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Outer$In* { *; }\n"), []
+            )
+
+    def test_type_in_a_differently_named_file_is_found(self):
+        # Parsing declarations beats path lookup: a Kotlin file may hold
+        # several top-level types and need not be named after any of them.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Bar.kt",
+                "package se.lublin.humla.ok\n\nclass Foo\n",
+            )
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Foo { *; }\n"), []
+            )
+
+    def test_comments_and_strings_do_not_declare_types(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Real.kt",
+                "package se.lublin.humla.ok\n\n"
+                "// class Ghost\n"
+                "/* interface Ghost */\n"
+                "val text = \"class Ghost {\"\n"
+                "val raw = \"\"\"object Ghost {\"\"\"\n"
+                "class Real\n",
+            )
+            errors = self.check(root, "-keep class se.lublin.humla.ok.Ghost { *; }\n")
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Ghost", errors[0])
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.Real { *; }\n"), []
+            )
+
+    def test_bodyless_type_does_not_swallow_the_next_class(self):
+        # A data class has no braces, so the next `{` must not become its
+        # body: neither the function that follows (a declaration keyword
+        # ends the header) nor a class after it may nest under A.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Two.kt",
+                "package se.lublin.humla.ok\n\n"
+                "data class A(val x: Int)\n\n"
+                "fun helper() {\n"
+                "    class Local\n"
+                "}\n\n"
+                "class B\n",
+            )
+            self.assertEqual(
+                self.check(root, "-keep class se.lublin.humla.ok.B { *; }\n"), []
+            )
+            # A plain name is only checked up to its first `$`, so ask the
+            # pattern rule instead: A declares no nested type, so A$* is dead.
+            errors = self.check(root, "-keep class se.lublin.humla.ok.A$* { *; }\n")
+            self.assertEqual(len(errors), 1)
+            self.assertEqual(
+                {fqcn for _, fqcn, _ in ca.source_declarations(
+                    "package se.lublin.humla.ok\n\n"
+                    "data class A(val x: Int)\n\n"
+                    "fun helper() {\n"
+                    "    class Local\n"
+                    "}\n\n"
+                    "class B\n"
+                )},
+                {"se.lublin.humla.ok.A", "se.lublin.humla.ok.Local", "se.lublin.humla.ok.B"},
+            )
+
+    def test_unnamed_companion_uses_its_jvm_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/ok/Outer.kt",
+                "package se.lublin.humla.ok\n\n"
+                "class Outer {\n"
+                "    companion object {\n"
+                "        class Inner\n"
+                "    }\n"
+                "}\n",
+            )
+            self.assertEqual(
+                self.check(
+                    root, "-keep class se.lublin.humla.ok.Outer$Companion$* { *; }\n"
+                ),
+                [],
             )
 
     def test_wildcard_pattern_must_match_a_class(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/protobuf/Mumble.java")
-            self.write(root, "libraries/humla/src/main/java/se/lublin/humla/protobuf/MumbleUDP.java")
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/protobuf/Mumble.java",
+                "package se.lublin.humla.protobuf;\n\npublic class Mumble {}\n",
+            )
+            self.write(
+                root,
+                "libraries/humla/src/main/java/se/lublin/humla/protobuf/MumbleUDP.java",
+                "package se.lublin.humla.protobuf;\n\npublic class MumbleUDP {}\n",
+            )
             # The live pattern matches Mumble and MumbleUDP.
             self.assertEqual(
                 self.check(root, "-keep class se.lublin.humla.protobuf.Mumble** { *; }\n"), []
@@ -910,6 +1060,104 @@ class TestR8KeepRules(unittest.TestCase):
 
     def test_committed_rules_pass(self):
         self.assertEqual(ca.check_r8_keep_rules(ca.ROOT_DIR), [])
+
+
+class TestSourceDeclarations(unittest.TestCase):
+    def names(self, text):
+        return {fqcn for _, fqcn, _ in ca.source_declarations(text)}
+
+    def test_top_level_and_nested_names(self):
+        text = (
+            "package se.lublin.one\n\n"
+            "class Outer : Base() {\n"
+            "    interface Listener {\n"
+            "        fun onX()\n"
+            "    }\n"
+            "    sealed interface Event {\n"
+            "        data class Ready(val x: Int) : Event\n"
+            "        data class Failed(val why: String) : Event\n"
+            "    }\n"
+            "}\n"
+            "data class TopLevel(val x: Int)\n"
+            "interface Port\n"
+            "object Singleton {\n"
+            "    const val X = 1\n"
+            "}\n"
+        )
+        self.assertEqual(
+            self.names(text),
+            {
+                "se.lublin.one.Outer",
+                "se.lublin.one.Outer$Listener",
+                "se.lublin.one.Outer$Event",
+                "se.lublin.one.Outer$Event$Ready",
+                "se.lublin.one.Outer$Event$Failed",
+                "se.lublin.one.TopLevel",
+                "se.lublin.one.Port",
+                "se.lublin.one.Singleton",
+            },
+        )
+
+    def test_bodyless_declarations_end_at_the_next_declaration(self):
+        text = (
+            "package p\n\n"
+            "data class A(val x: Int)\n"
+            "private val holder = listOf(1)\n"
+            "@JvmStatic\n"
+            "fun helper(): Int = 1\n"
+            "class B {\n"
+            "}\n"
+            "enum class C { X }\n"
+            "class D\n"
+        )
+        self.assertEqual(self.names(text), {"p.A", "p.B", "p.C", "p.D"})
+
+    def test_strings_and_comments_are_blanked(self):
+        text = (
+            "package p\n\n"
+            "// class Commented {\n"
+            "/* class Blocked { } */\n"
+            "val s = \"class InString {\"\n"
+            "val raw = \"\"\"class InRaw { }\"\"\"\n"
+            "val c = '{'\n"
+            "class Real {\n"
+            "    class Inner\n"
+            "}\n"
+        )
+        self.assertEqual(self.names(text), {"p.Real", "p.Real$Inner"})
+
+    def test_generics_and_supertypes_keep_the_body(self):
+        text = (
+            "package p\n\n"
+            "class Box<T : Comparable<T>>(val value: T) : Base<T>(), Other {\n"
+            "    class Inner(val x: Int = object : Other {\n"
+            "        override fun y() = 1\n"
+            "    })\n"
+            "}\n"
+        )
+        self.assertEqual(self.names(text), {"p.Box", "p.Box$Inner"})
+
+    def test_java_declarations(self):
+        text = (
+            "package p;\n\n"
+            "public final class Mumble extends GeneratedMessageLite {\n"
+            "    public static final class Builder {\n"
+            "    }\n"
+            "}\n"
+            "enum Mode { A }\n"
+            "record Pair(int a, int b) {}\n"
+            "interface Api { void call(); }\n"
+        )
+        self.assertEqual(
+            self.names(text),
+            {
+                "p.Mumble",
+                "p.Mumble$Builder",
+                "p.Mode",
+                "p.Pair",
+                "p.Api",
+            },
+        )
 
 
 class TestEnforcementDoc(unittest.TestCase):
@@ -1027,6 +1275,38 @@ class TestUnreferencedTypes(unittest.TestCase):
             errors = ca.check_unreferenced_types(root)
             self.assertEqual(len(errors), 1)
             self.assertIn("OnlyTest", errors[0])
+
+    def test_local_class_is_not_top_level(self):
+        # A class inside a function body is not a top-level declaration, so
+        # it is not the check's business even when named once.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/Local.kt",
+                "package se.lublin.mumla\n\n"
+                "fun helper() {\n"
+                "    class Local\n"
+                "    Local()\n"
+                "}\n"
+                "helper()\n",
+            )
+            self.assertEqual(ca.check_unreferenced_types(root), [])
+
+    def test_top_level_type_after_a_bodyless_one_is_still_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "app/src/main/java/se/lublin/mumla/Pair.kt",
+                "package se.lublin.mumla\n\n"
+                "data class Kept(val x: Int)\n"
+                "val kept = Kept(1)\n"
+                "class Dead\n",
+            )
+            errors = ca.check_unreferenced_types(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Dead", errors[0])
 
     def test_nested_declaration_is_not_top_level(self):
         with tempfile.TemporaryDirectory() as tmp:

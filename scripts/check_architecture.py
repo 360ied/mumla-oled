@@ -656,38 +656,178 @@ def check_native(found, allowed_native):
     return errors
 
 
-# Step 8: a top-level type whose last caller was deleted, or a test-only
-# type left in main, is caught by name. The check is deliberately narrow: it
-# only knows declarations in the three roots below, ignores the generated
-# protobuf package, and only fails a name that appears exactly once in its
-# own file and in no other production file. Production references are
-# Kotlin, Java, XML resources and manifests, proguard-rules.pro, and C++
-# under jni (JNI looks classes up by name), so tests never count.
-UNREFERENCED_DECL_ROOTS = (
+# Step 8: the production type declarations, parsed from source, shared by
+# the R8 keep-rule check (every declared FQCN) and the unreferenced-type
+# check (top-level declarations only). Parsing beats a line regex: a class
+# may sit in a differently named file, a keep rule may name a nested type,
+# and "top-level" means "not enclosed by another type", not "at column 0".
+DECL_ROOTS = (
     "app/src/main",
     "app/src/foss",
     "libraries/humla/src/main/java",
 )
-UNREFERENCED_REF_ROOTS = (
+REF_ROOTS = (
     "app/src/main",
     "app/src/foss",
     "libraries/humla/src/main",
 )
-UNREFERENCED_REF_EXTS = (".kt", ".java", ".xml")
+REF_EXTS = (".kt", ".java", ".xml")
 JNI_ROOT = "libraries/humla/src/main/jni"
 JNI_SUBMODULES = ("opus", "rnnoise", "nanopb")
-RE_TOP_LEVEL_TYPE = re.compile(
-    r"^(?:(?:public|private|internal|protected|abstract|open|final|data|sealed|"
-    r"static|inner|annotation|enum|value|fun)\s+)*"
-    r"(?:class|interface|object)\s+([A-Za-z_]\w*)"
-)
 RE_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+RE_PACKAGE = re.compile(r"^\s*package\s+([\w.]+)", re.M)
+RE_WORD = re.compile(r"[A-Za-z_]\w*")
+# Kotlin and Java declarations. `enum`/`record` carry the name directly in
+# Java; in Kotlin `enum class Foo` the `class` word supplies it.
+TYPE_KEYWORDS = ("class", "interface", "object", "enum", "record")
+# A pending declaration with no body ends when another declaration or
+# statement starts at the same brace and paren depth.
+OTHER_DECL_KEYWORDS = ("fun", "val", "var", "typealias", "const", "enum", "record")
 
 
-def declared_top_level_types(root: Path):
-    """Return [(simple name, file)] for production top-level type declarations."""
-    declared = []
-    for base in UNREFERENCED_DECL_ROOTS:
+def strip_source_noise(text):
+    """Blank comments and string/char literals, keeping line structure.
+
+    Brace counting and keyword scanning must not see `{`, `}`, or a word
+    inside a comment or a string (a raw string with braces would unbalance
+    the nesting; a comment naming a class would fake a declaration).
+    """
+    out = []
+    i = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            j = text.find("\n", i)
+            if j == -1:
+                j = n
+            out.append(" " * (j - i))
+            i = j
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            j = text.find("*/", i + 2)
+            j = n if j == -1 else j + 2
+            out.append("".join(ch if ch == "\n" else " " for ch in text[i:j]))
+            i = j
+            continue
+        if text.startswith('"""', i):
+            j = text.find('"""', i + 3)
+            j = n if j == -1 else j + 3
+            out.append("".join(ch if ch == "\n" else " " for ch in text[i:j]))
+            i = j
+            continue
+        if c in "\"'":
+            quote = c
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == quote:
+                    j += 1
+                    break
+                if text[j] == "\n":
+                    break
+                j += 1
+            out.append("".join(ch if ch == "\n" else " " for ch in text[i:j]))
+            i = j
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def source_declarations(text):
+    """Return [(simple name, fqcn, top_level)] for one source file's types.
+
+    FQCNs follow the JVM form: package, then `$`-joined enclosing types (an
+    unnamed companion counts as `Companion`). A declaration owns the next
+    `{` at its own paren and brace depth; a bodyless declaration (a data
+    class, a delegating object, an interface) ends at the next declaration
+    or statement keyword at that depth instead, so it cannot swallow the
+    class after it.
+    """
+    clean = strip_source_noise(text)
+    package = RE_PACKAGE.search(clean)
+    prefix = package.group(1) + "." if package else ""
+    declarations = []
+    bodies = []  # (fqcn, depth inside that type's braces)
+    pending = None  # [fqcn, paren at declaration, depth at declaration]
+    depth = 0
+    paren = 0
+    previous_word = ""
+    i = 0
+    n = len(clean)
+    while i < n:
+        c = clean[i]
+        if c == "{":
+            if pending is not None and pending[1] == paren and pending[2] == depth:
+                bodies.append((pending[0], depth + 1))
+                pending = None
+            depth += 1
+            i += 1
+            continue
+        if c == "}":
+            if bodies and bodies[-1][1] == depth:
+                bodies.pop()
+            depth = max(0, depth - 1)
+            i += 1
+            continue
+        if c == "(":
+            paren += 1
+            i += 1
+            continue
+        if c == ")":
+            paren = max(0, paren - 1)
+            i += 1
+            continue
+        if c == ";":
+            if pending is not None and pending[1] == paren and pending[2] == depth:
+                pending = None
+            i += 1
+            continue
+        m = RE_WORD.match(clean, i)
+        if not m:
+            i += 1
+            continue
+        word = m.group(0)
+        i = m.end()
+        if word in OTHER_DECL_KEYWORDS and pending is not None \
+                and pending[1] == paren and pending[2] == depth:
+            pending = None
+        if word in TYPE_KEYWORDS:
+            rest = clean[i:]
+            name_match = RE_WORD.match(rest.lstrip())
+            if name_match is not None:
+                name = name_match.group(0)
+                if name in TYPE_KEYWORDS or name in OTHER_DECL_KEYWORDS:
+                    name = None
+                else:
+                    i += len(rest) - len(rest.lstrip()) + name_match.end()
+            else:
+                name = None
+            if name is None and word == "object" and previous_word == "companion":
+                # An unnamed companion is a type in the JVM sense.
+                name = "Companion"
+            if name is not None:
+                pending = None
+                parent = bodies[-1][0] if bodies and bodies[-1][1] == depth else None
+                fqcn = (parent + "$" if parent else prefix) + name
+                declarations.append((name, fqcn, not bodies and depth == 0))
+                pending = [fqcn, paren, depth]
+                previous_word = name
+                continue
+        previous_word = word
+    return declarations
+
+
+def production_declarations(root: Path, include_generated=False):
+    """Yield (simple name, fqcn, path, top_level) for production types.
+
+    The generated protobuf package is production code for the R8 check (keep
+    rules name it) but is not a place to look for unreferenced types.
+    """
+    for base in DECL_ROOTS:
         base_dir = root / base
         if not base_dir.is_dir():
             continue
@@ -695,30 +835,41 @@ def declared_top_level_types(root: Path):
             if full.suffix not in (".kt", ".java"):
                 continue
             rel = full.relative_to(root).as_posix()
-            if GENERATED_MARKER in rel:
+            if not include_generated and GENERATED_MARKER in rel:
                 continue
             try:
                 text = full.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            # Top-level declarations start at column 0; nested ones are
-            # indented, and the rule is about top-level types only.
-            for line in text.splitlines():
-                m = RE_TOP_LEVEL_TYPE.match(line)
-                if m:
-                    declared.append((m.group(1), full))
-    return declared
+            for name, fqcn, top_level in source_declarations(text):
+                yield name, fqcn, full, top_level
+
+
+def production_class_names(root: Path):
+    """The fully qualified names of every production type, nested included."""
+    return {
+        fqcn for _, fqcn, _, _ in production_declarations(root, include_generated=True)
+    }
+
+
+def declared_top_level_types(root: Path):
+    """Return [(simple name, file)] for production top-level type declarations."""
+    return [
+        (name, full)
+        for name, _, full, top_level in production_declarations(root)
+        if top_level
+    ]
 
 
 def production_reference_files(root: Path):
     """Every production file whose mentions of a type name count."""
     files = []
-    for base in UNREFERENCED_REF_ROOTS:
+    for base in REF_ROOTS:
         base_dir = root / base
         if not base_dir.is_dir():
             continue
         for full in sorted(base_dir.rglob("*")):
-            if full.suffix in UNREFERENCED_REF_EXTS:
+            if full.suffix in REF_EXTS:
                 files.append(full)
     proguard = root / "app/proguard-rules.pro"
     if proguard.is_file():
@@ -805,28 +956,7 @@ def check_boundaries(allowed):
 
 
 RE_R8_NAME = re.compile(r"\bse\.lublin\.[\w$.?*]+")
-# Production sources the R8 check resolves names against, including the
-# generated protobuf package (which the concurrency tripwire skips).
-R8_SOURCE_ROOTS = (
-    "app/src/main/java",
-    "app/src/foss/java",
-    "libraries/humla/src/main/java",
-)
 R8_FILE = "app/proguard-rules.pro"
-
-
-def production_class_names(root: Path):
-    """Dotted names of every production source file, by path."""
-    names = set()
-    for base in R8_SOURCE_ROOTS:
-        base_dir = root / base
-        if not base_dir.is_dir():
-            continue
-        for ext in (".kt", ".java"):
-            for full in base_dir.rglob(f"*{ext}"):
-                rel = full.relative_to(base_dir).with_suffix("")
-                names.add(".".join(rel.parts))
-    return names
 
 
 def check_r8_keep_rules(root: Path, rules_path: Path = None):
@@ -834,7 +964,10 @@ def check_r8_keep_rules(root: Path, rules_path: Path = None):
 
     A rule that matches nothing changes nothing in the build, but it reads as
     a live JNI contract, so a leftover name must be deleted with its class.
-    Names after `implements`/`extends` count too.
+    Names after `implements`/`extends` count too. A wildcard pattern's prefix
+    must begin a declared production FQCN, nested types included (their
+    names use `$`), so `Mumble**` matches `Mumble` and `MumbleUDP` and
+    `NativeVoiceEngine$*` matches its nested types.
     """
     path = rules_path if rules_path is not None else root / R8_FILE
     try:
@@ -852,15 +985,14 @@ def check_r8_keep_rules(root: Path, rules_path: Path = None):
             [i for i in (match.find("*"), match.find("?")) if i != -1],
             default=-1,
         )
-        dollar = match.find("$")
-        if wildcard == -1 or (dollar != -1 and dollar < wildcard):
-            # A plain name, or a nested-class pattern like Outer$*: the
-            # outer class before the first $ must exist.
-            base = match[:dollar] if dollar != -1 else match
+        if wildcard == -1:
+            # A plain name: only the part before the first `$` is checked,
+            # so `Outer$Listener` needs `Outer` to exist.
+            base = match.split("$")[0]
             if base not in names:
                 errors.append(
                     f"r8: {path.name} names {match} but no production class "
-                    f"{base} has a source file"
+                    f"{base} is declared (generated protobuf counts)"
                 )
             continue
         prefix = match[:wildcard]
