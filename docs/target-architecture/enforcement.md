@@ -258,16 +258,20 @@ step 6, the adapter, the service, and the store all wrote them.
 ## R8 keep rules
 
 From step 8, `check_architecture.py` fails if `app/proguard-rules.pro`
-names a `se.lublin.` class that has no production source file. This
+names a `se.lublin.` class that has no production declaration. This
 includes names after `implements` and `extends`, and the generated
-`protobuf` package counts as production code. For a nested name, only the
-part before the first `$` is checked. A name with a wildcard (`*` or `?`)
-is a pattern: the text before the first wildcard must begin at least one
-production class's fully qualified name. For example,
-`se.lublin.humla.protobuf.Mumble**` matches `Mumble` and `MumbleUDP`.
-When the JNI seams were deleted in step 5a, their keep rules stayed behind
-for step 8 to find. A rule that matches nothing changes nothing in the build,
-but it reads as a live JNI contract.
+`protobuf` package counts as production code. Names are resolved against
+the type declarations parsed from source, not file paths, so a class may
+sit in a differently named file. For a plain name, only the part before
+the first `$` is checked. A name with a wildcard (`*` or `?`) is a
+pattern: the text before the first wildcard must begin at least one
+production class's fully qualified name, and a nested type's name uses `$`
+(`Outer$Inner`). For example, `se.lublin.humla.protobuf.Mumble**` matches
+`Mumble` and `MumbleUDP`, and `se.lublin.humla.voice.NativeVoiceEngine$*`
+matches the engine's nested `Listener`. When the JNI seams were deleted in
+step 5a, their keep rules stayed behind for step 8 to find. A rule that
+matches nothing changes nothing in the build, but it reads as a live JNI
+contract.
 
 ## Unreferenced types
 
@@ -277,7 +281,9 @@ type fails when all of these hold:
 
 - it is declared under `app/src/main`, `app/src/foss`, or
   `libraries/humla/src/main/java`, outside the generated `protobuf`
-  package;
+  package, at file scope: a declaration enclosed by another type (or by a
+  function body) is not top-level. Declarations are parsed from source, so
+  a class need not be in a file named after it;
 - its simple name appears only once in its own file (the declaration);
 - the name appears in no other production file.
 
