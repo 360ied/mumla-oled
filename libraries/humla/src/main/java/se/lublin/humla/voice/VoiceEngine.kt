@@ -74,7 +74,7 @@ import kotlin.math.min
  *
  * `Start` carries the session's UDP address plus the transport's
  * per-session decisions, fixed once: keys (when CryptSetup arrived) and
- * the UDP format with the legacy version. Voice follows the transport's
+ * the UDP format fixed by the first `Version`. Voice follows the transport's
  * `SetVoiceRoute`; `Stop` stops and closes the AAudio streams first, then
  * stops native, clears both engines/rings and delivers the final empty
  * talk snapshot via the notifier (the only `talkActivity` writer), and
