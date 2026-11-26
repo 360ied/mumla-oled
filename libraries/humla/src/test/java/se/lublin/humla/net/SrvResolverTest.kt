@@ -119,7 +119,9 @@ class SrvResolverTest {
     fun timeoutFallsBackEvenWhenTheLookupIgnoresInterruption() = runTest {
         // Ignores interruption for a bounded real-time window, like a
         // blocking resolver that only notices cancellation at the socket
-        // timeout: the caller must not wait for it.
+        // timeout: the caller must not wait for it. The answer it eventually
+        // produces is a valid record, so a resolver whose timeout does not
+        // hold would return that port instead of the default.
         val started = java.util.concurrent.CountDownLatch(1)
         val resolver = SrvResolver(timeoutMs = 20) {
             started.countDown()
@@ -131,11 +133,18 @@ class SrvResolverTest {
                     // Deliberately swallowed: keep blocking until the deadline.
                 }
             }
-            emptyList()
+            listOf(record(0, 0, 12345, "late.example.org."))
         }
         val target = withTimeout(2_000) { resolver.resolve("chat.example.org", 0) }
         assertTrue(started.await(2, java.util.concurrent.TimeUnit.SECONDS))
         assertEquals(SrvTarget("chat.example.org", Constants.DEFAULT_PORT), target)
+        // Virtual time is the only clock the fake cannot outrun, so the
+        // scheduler's time is the injected bound: a resolver that waited
+        // longer (or not at all) would return the late record or overshoot.
+        assertTrue(
+            "timeout fires at the injected bound, not later",
+            testScheduler.currentTime <= 20,
+        )
     }
 
     @Test
