@@ -41,7 +41,8 @@ data class SrvTarget(val host: String, val port: Int)
  * - an IP literal, anything containing `:` (IPv6), or an onion host returns
  *   the host with the default port, without a lookup;
  * - otherwise `_mumble._tcp.<host>` is looked up, and the first record after
- *   [SrvUtil.sortSrvRecords], minus its trailing dot, wins;
+ *   [SrvUtil.sortSrvRecords], minus its trailing dot, wins (a record port of
+ *   0 means the default port);
  * - no record, a failed lookup, or a timeout returns the host with the
  *   default port; cancellation propagates.
  *
@@ -83,8 +84,15 @@ class SrvResolver(
         val deferred = scope.async {
             runInterruptible(Dispatchers.IO) { lookup(name) }
         }
-        val records = try {
-            withTimeoutOrNull(timeoutMs) { deferred.await() }
+        val best = try {
+            val records = withTimeoutOrNull(timeoutMs) { deferred.await() }
+            if (records == null) {
+                deferred.cancel()
+                logger.fine("SRV lookup timed out for $name")
+                return SrvTarget(host, Constants.DEFAULT_PORT)
+            }
+            SrvUtil.sortSrvRecords(records).firstOrNull()
+                ?: return SrvTarget(host, Constants.DEFAULT_PORT)
         } catch (e: CancellationException) {
             // The caller went away (disconnect/new connect): interrupt the
             // lookup and propagate, never connect with a default port.
@@ -94,20 +102,18 @@ class SrvResolver(
             logger.warning("SRV resolution failed for $name: $e")
             return SrvTarget(host, Constants.DEFAULT_PORT)
         }
-        if (records == null) {
-            deferred.cancel()
-            logger.fine("SRV lookup timed out for $name")
-            return SrvTarget(host, Constants.DEFAULT_PORT)
-        }
-        val best = SrvUtil.sortSrvRecords(records).firstOrNull()
-            ?: return SrvTarget(host, Constants.DEFAULT_PORT)
         logger.fine("resolved $name SRV: $best")
-        return SrvTarget(best.target.toString().removeSuffix("."), best.port)
+        // A port-0 record keeps its target on the default port, as the
+        // transport and Server.getSrvPort did before the rule was shared.
+        val port = if (best.port == 0) Constants.DEFAULT_PORT else best.port
+        return SrvTarget(best.target.toString().removeSuffix("."), port)
     }
 }
 
 /**
- * The production lookup: MiniDNS's HLA resolver, failures as an empty answer.
+ * The production lookup: MiniDNS's HLA resolver. An unsuccessful result is
+ * an empty answer; a thrown failure propagates to [SrvResolver.resolve],
+ * which maps it to the default port.
  * Kept to one call plus the success check so no untested resolution logic
  * lives outside [SrvResolver].
  */

@@ -102,6 +102,25 @@ class SrvResolverTest {
     }
 
     @Test
+    fun portZeroRecordKeepsItsTargetOnTheDefaultPort() = runBlocking {
+        // Parity with the pre-step-8 transport and Server.getSrvPort: the
+        // record's target is used, a zero port becomes the default.
+        val target = resolver(listOf(record(0, 0, 0, "srv.example.org."))).resolve(
+            "chat.example.org",
+            0,
+        )
+        assertEquals(SrvTarget("srv.example.org", Constants.DEFAULT_PORT), target)
+    }
+
+    @Test
+    fun lonelyRootTargetMeansNoRecord() = runBlocking {
+        // RFC 2782 "service decidedly not available": sortSrvRecords drops a
+        // sole "." record, so the typed host on the default port is used.
+        val target = resolver(listOf(record(0, 0, 64738, "."))).resolve("chat.example.org", 0)
+        assertEquals(SrvTarget("chat.example.org", Constants.DEFAULT_PORT), target)
+    }
+
+    @Test
     fun emptyAnswerFallsBackToTheTypedHost() = runBlocking {
         val target = resolver(emptyList()).resolve("chat.example.org", 0)
         assertEquals(SrvTarget("chat.example.org", Constants.DEFAULT_PORT), target)
