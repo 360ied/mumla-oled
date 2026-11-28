@@ -801,6 +801,10 @@ class VoiceEngine @JvmOverloads constructor(
             existing.profile == profile && existing.inputPreset == inputPreset &&
             existing.usage == usage && existing.speakerphone == speakerphone
         ) {
+            // Re-assert: a failed SCO bring-up clears the call device and
+            // republishes the same route as Fallback. A no-op when it held;
+            // if it was lost, the resulting disconnect reopens the streams.
+            setSpeakerphone(speakerphone)
             return true
         }
         tearDownPipeline()
