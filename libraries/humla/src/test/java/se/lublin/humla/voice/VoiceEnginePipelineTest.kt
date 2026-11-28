@@ -17,12 +17,12 @@
 
 package se.lublin.humla.voice
 
-import android.media.AudioManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -47,7 +47,7 @@ class VoiceEnginePipelineTest {
     ) {
         val routeStates: MutableStateFlow<RouteState> = MutableStateFlow(RouteState.Idle)
         val prefs: MutableStateFlow<RoutePreferences> = MutableStateFlow(
-            RoutePreferences(bluetoothSco = false, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = false, earpiece = false),
         )
         val engine = VoiceEngine(
             talkPublisher = TalkActivityPublisher(),
@@ -91,10 +91,11 @@ class VoiceEnginePipelineTest {
         val built = h.engine.pipelineForTests()
         assertNotNull(built)
         assertEquals(1, h.fake.streamOpens.size)
-        // AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION, AAUDIO_USAGE_MEDIA.
-        assertEquals(7 to 1, h.fake.streamOpens[0])
+        // AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION, AAUDIO_USAGE_VOICE_COMMUNICATION.
+        assertEquals(7 to 2, h.fake.streamOpens[0])
+        assertTrue(built!!.speakerphone)
         assertEquals(1, h.fake.streamStarts)
-        assertEquals(1L, built!!.generation)
+        assertEquals(1L, built.generation)
         assertTrue(built.attachedEffects.isEmpty())
         // Settling keeps streams (spec): no teardown.
         h.routeStates.value = RouteState.Settling(AppliedRoute.MEDIA)
@@ -131,6 +132,7 @@ class VoiceEnginePipelineTest {
         assertTrue(first !== second)
         assertEquals(1, second!!.inputPreset) // AAUDIO_INPUT_PRESET_GENERIC
         assertEquals(1, second.usage) // AAUDIO_USAGE_MEDIA
+        assertFalse(second.speakerphone)
         assertEquals(2L, second.generation)
         assertEquals(2, h.fake.streamOpens.size)
         assertEquals(2, h.fake.streamStarts)
@@ -139,15 +141,34 @@ class VoiceEnginePipelineTest {
     }
 
     @Test
-    fun `handset stream preference changes the output usage`() {
+    fun `earpiece preference moves the output but keeps the voice usage`() {
         val h = Harness()
         h.start()
         h.ready(AppliedRoute.VOICE_HANDSET)
-        assertEquals(1, h.engine.pipelineForTests()!!.usage)
-        h.prefs.value = RoutePreferences(false, AudioManager.STREAM_VOICE_CALL)
-        assertEquals(2, h.engine.pipelineForTests()!!.usage) // VOICE_COMMUNICATION
+        val speaker = h.engine.pipelineForTests()!!
+        assertEquals(2, speaker.usage) // AAUDIO_USAGE_VOICE_COMMUNICATION
+        assertTrue(speaker.speakerphone)
+        // Speakerphone cannot change under open streams, so the pair rebuilds.
+        h.prefs.value = RoutePreferences(bluetoothSco = false, earpiece = true)
+        val earpiece = h.engine.pipelineForTests()!!
+        assertEquals(2, earpiece.usage)
+        assertFalse(earpiece.speakerphone)
         assertEquals(2, h.fake.streamOpens.size)
         assertEquals(7 to 2, h.fake.streamOpens[1])
+        assertEquals(1, h.fake.streamCloses)
+    }
+
+    @Test
+    fun `earpiece preference leaves SCO playback alone`() {
+        val h = Harness()
+        h.start()
+        h.ready(AppliedRoute.VOICE_SCO)
+        val sco = h.engine.pipelineForTests()!!
+        assertEquals(2, sco.usage)
+        assertFalse(sco.speakerphone)
+        h.prefs.value = RoutePreferences(bluetoothSco = false, earpiece = true)
+        assertEquals(sco, h.engine.pipelineForTests())
+        assertEquals(1, h.fake.streamOpens.size)
     }
 
     @Test

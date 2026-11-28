@@ -77,7 +77,7 @@ sealed interface RouteCommand {
 
 data class RoutePreferences(
     val bluetoothSco: Boolean,                // Settings.isBluetoothHeadset
-    val handsetStream: Int,                   // Settings.isHandsetMode's stream
+    val earpiece: Boolean,                    // Settings.isHandsetMode
 )
 ```
 
@@ -114,15 +114,17 @@ sealed interface RouteState {
 }
 
 enum class StreamProfile {
-    VOICE,   // capture VOICE_COMMUNICATION; playback per route (see stream parameters); echo cancellation on; mode IN_COMMUNICATION held
+    VOICE,   // capture VOICE_COMMUNICATION; playback USAGE_VOICE_COMMUNICATION (STREAM_VOICE_CALL); echo cancellation on; mode IN_COMMUNICATION held
     MEDIA,   // capture MIC; playback USAGE_MEDIA (STREAM_MUSIC); mode untouched
 }
 ```
 
 `AppliedRoute` is today's enum (`VOICE_SCO`, `VOICE_HANDSET`, `MEDIA`).
 `VOICE_SCO` and `VOICE_HANDSET` both use the `VOICE` profile; `MEDIA` uses
-`MEDIA`. For `VOICE_HANDSET`, the handset stream and speakerphone routing
-travel with the profile as they do today (see
+`MEDIA`. For `VOICE_HANDSET`, the `earpiece` preference only picks the
+built-in output (speakerphone unless the earpiece is chosen); playback
+stays on the call stream either way, so it follows the call volume that
+the volume keys and cues use under `MODE_IN_COMMUNICATION` (see
 [echo cancellation](../echo-cancellation/README.md)).
 
 **What each state means.** These semantics describe the behavior the
@@ -195,7 +197,7 @@ How voice opens its streams for each route. Rows match today's
 | Route | Capture (5a source / 5b input preset) | Playback (5a usage / 5b usage) |
 |---|---|---|
 | `VOICE_SCO` | `VOICE_COMMUNICATION` / `AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION` | `USAGE_VOICE_COMMUNICATION` / `AAUDIO_USAGE_VOICE_COMMUNICATION` |
-| `VOICE_HANDSET` | `VOICE_COMMUNICATION` / `AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION` | From the `handsetStream` preference: `STREAM_VOICE_CALL` gives `USAGE_VOICE_COMMUNICATION` / `AAUDIO_USAGE_VOICE_COMMUNICATION`; `STREAM_MUSIC` (the default) gives `USAGE_MEDIA` / `AAUDIO_USAGE_MEDIA` |
+| `VOICE_HANDSET` | `VOICE_COMMUNICATION` / `AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION` | `USAGE_VOICE_COMMUNICATION` / `AAUDIO_USAGE_VOICE_COMMUNICATION`; the `earpiece` preference only sets speakerphone (on unless the earpiece is chosen), and a change rebuilds the streams |
 | `MEDIA` | `MIC` / `AAUDIO_INPUT_PRESET_GENERIC` | `USAGE_MEDIA` / `AAUDIO_USAGE_MEDIA` |
 
 Every route also uses: 48 kHz, mono, 16-bit PCM (`AAUDIO_FORMAT_PCM_I16`),

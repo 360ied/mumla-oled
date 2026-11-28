@@ -55,7 +55,7 @@ sealed interface RouteCommand {
 
 data class RoutePreferences(
     val bluetoothSco: Boolean,
-    val handsetStream: Int,
+    val earpiece: Boolean,
 )
 
 sealed interface RouteEvent {

@@ -119,6 +119,7 @@ class VoiceEngine @JvmOverloads constructor(
         val profile: StreamProfile,
         val inputPreset: Int,
         val usage: Int,
+        val speakerphone: Boolean,
         val attachedEffects: List<String>,
         val generation: Long,
     )
@@ -775,38 +776,38 @@ class VoiceEngine @JvmOverloads constructor(
                 return true
             }
         }
-        val handset = try {
-            prefs?.value?.handsetStream ?: AudioManager.STREAM_MUSIC
+        val earpiece = try {
+            prefs?.value?.earpiece ?: false
         } catch (e: Exception) {
             loggerFine("Dropping prefs read: $e")
-            AudioManager.STREAM_MUSIC
+            false
         }
         val inputPreset = when (route) {
             AppliedRoute.MEDIA -> INPUT_PRESET_GENERIC
             else -> INPUT_PRESET_VOICE_COMMUNICATION
         }
+        // Voice routes hold MODE_IN_COMMUNICATION, and the volume keys and
+        // cues use the call stream there, so playback uses the voice usage
+        // too: a media usage would follow the media volume instead.
         val usage = when (route) {
-            AppliedRoute.VOICE_SCO -> USAGE_VOICE_COMMUNICATION
-            AppliedRoute.VOICE_HANDSET ->
-                if (handset == AudioManager.STREAM_VOICE_CALL) USAGE_VOICE_COMMUNICATION
-                else USAGE_MEDIA
             AppliedRoute.MEDIA -> USAGE_MEDIA
+            else -> USAGE_VOICE_COMMUNICATION
         }
+        // The earpiece preference only picks the built-in output: speaker
+        // unless the user chose the earpiece. SCO and media sinks clear it.
+        val speakerphone = route == AppliedRoute.VOICE_HANDSET && !earpiece
         val existing = pipelineRef.get()
         if (!force && existing != null && existing.route == route &&
             existing.profile == profile && existing.inputPreset == inputPreset &&
-            existing.usage == usage
+            existing.usage == usage && existing.speakerphone == speakerphone
         ) {
             return true
         }
         tearDownPipeline()
         // The route must be final before open: changing speakerphone after
-        // the streams exist can disconnect them. VOICE_CALL selects the
-        // earpiece, anything else speakerphone; media routes clear it.
-        setSpeakerphone(
-            route != AppliedRoute.MEDIA && route != AppliedRoute.VOICE_SCO &&
-                usage != USAGE_VOICE_COMMUNICATION
-        )
+        // the streams exist can disconnect them, so a speakerphone change
+        // rebuilds the streams.
+        setSpeakerphone(speakerphone)
         val engine = nativeRef.get()
         if (engine == null) {
             failPipeline("voice engine unavailable")
@@ -836,7 +837,7 @@ class VoiceEngine @JvmOverloads constructor(
             return false
         }
         pipelineRef.set(
-            BuiltPipeline(route, profile, inputPreset, usage, effects, opened[1])
+            BuiltPipeline(route, profile, inputPreset, usage, speakerphone, effects, opened[1])
         )
         return true
     }

@@ -22,7 +22,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
-import android.media.AudioManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.datastore.core.DataStore
@@ -475,11 +474,7 @@ open class AppContainer(
 
     private fun PrefSnapshot.toRoutePreferences(): RoutePreferences = RoutePreferences(
         bluetoothSco = bluetoothHeadset && hasBluetoothConnectGrant(),
-        handsetStream = if (handsetMode) {
-            AudioManager.STREAM_VOICE_CALL
-        } else {
-            AudioManager.STREAM_MUSIC
-        },
+        earpiece = handsetMode,
     )
 
     private fun hasBluetoothConnectGrant(): Boolean =
