@@ -98,9 +98,12 @@ directly, exists for the decision-logic tests.
 
 `prefs` comes from the settings flow (`Settings.isBluetoothHeadset` and
 `isHandsetMode`).
-Preference changes are collected on the route thread and become the
-controller's existing `SettingsChanged` event. Device changes, SCO link
-changes, and settle rechecks stay internal events, as today.
+Preference changes are collected on the route thread; a change to
+`bluetoothSco` becomes the controller's existing `SettingsChanged` event.
+`RouteControl` ignores `earpiece`: no route decision depends on it, and
+`VoiceEngine` reads it from the same flow to set speakerphone. Device
+changes, SCO link changes, and settle rechecks stay internal events, as
+today.
 
 ## `RouteState`
 
@@ -152,7 +155,7 @@ short silence at every Bluetooth connect.
 | Transition | When |
 |---|---|
 | `Idle` → `Settling` → first decision | `SessionStarted` (one step; see above) |
-| `Ready` ↔ `Ready` (different route) | A device change (after today's 300 ms debounce), a preference change (applied at once, as today), the SCO link coming up or going down, or a media-sink settle recheck changes the decision |
+| `Ready` ↔ `Ready` (different route) | A device change (after today's 300 ms debounce), an SCO preference change (applied at once, as today), the SCO link coming up or going down, or a media-sink settle recheck changes the decision |
 | `Ready` → `Fallback` | SCO bring-up fails (the SCO manager's per-attempt connect timeout plus one retry), or an active SCO link drops while SCO is still requested |
 | `Fallback` → `Ready(VOICE_SCO)` | The SCO link comes up (after `RetrySco` or a device change) |
 | `Fallback` → `Ready` (non-SCO) | SCO is no longer requested |
@@ -175,7 +178,7 @@ controller performs itself (preference off, `SessionEnded`) are silent, and
 a callback-fed copy of the link state goes stale on exactly the paths that
 leave SCO — the decision then keeps publishing `VOICE_SCO`, holding the
 `VOICE` profile and `MODE_IN_COMMUNICATION` for the rest of the session.
-For the same reason a preference change applies to the link **before** the
+For the same reason an SCO preference change applies to the link **before** the
 decision is taken (see
 [issue 32](issues/32-route-decision-cached-sco-state.md)). Detector:
 `RouteControlTest.routeDecisionFollowsLinkStateNotEvents` holds a decision
