@@ -17,7 +17,6 @@
 
 package se.lublin.humla.voice
 
-import android.media.AudioManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -47,7 +46,7 @@ class VoiceEngineStreamTest {
     ) {
         val routes: MutableStateFlow<RouteState> = MutableStateFlow(RouteState.Idle)
         val prefs: MutableStateFlow<RoutePreferences> = MutableStateFlow(
-            RoutePreferences(false, AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = false, earpiece = false),
         )
         val events = mutableListOf<VoiceEvent>()
         val engine = VoiceEngine(

@@ -132,7 +132,7 @@ class RouteThreadConfinementTest {
     fun everyLinkCallLandsOnTheRouteThread() {
         val platform = PostingPlatform()
         val prefs = MutableStateFlow(
-            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = true, earpiece = false),
         )
         val appScope = CoroutineScope(SupervisorJob())
         var built: RecordingSco? = null

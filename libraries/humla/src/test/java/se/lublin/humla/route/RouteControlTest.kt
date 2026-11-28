@@ -91,7 +91,7 @@ class RouteControlTest {
         platform: FakePlatform = FakePlatform(),
         sco: FakeSco = FakeSco(),
         prefs: MutableStateFlow<RoutePreferences> = MutableStateFlow(
-            RoutePreferences(bluetoothSco = false, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = false, earpiece = false),
         ),
         scope: kotlinx.coroutines.CoroutineScope,
     ): RouteControl {
@@ -214,7 +214,7 @@ class RouteControlTest {
     fun scoFailedPublishesFallback() = runTest {
         val sco = FakeSco()
         val prefs = MutableStateFlow(
-            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = true, earpiece = false),
         )
         val control = newControl(sco = sco, prefs = prefs, scope = this)
         control.start()
@@ -235,7 +235,7 @@ class RouteControlTest {
         val platform = FakePlatform()
         val sco = FakeSco()
         val prefs = MutableStateFlow(
-            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = true, earpiece = false),
         )
         val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
         control.start()
@@ -264,7 +264,7 @@ class RouteControlTest {
     fun retryScoStartsLinkWhenRequestedAndIdle() = runTest {
         val sco = FakeSco()
         val prefs = MutableStateFlow(
-            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = true, earpiece = false),
         )
         val control = newControl(sco = sco, prefs = prefs, scope = this)
         // Load prefs (start collects the prefs flow onto the route scope).
@@ -299,7 +299,7 @@ class RouteControlTest {
         platform.devices = arrayOf(device(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
         val sco = FakeSco()
         val prefs = MutableStateFlow(
-            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = true, earpiece = false),
         )
         val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
         control.start()
@@ -334,7 +334,7 @@ class RouteControlTest {
         platform.devices = arrayOf(device(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
         val sco = FakeSco()
         val prefs = MutableStateFlow(
-            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = true, earpiece = false),
         )
         val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
         control.start()
@@ -365,7 +365,7 @@ class RouteControlTest {
         val platform = FakePlatform()
         val sco = FakeSco()
         val prefs = MutableStateFlow(
-            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = true, earpiece = false),
         )
         val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
         control.start()
@@ -394,7 +394,7 @@ class RouteControlTest {
         platform.devices = arrayOf(device(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
         val sco = FakeSco()
         val prefs = MutableStateFlow(
-            RoutePreferences(bluetoothSco = false, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = false, earpiece = false),
         )
         val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
         control.start()
@@ -437,7 +437,7 @@ class RouteControlTest {
         platform.devices = arrayOf(device(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP))
         val sco = FakeSco()
         val prefs = MutableStateFlow(
-            RoutePreferences(bluetoothSco = true, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = true, earpiece = false),
         )
         val control = newControl(platform = platform, sco = sco, prefs = prefs, scope = this)
         control.start()
@@ -470,17 +470,20 @@ class RouteControlTest {
     fun preferenceChangeWithIdleLinkDoesNotStopAgain() = runTest {
         val sco = FakeSco()
         val prefs = MutableStateFlow(
-            RoutePreferences(bluetoothSco = false, handsetStream = AudioManager.STREAM_MUSIC),
+            RoutePreferences(bluetoothSco = true, earpiece = false),
         )
         val control = newControl(sco = sco, prefs = prefs, scope = this)
         control.start()
         runCurrent()
         control.submit(RouteCommand.SessionStarted)
         runCurrent()
-        // Stream changes re-apply the (still off) SCO request to the link;
-        // an idle link must not take a platform round-trip.
+        assertEquals(1, sco.startCount)
+        // The link stops on its own (a silent self-stop), then the user
+        // turns SCO off: the off request reaches an idle link, which must
+        // not take a platform round-trip.
+        sco.idleValue = true
         val stopsBefore = sco.stopCount
-        prefs.value = prefs.value.copy(handsetStream = AudioManager.STREAM_VOICE_CALL)
+        prefs.value = prefs.value.copy(bluetoothSco = false)
         runCurrent()
         assertEquals(stopsBefore, sco.stopCount)
         control.close()

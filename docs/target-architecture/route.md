@@ -77,7 +77,7 @@ sealed interface RouteCommand {
 
 data class RoutePreferences(
     val bluetoothSco: Boolean,                // Settings.isBluetoothHeadset
-    val handsetStream: Int,                   // Settings.isHandsetMode's stream
+    val earpiece: Boolean,                    // Settings.isHandsetMode
 )
 ```
 
@@ -98,9 +98,12 @@ directly, exists for the decision-logic tests.
 
 `prefs` comes from the settings flow (`Settings.isBluetoothHeadset` and
 `isHandsetMode`).
-Preference changes are collected on the route thread and become the
-controller's existing `SettingsChanged` event. Device changes, SCO link
-changes, and settle rechecks stay internal events, as today.
+Preference changes are collected on the route thread; a change to
+`bluetoothSco` becomes the controller's existing `SettingsChanged` event.
+`RouteControl` ignores `earpiece`: no route decision depends on it, and
+`VoiceEngine` reads it from the same flow to set speakerphone. Device
+changes, SCO link changes, and settle rechecks stay internal events, as
+today.
 
 ## `RouteState`
 
@@ -114,15 +117,17 @@ sealed interface RouteState {
 }
 
 enum class StreamProfile {
-    VOICE,   // capture VOICE_COMMUNICATION; playback per route (see stream parameters); echo cancellation on; mode IN_COMMUNICATION held
+    VOICE,   // capture VOICE_COMMUNICATION; playback USAGE_VOICE_COMMUNICATION (STREAM_VOICE_CALL); echo cancellation on; mode IN_COMMUNICATION held
     MEDIA,   // capture MIC; playback USAGE_MEDIA (STREAM_MUSIC); mode untouched
 }
 ```
 
 `AppliedRoute` is today's enum (`VOICE_SCO`, `VOICE_HANDSET`, `MEDIA`).
 `VOICE_SCO` and `VOICE_HANDSET` both use the `VOICE` profile; `MEDIA` uses
-`MEDIA`. For `VOICE_HANDSET`, the handset stream and speakerphone routing
-travel with the profile as they do today (see
+`MEDIA`. For `VOICE_HANDSET`, the `earpiece` preference only picks the
+built-in output (speakerphone unless the earpiece is chosen); playback
+stays on the call stream either way, so it follows the call volume that
+the volume keys and cues use under `MODE_IN_COMMUNICATION` (see
 [echo cancellation](../echo-cancellation/README.md)).
 
 **What each state means.** These semantics describe the behavior the
@@ -150,7 +155,7 @@ short silence at every Bluetooth connect.
 | Transition | When |
 |---|---|
 | `Idle` → `Settling` → first decision | `SessionStarted` (one step; see above) |
-| `Ready` ↔ `Ready` (different route) | A device change (after today's 300 ms debounce), a preference change (applied at once, as today), the SCO link coming up or going down, or a media-sink settle recheck changes the decision |
+| `Ready` ↔ `Ready` (different route) | A device change (after today's 300 ms debounce), an SCO preference change (applied at once, as today), the SCO link coming up or going down, or a media-sink settle recheck changes the decision |
 | `Ready` → `Fallback` | SCO bring-up fails (the SCO manager's per-attempt connect timeout plus one retry), or an active SCO link drops while SCO is still requested |
 | `Fallback` → `Ready(VOICE_SCO)` | The SCO link comes up (after `RetrySco` or a device change) |
 | `Fallback` → `Ready` (non-SCO) | SCO is no longer requested |
@@ -173,7 +178,7 @@ controller performs itself (preference off, `SessionEnded`) are silent, and
 a callback-fed copy of the link state goes stale on exactly the paths that
 leave SCO — the decision then keeps publishing `VOICE_SCO`, holding the
 `VOICE` profile and `MODE_IN_COMMUNICATION` for the rest of the session.
-For the same reason a preference change applies to the link **before** the
+For the same reason an SCO preference change applies to the link **before** the
 decision is taken (see
 [issue 32](issues/32-route-decision-cached-sco-state.md)). Detector:
 `RouteControlTest.routeDecisionFollowsLinkStateNotEvents` holds a decision
@@ -195,7 +200,7 @@ How voice opens its streams for each route. Rows match today's
 | Route | Capture (5a source / 5b input preset) | Playback (5a usage / 5b usage) |
 |---|---|---|
 | `VOICE_SCO` | `VOICE_COMMUNICATION` / `AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION` | `USAGE_VOICE_COMMUNICATION` / `AAUDIO_USAGE_VOICE_COMMUNICATION` |
-| `VOICE_HANDSET` | `VOICE_COMMUNICATION` / `AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION` | From the `handsetStream` preference: `STREAM_VOICE_CALL` gives `USAGE_VOICE_COMMUNICATION` / `AAUDIO_USAGE_VOICE_COMMUNICATION`; `STREAM_MUSIC` (the default) gives `USAGE_MEDIA` / `AAUDIO_USAGE_MEDIA` |
+| `VOICE_HANDSET` | `VOICE_COMMUNICATION` / `AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION` | `USAGE_VOICE_COMMUNICATION` / `AAUDIO_USAGE_VOICE_COMMUNICATION`; the `earpiece` preference only sets speakerphone (on unless the earpiece is chosen), and a change rebuilds the streams |
 | `MEDIA` | `MIC` / `AAUDIO_INPUT_PRESET_GENERIC` | `USAGE_MEDIA` / `AAUDIO_USAGE_MEDIA` |
 
 Every route also uses: 48 kHz, mono, 16-bit PCM (`AAUDIO_FORMAT_PCM_I16`),

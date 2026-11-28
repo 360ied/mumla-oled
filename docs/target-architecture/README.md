@@ -83,6 +83,7 @@ Records kept for their reasoning; none of them is current.
 | [history/whales-list.md](history/whales-list.md) | The satisficing W1–W6 list this specification replaced, with a map from each whale to the step that addressed it |
 | [history/step5a-retrospective/](history/step5a-retrospective/README.md) | Why the first step-5a attempt shipped dead voice and was reset; the spec edits it led to |
 | [history/lost-handle-semantics/](history/lost-handle-semantics/README.md) | Why replacing model objects with handles (step 2), then handles with IDs and values (step 7), each lost a property callers relied on; the reading-state rules that came from it |
+| [history/speaker-call-volume/](history/speaker-call-volume/README.md) | Why speaker-mode voice followed the media volume under call mode from `v0.27.11`: a hardcoded voice stream lost when `AudioHandler` was deleted, then written into the spec |
 
 ## Overview
 
