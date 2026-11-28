@@ -154,7 +154,6 @@ internal class RouteControl(
     // controller performs itself (ScoLink.stop() reports nothing back).
     // Atomic because isMediaRouteActive is read off the route thread.
     private val appliedRoute = java.util.concurrent.atomic.AtomicReference(AppliedRoute.VOICE_HANDSET)
-    private var earpiece = false
     private var modeHold: ModeHold = ModeHold.Released
 
     private var settleAttempts: Int = 0
@@ -206,7 +205,7 @@ internal class RouteControl(
             registerDeviceListener()
             try {
                 prefsFlow.collect { p ->
-                    onPrefsChanged(p.bluetoothSco, p.earpiece)
+                    onPrefsChanged(p.bluetoothSco)
                 }
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -366,11 +365,12 @@ internal class RouteControl(
         }
     }
 
-    private fun onPrefsChanged(requested: Boolean, earpiece: Boolean) {
+    // Only the SCO request decides the route; the earpiece preference is
+    // VoiceEngine's (speakerphone), so an earpiece-only change is a no-op.
+    private fun onPrefsChanged(requested: Boolean) {
         if (destroyed.get()) return
-        val changed = (requested != scoRequested) || (earpiece != this.earpiece)
+        val changed = requested != scoRequested
         scoRequested = requested
-        this.earpiece = earpiece
         if (!hasSession) return
         if (changed) {
             // Apply the request to the link first, then decide from what it

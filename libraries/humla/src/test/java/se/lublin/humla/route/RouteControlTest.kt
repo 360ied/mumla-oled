@@ -470,17 +470,20 @@ class RouteControlTest {
     fun preferenceChangeWithIdleLinkDoesNotStopAgain() = runTest {
         val sco = FakeSco()
         val prefs = MutableStateFlow(
-            RoutePreferences(bluetoothSco = false, earpiece = false),
+            RoutePreferences(bluetoothSco = true, earpiece = false),
         )
         val control = newControl(sco = sco, prefs = prefs, scope = this)
         control.start()
         runCurrent()
         control.submit(RouteCommand.SessionStarted)
         runCurrent()
-        // Stream changes re-apply the (still off) SCO request to the link;
-        // an idle link must not take a platform round-trip.
+        assertEquals(1, sco.startCount)
+        // The link stops on its own (a silent self-stop), then the user
+        // turns SCO off: the off request reaches an idle link, which must
+        // not take a platform round-trip.
+        sco.idleValue = true
         val stopsBefore = sco.stopCount
-        prefs.value = prefs.value.copy(earpiece = true)
+        prefs.value = prefs.value.copy(bluetoothSco = false)
         runCurrent()
         assertEquals(stopsBefore, sco.stopCount)
         control.close()
